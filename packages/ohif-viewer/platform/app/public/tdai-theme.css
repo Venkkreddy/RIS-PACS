@@ -1,0 +1,26 @@
+:root {
+  --tdai-primary: #005eb8;
+  --tdai-accent: #00bfa5;
+  --tdai-bg: #f8fafc;
+  --tdai-text: #1e293b;
+}
+
+body {
+  background: var(--tdai-bg);
+  color: var(--tdai-text);
+}
+
+/* OHIF toolbar */
+[data-cy="toolbar"] {
+  background: linear-gradient(90deg, var(--tdai-primary), var(--tdai-accent)) !important;
+}
+
+[data-cy="toolbar"] button {
+  color: #ffffff !important;
+}
+
+/* Top bar branding area (if present) */
+.header, .ohif-header, [data-cy="top-bar"] {
+  background: #ffffff !important;
+  border-bottom: 1px solid #dbeafe !important;
+}

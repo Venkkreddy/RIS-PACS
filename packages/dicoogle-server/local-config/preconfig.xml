@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dicoogle-config>
+  <network>
+    <aetitle>TDAI-LOCAL</aetitle>
+    <port>104</port>
+  </network>
+  <storage>
+    <root-dir>./storage</root-dir>
+  </storage>
+  <peers>
+    <peer name="tdairad-central">
+      <address>central.tdairad.com</address>
+      <port>104</port>
+      <aetitle>TDAI-CENTRAL</aetitle>
+      <enabled>true</enabled>
+    </peer>
+  </peers>
+  <routing>
+    <auto-forward-on-store>true</auto-forward-on-store>
+    <default-peer>tdairad-central</default-peer>
+  </routing>
+</dicoogle-config>

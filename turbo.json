@@ -1,0 +1,49 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": [
+    ".env*",
+    "package.json",
+    "packages/**/package.json"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**",
+        "build/**",
+        ".next/**"
+      ]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "dependsOn": [
+        "^lint"
+      ]
+    },
+    "test": {
+      "dependsOn": [
+        "^test"
+      ],
+      "outputs": [
+        "coverage/**"
+      ]
+    },
+    "build:dicoogle": {
+      "cache": false,
+      "outputs": [
+        "packages/dicoogle-server/bin/*.jar"
+      ]
+    },
+    "build:ohif": {
+      "cache": false,
+      "outputs": [
+        "packages/ohif-viewer/platform/app/dist/**"
+      ]
+    }
+  }
+}

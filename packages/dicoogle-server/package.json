@@ -1,0 +1,11 @@
+{
+  "name": "@medical-imaging-platform/dicoogle-server",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "bash ./build.sh build",
+    "build:dicoogle": "bash ./build.sh build",
+    "dev": "bash ./build.sh run",
+    "lint": "echo \"No lint rules configured for dicoogle-server\""
+  }
+}

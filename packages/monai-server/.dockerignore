@@ -1,0 +1,8 @@
+venv/
+models/
+sr_output/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/

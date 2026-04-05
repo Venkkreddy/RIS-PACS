@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<config>
+    <web-server autostart="true" port="8081">
+        <allowed-origins>*</allowed-origins>
+    </web-server>
+    <archive>
+        <main-directory>./storage</main-directory>
+    </archive>
+    <dicom-services>
+        <aetitle>TDAI-LOCAL</aetitle>
+        <allowed-aetitles>any</allowed-aetitles>
+        <allowed-local-interfaces>any</allowed-local-interfaces>
+        <allowed-hostnames>any</allowed-hostnames>
+    </dicom-services>
+</config>

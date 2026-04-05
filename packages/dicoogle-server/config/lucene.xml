@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+  <index-dir>/var/dicoogle/index</index-dir>
+  <auto-commit>true</auto-commit>
+  <commit-interval-seconds>30</commit-interval-seconds>
+  <optimize-on-start>false</optimize-on-start>
+  <default-query-limit>200</default-query-limit>
+</config>

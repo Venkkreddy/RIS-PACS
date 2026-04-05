@@ -1,0 +1,45 @@
+{
+  "Name": "TDAI Orthanc PACS",
+  "RemoteAccessAllowed": true,
+  "AuthenticationEnabled": false,
+  "RegisteredUsers": {},
+
+  "DicomAet": "ORTHANC",
+  "DicomPort": 4242,
+  "HttpPort": 8042,
+
+  "StorageDirectory": "/var/lib/orthanc/db",
+  "IndexDirectory": "/var/lib/orthanc/db",
+
+  "HttpVerbose": false,
+  "DicomVerbose": false,
+  "OverwriteInstances": true,
+  "MaximumStorageSize": 0,
+  "MaximumPatientCount": 0,
+  "StableAge": 60,
+
+  "HttpHeaders": {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+    "Access-Control-Allow-Headers": "Accept, Content-Type, Authorization, Range, If-None-Match, SOPClassUID",
+    "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Encoding, Content-Length, ETag"
+  },
+
+  "DicomWeb": {
+    "Enable": true,
+    "Root": "/dicom-web/",
+    "EnableWado": true,
+    "WadoRoot": "/wado",
+    "Ssl": false,
+    "StudiesMetadata": "Full",
+    "SeriesMetadata": "Full"
+  },
+
+  "Plugins": [
+    "/usr/share/orthanc/plugins",
+    "/usr/local/share/orthanc/plugins"
+  ],
+
+  "DicomModalities": {},
+  "OrthancPeers": {}
+}

@@ -1,0 +1,22 @@
+{
+  "name": "medical-imaging-platform",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "npm@10.8.2",
+  "workspaces": [
+    "packages/*",
+    "packages/reporting-app/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "test": "turbo run test",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.2"
+  },
+  "dependencies": {
+    "@rollup/rollup-win32-x64-msvc": "^4.59.0"
+  }
+}

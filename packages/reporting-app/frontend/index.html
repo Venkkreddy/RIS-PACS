@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TDAI Rad | AI-Powered Teleradiology Platform</title>
+    <meta
+      name="description"
+      content="TDAI Rad delivers AI-powered connected teleradiology with multicenter worklists, OHIF viewing, and rapid reporting."
+    />
+    <meta property="og:title" content="TDAI Rad | AI-Powered Teleradiology Platform" />
+    <meta
+      property="og:description"
+      content="Revolutionizing teleradiology with AI-powered connected care from Trivitron Digital & AI Solutions."
+    />
+    <meta property="og:image" content="/og-image.svg" />
+    <meta property="og:type" content="website" />
+    <meta name="theme-color" content="#1A2B56" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      #root-loader {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        background: #F9FAFB;
+        font-family: Inter, system-ui, sans-serif;
+      }
+      #root-loader .spinner {
+        width: 32px;
+        height: 32px;
+        border: 2px solid #E2E8F0;
+        border-top-color: #00B4A6;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div id="root-loader"><div class="spinner"></div></div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

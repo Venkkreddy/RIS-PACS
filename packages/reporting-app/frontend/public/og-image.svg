@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#005EB8"/>
+      <stop offset="100%" stop-color="#00BFA5"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <text x="90" y="250" font-size="92" font-family="Montserrat, Arial, sans-serif" font-weight="700" fill="#ffffff">TDAI Rad</text>
+  <text x="90" y="330" font-size="40" font-family="Roboto, Arial, sans-serif" fill="#e2f7ff">
+    AI-Powered Teleradiology Platform
+  </text>
+  <text x="90" y="390" font-size="30" font-family="Roboto, Arial, sans-serif" fill="#d6ecff">
+    Powered by Trivitron Digital & AI Solutions
+  </text>
+</svg>

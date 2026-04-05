@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 290 120">
+  <!-- T in Teal -->
+  <text x="0" y="95" font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="110" fill="#00B4A6">T</text>
+  <!-- D in Navy -->
+  <text x="65" y="95" font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="110" fill="#1A2B56">D</text>
+  <!-- | separator in Gray -->
+  <rect x="160" y="15" width="6" height="85" rx="2" fill="#808080"/>
+  <!-- a in Red -->
+  <text x="180" y="95" font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="110" fill="#E03C31">a</text>
+  <!-- i in Red with circle dot -->
+  <text x="250" y="95" font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="110" fill="#E03C31">i</text>
+  <!-- Circle around the dot of 'i' -->
+  <circle cx="272" cy="18" r="14" fill="none" stroke="#E03C31" stroke-width="4"/>
+  <circle cx="272" cy="18" r="3" fill="#E03C31"/>
+</svg>

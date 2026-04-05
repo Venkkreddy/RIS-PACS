@@ -1,0 +1,58 @@
+{
+  "Name": "TDAI-PACS",
+  "DicomAet": "TDAI_ROUTER",
+  "DicomPort": 4242,
+  "HttpPort": 8042,
+
+  "RemoteAccessAllowed": true,
+  "HttpHeaders": {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "*"
+  },
+  "AuthenticationEnabled": true,
+  "RegisteredUsers": {
+    "tdai-backend": "CHANGE_ME_IN_PRODUCTION"
+  },
+
+  "DicomModalities": {
+    "CITY_HOSPITAL_AE": ["CITY_HOSPITAL_AE", "10.0.1.10", 104],
+    "RURAL_CLINIC_AE": ["RURAL_CLINIC_AE", "10.0.2.10", 104],
+    "METRO_IMAGING_AE": ["METRO_IMAGING_AE", "10.0.3.10", 104]
+  },
+
+  "OrthancPeers": {},
+
+  "StableAge": 30,
+  "StorageDirectory": "/var/orthanc/storage",
+  "IndexDirectory": "/var/orthanc/index",
+  "StorageCompression": false,
+  "MaximumStorageSize": 0,
+
+  "LuaScripts": [
+    "/etc/orthanc/lua/multi-tenant-routing.lua"
+  ],
+
+  "DicomWeb": {
+    "Enable": true,
+    "Root": "/dicom-web/",
+    "EnableWado": true,
+    "WadoRoot": "/wado",
+    "Host": "0.0.0.0",
+    "Ssl": false
+  },
+
+  "PostgreSQL": {
+    "EnableIndex": true,
+    "EnableStorage": false,
+    "Host": "postgres",
+    "Port": 5432,
+    "Database": "orthanc_pacs",
+    "Username": "orthanc",
+    "Password": "CHANGE_ME_IN_PRODUCTION"
+  },
+
+  "HttpsCACertificates": "/etc/ssl/certs/ca-certificates.crt",
+  "HttpTimeout": 30,
+  "DicomScuTimeout": 30
+}

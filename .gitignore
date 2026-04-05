@@ -1,0 +1,70 @@
+# OS
+.DS_Store
+Thumbs.db
+# Windows reserved name (breaks Git for Windows if present as a file)
+NUL
+
+# Node / JS / TS
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build output
+dist/
+build/
+coverage/
+.next/
+out/
+*.tsbuildinfo
+
+# Env files
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Java / JVM
+target/
+*.class
+*.jar
+*.war
+
+# IDE
+.idea/
+.vscode/
+
+# Temp
+tmp/
+temp/
+
+# E2E test artifacts
+tests/artifacts/
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+
+# Nx cache
+.nx/
+
+# Coverage reports
+.nyc_output/
+
+# Backup / temp files
+*.bak
+*~
+*.swp
+*.orig
+
+# MONAI model weights
+monai-models/
+
+# Dicoogle runtime data
+dicoogle-local/
+dicoogle-index/
+storage/

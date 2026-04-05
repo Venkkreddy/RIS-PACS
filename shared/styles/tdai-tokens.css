@@ -1,0 +1,103 @@
+/* ═══════════════════════════════════════════════════════
+   TD|ai Design Tokens
+   Import in every package's root CSS file:
+   @import '../../shared/styles/tdai-tokens.css';
+   ═══════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Brand ─────────────────────────── */
+  --tdai-teal:           #00B4A6;
+  --tdai-navy:           #1A2B56;
+  --tdai-red:            #E03C31;
+  --tdai-divider:        #808080;
+
+  /* ── Teal Scale ────────────────────── */
+  --tdai-teal-50:        #EDFAF9;
+  --tdai-teal-100:       #D1F4F1;
+  --tdai-teal-500:       #00B4A6;
+  --tdai-teal-600:       #009488;
+  --tdai-teal-700:       #00736A;
+  --tdai-teal-900:       #003330;
+
+  /* ── Navy Scale ────────────────────── */
+  --tdai-navy-50:        #EEF0F6;
+  --tdai-navy-100:       #D4D9E8;
+  --tdai-navy-500:       #2E4580;
+  --tdai-navy-700:       #1A2B56;
+  --tdai-navy-900:       #0A1125;
+  --tdai-navy-950:       #050912;
+
+  /* ── Red Scale ─────────────────────── */
+  --tdai-red-50:         #FEF2F1;
+  --tdai-red-100:        #FDE3E1;
+  --tdai-red-500:        #E03C31;
+  --tdai-red-700:        #A4231B;
+  --tdai-red-900:        #711D16;
+
+  /* ── Neutrals ──────────────────────── */
+  --tdai-bg:             #F8FAFC;
+  --tdai-surface:        #FFFFFF;
+  --tdai-border:         #E2E8F0;
+  --tdai-text:           #1E293B;
+  --tdai-text-muted:     #64748B;
+  --tdai-text-light:     #94A3B8;
+  --tdai-hover-row:      #F1F5F9;
+
+  /* ── Semantic ──────────────────────── */
+  --tdai-success:        #10B981;
+  --tdai-warning:        #F59E0B;
+  --tdai-danger:         #EF4444;
+  --tdai-info:           #3B82F6;
+  --tdai-purple:         #8B5CF6;
+  --tdai-cyan:           #06B6D4;
+
+  /* ── Order Status ──────────────────── */
+  --status-ordered:      #6B7280;
+  --status-scheduled:    #3B82F6;
+  --status-checked-in:   #06B6D4;
+  --status-in-progress:  #F59E0B;
+  --status-completed:    #00B4A6;
+  --status-pending-read: #E03C31;
+  --status-preliminary:  #8B5CF6;
+  --status-final:        #10B981;
+  --status-addendum:     #1A2B56;
+  --status-cancelled:    #9CA3AF;
+
+  /* ── Typography ────────────────────── */
+  --font-sans:           'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono:           'JetBrains Mono', 'Fira Code', monospace;
+
+  /* ── Spacing ───────────────────────── */
+  --space-xs:  0.25rem;
+  --space-sm:  0.5rem;
+  --space-md:  0.75rem;
+  --space-lg:  1rem;
+  --space-xl:  1.5rem;
+  --space-2xl: 2rem;
+  --space-3xl: 3rem;
+
+  /* ── Radius ────────────────────────── */
+  --radius-sm:   0.25rem;
+  --radius-md:   0.5rem;
+  --radius-lg:   0.75rem;
+  --radius-xl:   1rem;
+  --radius-full: 9999px;
+
+  /* ── Layout ────────────────────────── */
+  --navbar-height:    56px;
+  --sidebar-width:    260px;
+  --sidebar-collapsed:64px;
+}
+
+/* ── Dark Mode ───────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --tdai-bg:         #0F172A;
+    --tdai-surface:    #1E293B;
+    --tdai-border:     #334155;
+    --tdai-text:       #F1F5F9;
+    --tdai-text-muted: #94A3B8;
+    --tdai-text-light: #64748B;
+    --tdai-hover-row:  #1E293B;
+  }
+}

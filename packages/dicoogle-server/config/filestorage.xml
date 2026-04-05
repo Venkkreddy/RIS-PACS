@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+  <root-dir>/var/dicoogle/storage</root-dir>
+  <scheme>file</scheme>
+  <create-if-missing>true</create-if-missing>
+  <max-file-size-mb>1024</max-file-size-mb>
+</config>

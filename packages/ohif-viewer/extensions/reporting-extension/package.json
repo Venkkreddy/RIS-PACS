@@ -1,0 +1,11 @@
+{
+  "name": "@medical-imaging-platform/extension-reporting",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OHIF extension that captures viewport JPEG and forwards to reporting app",
+  "main": "src/index.js",
+  "module": "src/index.js",
+  "peerDependencies": {
+    "react": "18.3.1"
+  }
+}

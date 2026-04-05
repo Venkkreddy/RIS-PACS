@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<cstore-listener>
+  <enabled>true</enabled>
+  <aetitle>TDAI-CENTRAL</aetitle>
+  <port>104</port>
+  <accept-any-calling-aet>true</accept-any-calling-aet>
+  <storage-dir>/var/dicoogle/storage</storage-dir>
+</cstore-listener>

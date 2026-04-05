@@ -1,0 +1,5 @@
+runtime: nodejs20
+service: default
+env_variables:
+  NODE_ENV: production
+  PORT: 8080

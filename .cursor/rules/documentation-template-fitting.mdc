@@ -1,0 +1,16 @@
+---
+description: Enforce accurate project documentation using the existing template
+alwaysApply: true
+---
+
+# Documentation Template Fitting
+
+- When asked to create, review, or update project documentation, preserve the existing template structure exactly.
+- Use `docs/PROJECT_DOCUMENTATION.md` as the source template for section order, heading style, markdown tone, and formatting.
+- Prioritize repository evidence from `package.json`, workspace config, Docker files, scripts, README/docs, and `.env.example` files.
+- Do not invent ports, URLs, environment variables, service names, commands, or version numbers.
+- If a detail cannot be confirmed from the repository, write `Needs verification`.
+- Keep wording concise, developer-facing, and practical.
+- Prefer short bullets over long paragraphs.
+- Use PowerShell command examples when commands are shown for local setup or verification.
+- If asked to output the completed documentation, return only the final markdown unless the user asks for commentary.

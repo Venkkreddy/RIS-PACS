@@ -1,0 +1,101 @@
+<svg width="1400" height="900" viewBox="0 0 1400 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGradient" x1="116" y1="58" x2="1260" y2="870" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#122B56"/>
+      <stop offset="0.5" stop-color="#16396F"/>
+      <stop offset="1" stop-color="#0D1F40"/>
+    </linearGradient>
+    <linearGradient id="panelGradient" x1="277" y1="200" x2="1114" y2="730" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1A4A88" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#0D244B" stop-opacity="0.75"/>
+    </linearGradient>
+    <linearGradient id="accentGradient" x1="470" y1="360" x2="1072" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00B4A6"/>
+      <stop offset="1" stop-color="#57D7CF"/>
+    </linearGradient>
+    <radialGradient id="glowTeal" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1140 180) rotate(140.637) scale(520 349)">
+      <stop stop-color="#00B4A6" stop-opacity="0.65"/>
+      <stop offset="1" stop-color="#00B4A6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowBlue" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(150 760) rotate(-26.813) scale(531 354)">
+      <stop stop-color="#365EB2" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#365EB2" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softShadow" x="174" y="132" width="1048" height="666" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="24"/>
+      <feGaussianBlur stdDeviation="30"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.02 0 0 0 0 0.07 0 0 0 0 0.15 0 0 0 0.5 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_1" result="shape"/>
+    </filter>
+  </defs>
+
+  <rect width="1400" height="900" rx="42" fill="url(#bgGradient)"/>
+  <rect width="1400" height="900" rx="42" fill="url(#glowTeal)"/>
+  <rect width="1400" height="900" rx="42" fill="url(#glowBlue)"/>
+
+  <g opacity="0.16">
+    <path d="M0 96H1400" stroke="white"/>
+    <path d="M0 192H1400" stroke="white"/>
+    <path d="M0 288H1400" stroke="white"/>
+    <path d="M0 384H1400" stroke="white"/>
+    <path d="M0 480H1400" stroke="white"/>
+    <path d="M0 576H1400" stroke="white"/>
+    <path d="M0 672H1400" stroke="white"/>
+    <path d="M0 768H1400" stroke="white"/>
+    <path d="M155 0V900" stroke="white"/>
+    <path d="M310 0V900" stroke="white"/>
+    <path d="M465 0V900" stroke="white"/>
+    <path d="M620 0V900" stroke="white"/>
+    <path d="M775 0V900" stroke="white"/>
+    <path d="M930 0V900" stroke="white"/>
+    <path d="M1085 0V900" stroke="white"/>
+    <path d="M1240 0V900" stroke="white"/>
+  </g>
+
+  <g filter="url(#softShadow)">
+    <rect x="234" y="168" width="932" height="550" rx="30" fill="url(#panelGradient)" stroke="rgba(255,255,255,0.18)"/>
+    <rect x="266" y="206" width="868" height="56" rx="14" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)"/>
+    <circle cx="300" cy="235" r="8" fill="#FA5E58"/>
+    <circle cx="326" cy="235" r="8" fill="#F7C65D"/>
+    <circle cx="352" cy="235" r="8" fill="#54CF7A"/>
+    <rect x="389" y="221" width="306" height="28" rx="9" fill="rgba(255,255,255,0.11)"/>
+    <rect x="826" y="221" width="282" height="28" rx="9" fill="rgba(0,180,166,0.18)"/>
+
+    <rect x="286" y="292" width="420" height="182" rx="18" fill="rgba(10,27,58,0.8)" stroke="rgba(255,255,255,0.13)"/>
+    <path d="M316 424L368 384L442 404L512 346L564 372L676 328" stroke="url(#accentGradient)" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="368" cy="384" r="8" fill="#4BE0D4"/>
+    <circle cx="442" cy="404" r="8" fill="#4BE0D4"/>
+    <circle cx="512" cy="346" r="8" fill="#4BE0D4"/>
+    <circle cx="564" cy="372" r="8" fill="#4BE0D4"/>
+    <circle cx="676" cy="328" r="8" fill="#4BE0D4"/>
+
+    <rect x="726" y="292" width="378" height="182" rx="18" fill="rgba(10,27,58,0.8)" stroke="rgba(255,255,255,0.13)"/>
+    <rect x="758" y="328" width="152" height="16" rx="8" fill="rgba(255,255,255,0.35)"/>
+    <rect x="758" y="360" width="312" height="12" rx="6" fill="rgba(255,255,255,0.2)"/>
+    <rect x="758" y="388" width="272" height="12" rx="6" fill="rgba(255,255,255,0.2)"/>
+    <rect x="758" y="416" width="204" height="12" rx="6" fill="rgba(255,255,255,0.2)"/>
+    <rect x="1010" y="326" width="60" height="112" rx="12" fill="rgba(0,180,166,0.2)"/>
+    <rect x="1018" y="374" width="44" height="56" rx="8" fill="#00B4A6"/>
+
+    <rect x="286" y="500" width="232" height="182" rx="18" fill="rgba(10,27,58,0.8)" stroke="rgba(255,255,255,0.13)"/>
+    <rect x="318" y="534" width="168" height="15" rx="7.5" fill="rgba(255,255,255,0.3)"/>
+    <rect x="318" y="563" width="132" height="11" rx="5.5" fill="rgba(255,255,255,0.2)"/>
+    <rect x="318" y="587" width="146" height="11" rx="5.5" fill="rgba(255,255,255,0.2)"/>
+    <rect x="318" y="611" width="114" height="11" rx="5.5" fill="rgba(255,255,255,0.2)"/>
+    <circle cx="462" cy="610" r="22" fill="#00B4A6"/>
+    <path d="M450 610L458 618L474 602" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <rect x="538" y="500" width="566" height="182" rx="18" fill="rgba(10,27,58,0.8)" stroke="rgba(255,255,255,0.13)"/>
+    <rect x="570" y="534" width="294" height="15" rx="7.5" fill="rgba(255,255,255,0.3)"/>
+    <rect x="570" y="563" width="248" height="11" rx="5.5" fill="rgba(255,255,255,0.2)"/>
+    <rect x="570" y="587" width="284" height="11" rx="5.5" fill="rgba(255,255,255,0.2)"/>
+    <rect x="570" y="611" width="208" height="11" rx="5.5" fill="rgba(255,255,255,0.2)"/>
+    <rect x="878" y="536" width="194" height="116" rx="14" fill="rgba(0,180,166,0.14)" stroke="rgba(0,180,166,0.4)"/>
+    <rect x="910" y="568" width="130" height="12" rx="6" fill="rgba(255,255,255,0.3)"/>
+    <rect x="910" y="594" width="96" height="12" rx="6" fill="rgba(255,255,255,0.2)"/>
+    <rect x="910" y="620" width="112" height="12" rx="6" fill="rgba(255,255,255,0.2)"/>
+  </g>
+</svg>
