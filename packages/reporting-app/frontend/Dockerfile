@@ -140,6 +140,29 @@ server {
         proxy_read_timeout 120s;
     }
 
+    # ── Reverse-proxy: OHIF viewer under /ohif/ so port 3000 need not be exposed ──
+    location /ohif/ {
+        set $ohif http://ohif-viewer:80;
+        rewrite ^/ohif/(.*) /$1 break;
+        proxy_pass         $ohif;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   Accept-Encoding   "";
+        proxy_buffering    off;
+        proxy_request_buffering off;
+        client_max_body_size 0;
+        proxy_read_timeout 120s;
+
+        sub_filter 'src="/' 'src="/ohif/';
+        sub_filter 'href="/' 'href="/ohif/';
+        sub_filter 'action="/' 'action="/ohif/';
+        sub_filter_once off;
+        sub_filter_types text/html;
+    }
+
     location / {
         try_files $uri /index.html;
     }

@@ -609,12 +609,18 @@ export function RadiologistDashboard() {
         return;
       }
 
-      const launchUrl = resolveLaunchableViewerUrl(response.data.viewerUrl, study.viewerUrl);
-      if (!launchUrl) {
+      const rawLaunchUrl = resolveLaunchableViewerUrl(response.data.viewerUrl, study.viewerUrl);
+      if (!rawLaunchUrl) {
         setViewerWarning("OHIF launch URL is invalid (missing study parameters). Please refresh and try again.");
         setTimeout(() => setViewerWarning(null), 6000);
         return;
       }
+
+      const parsed = new URL(rawLaunchUrl);
+      parsed.protocol = window.location.protocol;
+      parsed.hostname = window.location.hostname;
+      parsed.port = window.location.port;
+      const launchUrl = parsed.toString();
 
       setResolvedViewerUrlByStudyId((prev) => ({
         ...prev,

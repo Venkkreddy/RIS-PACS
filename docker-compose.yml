@@ -66,8 +66,6 @@ services:
     depends_on:
       orthanc:
         condition: service_healthy
-      dicoogle:
-        condition: service_healthy
       reporting-app-backend:
         condition: service_healthy
     healthcheck:
@@ -190,7 +188,7 @@ services:
       FRONTEND_URL: "${FRONTEND_URL:-https://localhost:5173}"
       BACKEND_URL: "${BACKEND_URL:-http://reporting-app-backend:8080}"
       OHIF_BASE_URL: "${OHIF_BASE_URL:-http://ohif-viewer}"
-      OHIF_PUBLIC_BASE_URL: "${OHIF_PUBLIC_BASE_URL:-http://localhost:3000}"
+      OHIF_PUBLIC_BASE_URL: "${OHIF_PUBLIC_BASE_URL:-https://localhost:5173/ohif}"
       DICOOGLE_BASE_URL: "${DICOOGLE_BASE_URL:-http://dicoogle:8080}"
       DICOOGLE_STORAGE_DIR: "${DICOOGLE_STORAGE_DIR:-/storage}"
       DICOOGLE_INDEX_URI: "${DICOOGLE_INDEX_URI:-file:///var/dicoogle/storage}"
@@ -212,7 +210,7 @@ services:
       TENANT_STORAGE_ROOT: "/storage"
       WEASIS_BASE_URL: "${WEASIS_BASE_URL:-http://localhost:8081/dicom-web}"
       CORS_ALLOW_ALL: "${CORS_ALLOW_ALL:-true}"
-      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-https://localhost:5173,http://localhost:3000}"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-https://localhost:5173,http://localhost:3000,https://localhost:5173/ohif}"
       MASTER_ADMIN_EMAILS: "${MASTER_ADMIN_EMAILS:-}"
       GCP_PROJECT_ID: "${GCP_PROJECT_ID:-}"
       GCS_BUCKET: "${GCS_BUCKET:-}"

@@ -83,17 +83,20 @@ export function Worklist({
         return;
       }
 
-      const viewerUrl = pickLaunchableViewerUrl(
+      const rawViewerUrl = pickLaunchableViewerUrl(
         validationResponse.data.viewerUrl,
         fallbackViewerUrl,
       );
-      if (!viewerUrl) {
+      if (!rawViewerUrl) {
         setOhifWarning("OHIF launch URL is invalid (missing study parameters). Please refresh and try again.");
         setTimeout(() => setOhifWarning(null), 6000);
         return;
       }
-      const origin = new URL(viewerUrl).origin;
-      await fetch(origin, { mode: "no-cors" });
+      const parsed = new URL(rawViewerUrl);
+      parsed.protocol = window.location.protocol;
+      parsed.hostname = window.location.hostname;
+      parsed.port = window.location.port;
+      const viewerUrl = parsed.toString();
       window.open(viewerUrl, "_blank", "noopener,noreferrer");
     } catch (error) {
       let apiMessage: string | undefined;
