@@ -36,6 +36,7 @@ import {
   CalendarRange,
   ShieldAlert,
   CircleDot,
+  Trash2,
 } from "lucide-react";
 
 /* ── Status filter tabs matching the screenshot ──────────── */
@@ -386,6 +387,9 @@ export function RadiologistDashboard() {
   const [regSuccess, setRegSuccess] = useState<string | null>(null);
   const [regSubmitting, setRegSubmitting] = useState(false);
   const [recentlyRegisteredPatients, setRecentlyRegisteredPatients] = useState<Patient[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<{ studyId: string; patientName: string; patientMrn: string; registryId: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const bumpOhifReloadForPatient = useCallback(
     async (patientId: string) => {
@@ -413,6 +417,7 @@ export function RadiologistDashboard() {
   );
 
   const canDicomUpload = auth.role === "admin" || auth.role === "super_admin" || auth.hasPermission("dicom:upload");
+  const canDeletePatient = auth.role === "admin" || auth.role === "super_admin" || auth.hasPermission("patients:delete");
 
   function resetRegForm() {
     setRegForm({ patientId: "", firstName: "", lastName: "", dateOfBirth: "", gender: "M", phone: "", email: "", address: "" });
@@ -469,6 +474,22 @@ export function RadiologistDashboard() {
       setRegError(formatPatientApiError(err));
     } finally {
       setRegSubmitting(false);
+    }
+  }
+
+  async function handleDeletePatient() {
+    if (!deleteTarget?.registryId) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.delete(`/patients/${deleteTarget.registryId}`);
+      setDeleteTarget(null);
+      await queryClient.invalidateQueries({ queryKey: ["patients"] });
+      await worklistQuery.refetch();
+    } catch (err: unknown) {
+      setDeleteError(formatPatientApiError(err));
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -897,12 +918,35 @@ export function RadiologistDashboard() {
                 <FileText className="h-4 w-4" />
               </button>
             )}
+            {canDeletePatient && (() => {
+              const mrn = getHumanPatientMrn(row.original);
+              const registryId = getStudyRegistryPatientId(row.original) || (mrn ? (knownPatientsByMrn.get(mrn.toLowerCase())?.id ?? "") : "");
+              return (
+                <button
+                  className={`rounded-md p-0.5 transition-colors ${registryId ? "text-red-500 hover:bg-red-50" : "text-tdai-gray-300 cursor-not-allowed"}`}
+                  disabled={!registryId}
+                  onClick={() => {
+                    if (!registryId) return;
+                    setDeleteError(null);
+                    setDeleteTarget({
+                      studyId: row.original.studyId,
+                      patientName: row.original.patientName ?? "Unknown",
+                      patientMrn: mrn || "—",
+                      registryId,
+                    });
+                  }}
+                  title={registryId ? "Delete patient" : "No registry record to delete"}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              );
+            })()}
           </div>
         );
         },
       },
     ],
-    [viewerStudyId, expandedRowId, data, rawData, copiedId, canDicomUpload, filteredData, selectedRows, navigate, validatingViewerStudyId, knownPatientsByMrn],
+    [viewerStudyId, expandedRowId, data, rawData, copiedId, canDicomUpload, canDeletePatient, filteredData, selectedRows, navigate, validatingViewerStudyId, knownPatientsByMrn],
   );
 
   const table = useReactTable({ data: filteredData, columns, getCoreRowModel: getCoreRowModel() });
@@ -1540,6 +1584,55 @@ export function RadiologistDashboard() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete Confirmation Modal ────── */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-fade-in"
+          onClick={() => !deleting && setDeleteTarget(null)}
+        >
+          <div
+            className="w-full max-w-md mx-4 rounded-xl bg-white shadow-2xl animate-slide-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100">
+                  <Trash2 className="h-5 w-5 text-red-600" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-tdai-text">Delete Patient</h3>
+                  <p className="mt-1 text-sm text-tdai-secondary">
+                    Are you sure you want to delete{" "}
+                    <span className="font-medium text-tdai-text">{deleteTarget.patientName}</span>
+                    {deleteTarget.patientMrn !== "—" ? ` (MRN: ${deleteTarget.patientMrn})` : ""}?
+                    The record will be marked as deleted and hidden from all views.
+                  </p>
+                </div>
+              </div>
+              {deleteError && (
+                <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{deleteError}</p>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 border-t border-tdai-border px-6 py-4">
+              <button
+                className="btn-secondary !rounded-lg !px-4 !py-2"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+                onClick={handleDeletePatient}
+                disabled={deleting}
+              >
+                {deleting ? "Deleting…" : "Delete Patient"}
+              </button>
+            </div>
           </div>
         </div>
       )}

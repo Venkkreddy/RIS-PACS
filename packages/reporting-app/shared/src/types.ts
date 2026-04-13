@@ -190,6 +190,8 @@ export interface Patient {
   phone?: string;
   email?: string;
   address?: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

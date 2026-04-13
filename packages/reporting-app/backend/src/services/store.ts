@@ -502,12 +502,19 @@ export class StoreService {
   async deletePatient(patientId: string): Promise<void> {
     const existing = await this.getPatient(patientId);
     if (!existing) throw new Error("Patient not found");
-    await this.firestore.collection("patients").doc(patientId).delete();
+    const now = new Date().toISOString();
+    await this.firestore.collection("patients").doc(patientId).update({
+      isDeleted: true,
+      deletedAt: now,
+      updatedAt: now,
+    });
   }
 
   async listPatients(search?: string): Promise<Patient[]> {
     const snapshot = await this.firestore.collection("patients").get();
-    let patients = snapshot.docs.map((doc) => doc.data() as Patient);
+    let patients = snapshot.docs
+      .map((doc) => doc.data() as Patient)
+      .filter((p) => !p.isDeleted);
     if (search) {
       const needle = search.toLowerCase();
       patients = patients.filter(

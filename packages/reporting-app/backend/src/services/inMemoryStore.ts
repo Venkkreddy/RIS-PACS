@@ -275,12 +275,14 @@ export class InMemoryStoreService {
   }
 
   async deletePatient(patientId: string): Promise<void> {
-    if (!this.patients.has(patientId)) throw new Error("Patient not found");
-    this.patients.delete(patientId);
+    const existing = this.patients.get(patientId);
+    if (!existing) throw new Error("Patient not found");
+    const now = this.now();
+    this.patients.set(patientId, { ...existing, isDeleted: true, deletedAt: now, updatedAt: now });
   }
 
   async listPatients(search?: string): Promise<Patient[]> {
-    let list = [...this.patients.values()];
+    let list = [...this.patients.values()].filter((p) => !p.isDeleted);
     if (search) {
       const needle = search.toLowerCase();
       list = list.filter((p) => p.firstName.toLowerCase().includes(needle) || p.lastName.toLowerCase().includes(needle) || p.patientId.toLowerCase().includes(needle));
