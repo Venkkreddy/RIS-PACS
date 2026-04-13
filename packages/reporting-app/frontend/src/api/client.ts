@@ -69,7 +69,7 @@ function redirectToLoginIfNeeded() {
   });
   // #endregion
   if (shouldRedirect) {
-    window.location.href = "/login";
+    window.location.href = "/";
   }
 }
 

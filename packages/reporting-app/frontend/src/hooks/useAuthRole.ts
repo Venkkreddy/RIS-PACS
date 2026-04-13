@@ -252,6 +252,32 @@ function unauthenticatedState(refreshPermissions: () => Promise<void>, refreshPr
   };
 }
 
+const SESSION_KEY = "tdai_authenticated";
+
+export function hasExplicitSession(): boolean {
+  try {
+    return sessionStorage.getItem(SESSION_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function markExplicitSession(): void {
+  try {
+    sessionStorage.setItem(SESSION_KEY, "true");
+  } catch {
+    // storage unavailable
+  }
+}
+
+export function clearExplicitSession(): void {
+  try {
+    sessionStorage.removeItem(SESSION_KEY);
+  } catch {
+    // storage unavailable
+  }
+}
+
 let authEffectRunCounter = 0;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -285,6 +311,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!hasExplicitSession()) {
+      setState(unauthenticatedState(refreshPermissions, refreshProfile));
+      return;
+    }
+
     let cancelled = false;
     let resolved = false;
     let firebaseUnsubscribe: (() => void) | undefined;

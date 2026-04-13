@@ -3,7 +3,7 @@ import { signOut } from "firebase/auth";
 import { api } from "../api/client";
 import { firebaseAuth } from "../lib/firebase";
 import { BrandLogo } from "./BrandLogo";
-import { useAuthRole, landingPathForRole } from "../hooks/useAuthRole";
+import { useAuthRole, landingPathForRole, clearExplicitSession } from "../hooks/useAuthRole";
 import { useState } from "react";
 import type { Permission } from "@medical-report-system/shared";
 
@@ -69,11 +69,12 @@ export function InternalNavbar() {
   });
 
   async function logout() {
+    clearExplicitSession();
     if (firebaseAuth) {
       await signOut(firebaseAuth).catch(() => undefined);
     }
     await api.post("/auth/logout").catch(() => undefined);
-    window.location.href = "/login";
+    window.location.href = "/";
   }
 
   const userInitial = (() => {

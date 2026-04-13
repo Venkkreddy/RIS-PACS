@@ -94,7 +94,7 @@ export function PermissionGate({
   }
 
   if (!auth.isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/" replace />;
   }
 
   if (!auth.approved) {

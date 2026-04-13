@@ -1,93 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { AlertTriangle, RefreshCw, Terminal, ExternalLink, WifiOff } from "lucide-react";
 
-type ViewerStatus = "checking" | "available" | "unavailable" | "error";
-const VIEWER_PROBE_TIMEOUT_MS = 6000;
-const DIRECT_VIEWER_PROBE_TIMEOUT_MS = 2500;
-const IFRAME_READY_TIMEOUT_MS = 12000;
-
-function createProbeSignal(timeoutMs: number, parentSignal?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
-  const controller = new AbortController();
-  const onAbort = () => controller.abort();
-  parentSignal?.addEventListener("abort", onAbort);
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-  return {
-    signal: controller.signal,
-    cleanup: () => {
-      window.clearTimeout(timer);
-      parentSignal?.removeEventListener("abort", onAbort);
-    },
-  };
-}
-
-async function probeViewerUrl(url: string, signal?: AbortSignal): Promise<boolean> {
-  let directOutcome: "available" | "unavailable" | "exception" = "unavailable";
-  const directProbe = createProbeSignal(DIRECT_VIEWER_PROBE_TIMEOUT_MS, signal);
-  try {
-    const origin = new URL(url).origin;
-    const response = await fetch(origin, { mode: "no-cors", cache: "no-store", signal: directProbe.signal });
-    if (response.type === "opaque" || response.ok) {
-      directOutcome = "available";
-    }
-  } catch {
-    directOutcome = "exception";
-    // Direct cross-origin probe failed (browser policy, firewall, etc.)
-  } finally {
-    directProbe.cleanup();
-  }
-  if (directOutcome === "available") return true;
-
-  // Fallback: ask the backend which can reach OHIF via Docker networking
-  let fallbackOutcome: "available" | "unavailable" | "exception" = "unavailable";
-  const fallbackProbe = createProbeSignal(VIEWER_PROBE_TIMEOUT_MS, signal);
-  try {
-    const res = await fetch("/api/health/ohif?force=true", { signal: fallbackProbe.signal });
-    if (res.ok) {
-      const data = await res.json();
-      fallbackOutcome = data.available === true ? "available" : "unavailable";
-    }
-  } catch {
-    fallbackOutcome = "exception";
-    // Backend also unreachable
-  } finally {
-    fallbackProbe.cleanup();
-  }
-  return fallbackOutcome === "available";
-}
+type ViewerStatus = "available" | "unavailable" | "error";
 
 export function OhifViewerEmbed({ src }: { src: string }) {
-  const [status, setStatus] = useState<ViewerStatus>("checking");
-  const [retryCount, setRetryCount] = useState(0);
+  const [status, setStatus] = useState<ViewerStatus>(src.trim() ? "available" : "unavailable");
   const [iframeLoaded, setIframeLoaded] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  const checkAvailability = useCallback(async (signal?: AbortSignal) => {
-    setStatus("checking");
+  const handleRetry = () => {
     setIframeLoaded(false);
-    if (!src.trim()) {
-      setStatus("unavailable");
-      return;
-    }
-    const reachable = await probeViewerUrl(src, signal);
-    if (signal?.aborted) return;
-    setStatus(reachable ? "available" : "unavailable");
-  }, [src]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void checkAvailability(controller.signal);
-    return () => controller.abort();
-  }, [checkAvailability, retryCount]);
-
-  useEffect(() => {
-    if (status !== "available" || iframeLoaded) return;
-    const timer = window.setTimeout(() => {
-      setStatus((prev) => (prev === "available" ? "error" : prev));
-    }, IFRAME_READY_TIMEOUT_MS);
-    return () => window.clearTimeout(timer);
-  }, [status, iframeLoaded]);
-
-  const handleRetry = () => setRetryCount((c) => c + 1);
+    setStatus(src.trim() ? "available" : "unavailable");
+  };
   const handleIframeLoad = () => {
     setIframeLoaded(true);
     const countStudyUids = (url: string): number => {
@@ -114,18 +38,6 @@ export function OhifViewerEmbed({ src }: { src: string }) {
   const handleIframeError = () => {
     setStatus("error");
   };
-
-  if (status === "checking") {
-    return (
-      <div className="absolute inset-0 flex flex-col items-center justify-center bg-tdai-navy-950 text-white gap-4">
-        <div className="relative">
-          <div className="h-10 w-10 rounded-full border-4 border-white/10" />
-          <div className="absolute inset-0 h-10 w-10 animate-spin rounded-full border-4 border-transparent border-t-tdai-teal-500" />
-        </div>
-        <p className="text-sm text-tdai-gray-300 font-medium">Connecting to OHIF Viewer...</p>
-      </div>
-    );
-  }
 
   if (status === "unavailable" || status === "error") {
     const isLoadError = status === "error";

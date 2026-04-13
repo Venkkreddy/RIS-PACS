@@ -246,7 +246,7 @@ export default function App() {
           <RoleGate allow={["receptionist", "admin", "super_admin"]}><ReceptionistPage /></RoleGate>
         } />
         <Route path="/profile" element={
-          auth.isAuthenticated ? <ProfilePage /> : <Navigate to="/login" replace />
+          auth.isAuthenticated ? <ProfilePage /> : <Navigate to="/" replace />
         } />
       </Routes>
       </main>

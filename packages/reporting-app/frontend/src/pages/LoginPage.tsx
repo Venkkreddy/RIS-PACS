@@ -3,6 +3,7 @@ import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithP
 import axios from "axios";
 import { api } from "../api/client";
 import { firebaseAuth, firebaseConfigIssues, firebaseConfigReady, googleProvider } from "../lib/firebase";
+import { markExplicitSession } from "../hooks/useAuthRole";
 
 function debugLoginLog(
   hypothesisId: string,
@@ -47,7 +48,7 @@ export function LoginPage() {
   }, []);
 
   function redirectAfterLogin() {
-    // Force a full navigation so AuthProvider rehydrates from the new session cookie.
+    markExplicitSession();
     window.location.replace("/home");
   }
 
