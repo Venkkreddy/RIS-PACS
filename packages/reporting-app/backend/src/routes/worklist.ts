@@ -865,7 +865,7 @@ export function worklistRouter(
           reason: validation.reason ?? null,
           attempts: validation.attempts,
           responseStatus: validation.responseStatus ?? null,
-          endpointCount: validation.endpointUrls.length,
+          endpointCount: Object.values(validation.endpointUrls).filter((value) => Boolean(value)).length,
         },
       );
       const dicomValidationMetadata = {
