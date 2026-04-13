@@ -1,34 +1,9 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPopup } from "firebase/auth";
 import axios from "axios";
 import { api } from "../api/client";
 import { firebaseAuth, firebaseConfigIssues, firebaseConfigReady, googleProvider } from "../lib/firebase";
 import { markExplicitSession } from "../hooks/useAuthRole";
-
-function debugLoginLog(
-  hypothesisId: string,
-  location: string,
-  message: string,
-  data: Record<string, unknown> = {},
-  runId = "run-1",
-) {
-  fetch("http://127.0.0.1:7829/ingest/0823df88-6411-4f3d-9920-ebf0779efd31", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "b161f5",
-    },
-    body: JSON.stringify({
-      sessionId: "b161f5",
-      runId,
-      hypothesisId,
-      location,
-      message,
-      data,
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-}
 
 export function LoginPage() {
   const [email, setEmail] = useState("");
@@ -38,14 +13,6 @@ export function LoginPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    // #region agent log
-    debugLoginLog("H7", "LoginPage.tsx:mount", "login page mounted", {
-      path: typeof window !== "undefined" ? window.location.pathname : "unknown",
-    });
-    // #endregion
-  }, []);
 
   function redirectAfterLogin() {
     markExplicitSession();

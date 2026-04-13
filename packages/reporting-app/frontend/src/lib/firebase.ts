@@ -6,31 +6,6 @@ function readEnvOrFallback(value: string | undefined, fallback: string): string 
   return trimmed && trimmed.length > 0 ? trimmed : fallback;
 }
 
-function debugFirebaseLog(
-  hypothesisId: string,
-  location: string,
-  message: string,
-  data: Record<string, unknown> = {},
-  runId = "run-3",
-) {
-  fetch("http://127.0.0.1:7829/ingest/0823df88-6411-4f3d-9920-ebf0779efd31", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "b161f5",
-    },
-    body: JSON.stringify({
-      sessionId: "b161f5",
-      runId,
-      hypothesisId,
-      location,
-      message,
-      data,
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-}
-
 const firebaseConfig = {
   apiKey: readEnvOrFallback(import.meta.env.VITE_FIREBASE_API_KEY, "AIzaSyC1VRHBcDWlkdUfu3-qrG5_l9qDHaZ-doQ"),
   authDomain: readEnvOrFallback(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN, "ris-pacs-9859a.firebaseapp.com"),
@@ -54,9 +29,6 @@ if (baseConfigIssues.length === 0) {
   try {
     const app = initializeApp(firebaseConfig);
     firebaseAuth = getAuth(app);
-    // #region agent log
-    debugFirebaseLog("H14", "firebase.ts:initSuccess", "firebase initialized successfully");
-    // #endregion
   } catch (error) {
     runtimeConfigIssue =
       error instanceof Error
@@ -64,18 +36,7 @@ if (baseConfigIssues.length === 0) {
         : typeof error === "string"
           ? error
           : "unknown";
-    // #region agent log
-    debugFirebaseLog("H14", "firebase.ts:initError", "firebase initialization failed", {
-      runtimeConfigIssue,
-    });
-    // #endregion
   }
-} else {
-  // #region agent log
-  debugFirebaseLog("H14", "firebase.ts:skipInit", "firebase initialization skipped due to config issues", {
-    baseConfigIssues,
-  });
-  // #endregion
 }
 
 export const firebaseConfigIssues = runtimeConfigIssue

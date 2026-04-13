@@ -14,26 +14,6 @@ export function OhifViewerEmbed({ src }: { src: string }) {
   };
   const handleIframeLoad = () => {
     setIframeLoaded(true);
-    const countStudyUids = (url: string): number => {
-      try {
-        const parsed = new URL(url);
-        const all = [
-          parsed.searchParams.get("StudyInstanceUIDs") ?? "",
-          parsed.searchParams.get("studyInstanceUIDs") ?? "",
-        ]
-          .join(",")
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean);
-        return new Set(all).size;
-      } catch {
-        return 0;
-      }
-    };
-    const frameRect = iframeRef.current?.getBoundingClientRect();
-    // #region agent log
-    fetch("http://127.0.0.1:7829/ingest/0823df88-6411-4f3d-9920-ebf0779efd31",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"8d3439"},body:JSON.stringify({sessionId:"8d3439",runId:"multi-series",hypothesisId:"H13",location:"OhifViewerEmbed.tsx:handleIframeLoad",message:"OHIF iframe loaded in embed container",data:{uidCount:countStudyUids(src),iframeWidth:frameRect?Math.round(frameRect.width):null,iframeHeight:frameRect?Math.round(frameRect.height):null,windowWidth:window.innerWidth,windowHeight:window.innerHeight},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
   };
   const handleIframeError = () => {
     setStatus("error");
