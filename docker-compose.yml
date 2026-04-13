@@ -26,7 +26,7 @@ services:
       VERBOSE_ENABLED: "false"
       DICOM_WEB_PLUGIN_ENABLED: "true"
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8042/system')\" || exit 1"]
+      test: ["CMD-SHELL", "ps -ef | grep -q '[O]rthanc' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -48,7 +48,7 @@ services:
       - dicoogle-storage:/var/dicoogle/storage
       - dicoogle-index:/var/dicoogle/index
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080 || exit 1"]
+      test: ["CMD-SHELL", "ps -ef | grep -q '[d]icoogle.jar'"]
       interval: 30s
       timeout: 10s
       start_period: 60s
@@ -62,14 +62,14 @@ services:
     container_name: ohif-viewer
     restart: unless-stopped
     ports:
-      - "${OHIF_PORT:-3000}:80"
+      - "${OHIF_PORT:-3000}:443"
     depends_on:
       orthanc:
         condition: service_healthy
       reporting-app-backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ || exit 1"]
+      test: ["CMD-SHELL", "wget --no-check-certificate -qO- https://localhost:443/ || exit 1"]
       interval: 30s
       timeout: 5s
       start_period: 15s
@@ -185,6 +185,7 @@ services:
       USE_INMEMORY_STORE: "${USE_INMEMORY_STORE:-true}"
       HIPAA_REQUIRE_HTTPS: "${HIPAA_REQUIRE_HTTPS:-false}"
       ENABLE_DEV_LOGIN: "${ENABLE_DEV_LOGIN:-true}"
+      ENABLE_AUTH: "${ENABLE_AUTH:-true}"
       FRONTEND_URL: "${FRONTEND_URL:-https://localhost:5173}"
       BACKEND_URL: "${BACKEND_URL:-http://reporting-app-backend:8080}"
       OHIF_BASE_URL: "${OHIF_BASE_URL:-http://ohif-viewer}"

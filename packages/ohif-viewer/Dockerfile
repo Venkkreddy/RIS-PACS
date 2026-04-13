@@ -1,6 +1,16 @@
 # Pin to a stable OHIF v3 release to avoid ChunkLoadError from hash drift.
 FROM ohif/app:v3.12.0
 
+USER root
+
+RUN apk add --no-cache openssl \
+ && mkdir -p /etc/nginx/ssl \
+ && openssl req -x509 -nodes -days 365 \
+      -newkey rsa:2048 \
+      -keyout /etc/nginx/ssl/selfsigned.key \
+      -out    /etc/nginx/ssl/selfsigned.crt \
+      -subj   "/C=US/ST=State/L=City/O=TDAI/CN=localhost"
+
 COPY default.conf /etc/nginx/conf.d/default.conf
 COPY platform/app/public/config/default.js /usr/share/nginx/html/app-config.js
 
@@ -33,4 +43,4 @@ RUN app_js=$(ls /usr/share/nginx/html/app.bundle.*.js | head -1) && \
 ENTRYPOINT []
 CMD ["nginx", "-g", "daemon off;"]
 
-EXPOSE 80
+EXPOSE 443

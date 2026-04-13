@@ -19,7 +19,6 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, Permission[]> = {
     "referring_physicians:view", "referring_physicians:create", "referring_physicians:edit", "referring_physicians:delete",
     "dicom:upload", "dicom:view",
     "ai:analyze", "ai:view_results",
-    "voice:transcribe",
     "admin:manage_users", "admin:manage_roles", "admin:view_analytics", "admin:manage_invites",
     "developer:toggle_services", "developer:view_health",
   ],
@@ -36,7 +35,6 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, Permission[]> = {
     "referring_physicians:view", "referring_physicians:create", "referring_physicians:edit", "referring_physicians:delete",
     "dicom:upload", "dicom:view",
     "ai:analyze", "ai:view_results",
-    "voice:transcribe",
     "admin:manage_users", "admin:manage_roles", "admin:view_analytics", "admin:manage_invites",
     "developer:toggle_services", "developer:view_health",
   ],
@@ -48,7 +46,6 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, Permission[]> = {
     "reports:view",
     "dicom:view",
     "ai:analyze", "ai:view_results",
-    "voice:transcribe",
     "admin:manage_users",
     "developer:toggle_services",
     "developer:view_health",
@@ -56,7 +53,7 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, Permission[]> = {
 
   radiologist: [
     "dashboard:view",
-    "patients:view", "patients:create", "patients:edit",
+    "patients:view", "patients:create", "patients:edit", "patients:delete",
     "orders:view", "orders:create",
     "scans:view",
     "scheduling:view",
@@ -66,7 +63,6 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, Permission[]> = {
     "billing:view",
     "dicom:upload", "dicom:view",
     "ai:analyze", "ai:view_results",
-    "voice:transcribe",
     "referring_physicians:view",
   ],
 
