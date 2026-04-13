@@ -144,7 +144,7 @@ server {
     # Proxy OHIF through the frontend origin for VM deployments. This avoids
     # iframe failures when the browser has not explicitly trusted the separate
     # self-signed certificate served on the dedicated OHIF port.
-    location ~ ^/(viewer/.*|app-config\.js|init-service-worker\.js|sw\.js|app\.bundle\.css|app\.bundle\.[^/]+\.js|[0-9]+\.bundle\.[^/]+\.js|[0-9]+\.css|[0-9a-f]{8,}\.(?:wasm|woff2?))$ {
+    location ~ "^/(viewer/.*|app-config\.js|init-service-worker\.js|sw\.js|tdai-theme\.css|app\.bundle\.css|app\.bundle\.[^/]+\.js|[0-9]+\.bundle\.[^/]+\.js|[0-9]+\.css|[0-9a-f]{8,}\.(wasm|woff2?))$" {
         set $ohif https://ohif-viewer;
         proxy_pass         $ohif$request_uri;
         proxy_http_version 1.1;
