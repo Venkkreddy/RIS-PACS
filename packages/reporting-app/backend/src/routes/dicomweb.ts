@@ -529,7 +529,7 @@ async function queryDicoogleDIM(): Promise<DicoogleDIMPatient[]> {
           if (axios.isAxiosError(error) && error.response?.status === 400) {
             const payload = error.response.data as { error?: unknown } | undefined;
             const apiError = typeof payload?.error === "string" ? payload.error : "";
-            if (/no valid dim providers supplied/i.test(apiError)) {
+            if (/no valid dim providers supplied|is not a valid query provider/i.test(apiError)) {
               noDimProvidersAvailable = true;
               endpointErrors.push(`${endpoint}: ${apiError}`);
               break;
