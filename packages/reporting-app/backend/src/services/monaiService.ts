@@ -294,9 +294,6 @@ export class MonaiService {
 
       const data = response.data as Record<string, unknown>;
       const modelsRun = (data.models_run as string[]) ?? [];
-      // #region agent log
-      fetch("http://127.0.0.1:7406/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"5ecab0"},body:JSON.stringify({sessionId:"5ecab0",runId:"pre-fix",hypothesisId:"H4",location:"monaiService.ts:analyzeDicomAutoRoute:response",message:"MONAI auto-route raw response",data:{studyId,modality:typeof data.modality==="string"?data.modality:null,bodyPart:typeof data.body_part==="string"?data.body_part:null,modelsRun,errors:Array.isArray(data.errors)?data.errors.length:0,dicomOutputsCount:typeof data.dicom_outputs_count==="number"?data.dicom_outputs_count:null,hasHeatmap:Boolean(data.heatmap_png_base64),hasDicomSeg:Boolean(data.dicom_seg_base64),hasDicomSr:Boolean(data.dicom_sr_base64),hasDicomSc:Boolean(data.dicom_sc_base64)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       const allFindings: MonaiFinding[] = [];
 
       // Parse findings from the top-level "findings" array first (new format),

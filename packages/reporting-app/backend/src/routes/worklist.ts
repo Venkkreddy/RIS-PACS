@@ -105,33 +105,6 @@ function dedupeStudyRecordsByCanonicalUid(records: StudyRecord[]): StudyRecord[]
   return Array.from(deduped.values()).sort(sortStudyRecordsByDateDesc);
 }
 
-function emitViewerAccessDebugLog(
-  runId: string,
-  hypothesisId: string,
-  location: string,
-  message: string,
-  data: Record<string, unknown>,
-): void {
-  // #region agent log
-  fetch("http://127.0.0.1:7406/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "654875",
-    },
-    body: JSON.stringify({
-      sessionId: "654875",
-      runId,
-      hypothesisId,
-      location,
-      message,
-      data,
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
-}
-
 function toStudyRecordPatch(study: Record<string, unknown>): Partial<StudyRecord> {
   return {
     patientName: extractString(study, ["patientName", "PatientName", "00100010"]),
@@ -759,53 +732,14 @@ export function worklistRouter(
       const gwReq = req as GatewayRequest;
       const tenantId = (gwReq.tenantId ?? req.get("x-tenant-id")?.trim()) || undefined;
       const isTenantScoped = Boolean(env.MULTI_TENANT_ENABLED && tenantId && tenantStore);
-      emitViewerAccessDebugLog(
-        "run1",
-        "H2",
-        "worklist.ts:viewer-access:entry",
-        "Viewer access request received",
-        {
-          studyId,
-          tenantId: tenantId ?? null,
-          tenantHeader: req.get("x-tenant-id") ?? null,
-          multiTenantEnabled: env.MULTI_TENANT_ENABLED,
-          isTenantScoped,
-        },
-      );
 
       const record = !isTenantScoped ? await store.getStudyRecord(studyId) : null;
       const tenantRecord = isTenantScoped && tenantId && tenantStore
         ? (await tenantStore.getStudy(tenantId, studyId)
           ?? (looksLikeDicomUid(studyId) ? await tenantStore.getStudyByUid(tenantId, studyId) : null))
         : null;
-      emitViewerAccessDebugLog(
-        "run1",
-        "H1",
-        "worklist.ts:viewer-access:lookup",
-        "Viewer access study lookup results",
-        {
-          studyId,
-          lookedLikeDicomUid: looksLikeDicomUid(studyId),
-          foundRecord: Boolean(record),
-          foundTenantRecord: Boolean(tenantRecord),
-          recordStudyId: record?.studyId ?? null,
-          tenantRecordId: tenantRecord?.id ?? null,
-          tenantStudyUid: tenantRecord?.study_instance_uid ?? null,
-        },
-      );
 
       if (!record && !tenantRecord) {
-        emitViewerAccessDebugLog(
-          "run1",
-          "H1",
-          "worklist.ts:viewer-access:not-found-ris",
-          "Viewer access denied because study missing in RIS store",
-          {
-            studyId,
-            tenantId: tenantId ?? null,
-            isTenantScoped,
-          },
-        );
         res.status(404).json({ allowed: false, message: "Study not found in RIS" });
         return;
       }
@@ -819,18 +753,6 @@ export function worklistRouter(
           ? resolveTenantStudyInstanceUid(tenantRecord)
           : null;
       if (!studyInstanceUid) {
-        emitViewerAccessDebugLog(
-          "run1",
-          "H4",
-          "worklist.ts:viewer-access:missing-uid",
-          "Viewer access denied because StudyInstanceUID could not be resolved",
-          {
-            studyId,
-            hasRecord: Boolean(record),
-            hasTenantRecord: Boolean(tenantRecord),
-            metadataKeys: Object.keys(recordMetadata ?? {}).length,
-          },
-        );
         res.status(409).json({
           allowed: false,
           message: "Study does not have a valid StudyInstanceUID",
@@ -853,21 +775,6 @@ export function worklistRouter(
         maxAttempts: 3,
         retryDelayMs: 2000,
       });
-      emitViewerAccessDebugLog(
-        "run1",
-        "H3",
-        "worklist.ts:viewer-access:validation-result",
-        "Viewer access Dicoogle validation result",
-        {
-          studyId,
-          studyInstanceUid,
-          isValid: validation.isValid,
-          reason: validation.reason ?? null,
-          attempts: validation.attempts,
-          responseStatus: validation.responseStatus ?? null,
-          endpointCount: Object.values(validation.endpointUrls).filter((value) => Boolean(value)).length,
-        },
-      );
       const dicomValidationMetadata = {
         state: validation.isValid ? "valid" : "invalid",
         reason: validation.reason ?? null,

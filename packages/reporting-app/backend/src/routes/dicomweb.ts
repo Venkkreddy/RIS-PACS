@@ -1555,9 +1555,6 @@ function ensureDicomwebAccess(req: Request, res: Response, next: NextFunction): 
     return;
   }
 
-  // #region agent log
-  fetch("http://127.0.0.1:7406/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"5ecab0"},body:JSON.stringify({sessionId:"5ecab0",runId:"pre-fix",hypothesisId:"H2",location:"dicomweb.ts:ensureDicomwebAccess:deny",message:"DICOMweb request denied by auth gate",data:{path:req.path,origin:requestOrigin||null,referer:requestReferer||null,hasSessionUser:Boolean(req.session?.user),enableAuth:env.ENABLE_AUTH},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   res.status(401).json({ error: "Unauthorized" });
 }
 
@@ -2545,9 +2542,6 @@ export function dicomwebRouter(): Router {
       try {
         const sopUID = req.params.sopUID as string;
         const filePath = await resolveWadoFilePath(req, sopUID);
-        // #region agent log
-        fetch("http://127.0.0.1:7406/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"5ecab0"},body:JSON.stringify({sessionId:"5ecab0",runId:"pre-fix",hypothesisId:"H3",location:"dicomweb.ts:frames:resolvePath",message:"WADO-RS frame request resolved path",data:{studyUID:req.params.studyUID,seriesUID:req.params.seriesUID,sopUID,frameNumbers:req.params.frameNumbers,fileResolved:Boolean(filePath),filePath:filePath??null},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
 
         if (!filePath) {
           res.status(404).json({ error: "DICOM file not found" });
@@ -2633,9 +2627,6 @@ export function dicomwebRouter(): Router {
           }
           pixelData = nativeFrame;
         }
-        // #region agent log
-        fetch("http://127.0.0.1:7406/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"5ecab0"},body:JSON.stringify({sessionId:"5ecab0",runId:"pre-fix",hypothesisId:"H3",location:"dicomweb.ts:frames:payloadReady",message:"WADO-RS frame payload prepared",data:{sopUID,frameIndex,transferSyntaxUID:transferSyntaxUID??null,encapsulated:Boolean(pixelDataElement.encapsulatedPixelData),pixelBytes:pixelData.length,acceptHeader:(req.headers.accept||"").toString().slice(0,120)},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
 
         const mediaType = "application/octet-stream";
         const acceptHeader = (req.headers.accept || "").toLowerCase();

@@ -14,7 +14,7 @@ const reportingUiBaseUrl =
   window.__REPORTING_UI_URL__ || (isLocalhost ? 'http://localhost:5173' : `${runtimeProtocol}//${runtimeHost}:5173`);
 
 window.config = {
-  routerBasename: '/ohif',
+  routerBasename: '/',
   showStudyList: true,
   showLoadingIndicator: true,
   maxNumberOfWebWorkers: 3,
