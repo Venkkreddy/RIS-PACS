@@ -298,6 +298,24 @@ function resolveLaunchableViewerUrl(...candidates: Array<string | null | undefin
   return null;
 }
 
+function rewriteViewerUrlForCurrentOrigin(rawViewerUrl: string): string {
+  const parsed = new URL(rawViewerUrl);
+  parsed.protocol = window.location.protocol;
+
+  const isLocalhost =
+    window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+
+  if (isLocalhost) {
+    parsed.hostname = window.location.hostname;
+  } else {
+    // On VM deployments, serve OHIF through the frontend origin to avoid
+    // iframe failures caused by the separate self-signed OHIF certificate.
+    parsed.host = window.location.host;
+  }
+
+  return parsed.toString();
+}
+
 const isPendingStudy = (study: WorklistStudy) =>
   study.status === "assigned" || study.status === "unassigned" || (study.status as string) === "pending";
 
@@ -601,10 +619,7 @@ export function RadiologistDashboard() {
         return;
       }
 
-      const parsed = new URL(rawLaunchUrl);
-      parsed.protocol = window.location.protocol;
-      parsed.hostname = window.location.hostname;
-      const launchUrl = parsed.toString();
+      const launchUrl = rewriteViewerUrlForCurrentOrigin(rawLaunchUrl);
 
       setResolvedViewerUrlByStudyId((prev) => ({
         ...prev,

@@ -141,6 +141,24 @@ server {
         proxy_read_timeout 120s;
     }
 
+    # Proxy OHIF through the frontend origin for VM deployments. This avoids
+    # iframe failures when the browser has not explicitly trusted the separate
+    # self-signed certificate served on the dedicated OHIF port.
+    location ~ ^/(viewer/.*|app-config\.js|init-service-worker\.js|sw\.js|app\.bundle\.css|app\.bundle\.[^/]+\.js|[0-9]+\.bundle\.[^/]+\.js|[0-9]+\.css|[0-9a-f]{8,}\.(?:wasm|woff2?))$ {
+        set $ohif https://ohif-viewer;
+        proxy_pass         $ohif$request_uri;
+        proxy_http_version 1.1;
+        proxy_ssl_verify   off;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_buffering    off;
+        proxy_request_buffering off;
+        client_max_body_size 0;
+        proxy_read_timeout 120s;
+    }
+
     location / {
         try_files $uri /index.html;
     }

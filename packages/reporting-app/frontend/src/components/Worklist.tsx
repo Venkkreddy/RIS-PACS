@@ -39,6 +39,22 @@ function pickLaunchableViewerUrl(...candidates: Array<string | null | undefined>
   return null;
 }
 
+function rewriteViewerUrlForCurrentOrigin(rawViewerUrl: string): string {
+  const parsed = new URL(rawViewerUrl);
+  parsed.protocol = window.location.protocol;
+
+  const isLocalhost =
+    window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+
+  if (isLocalhost) {
+    parsed.hostname = window.location.hostname;
+  } else {
+    parsed.host = window.location.host;
+  }
+
+  return parsed.toString();
+}
+
 export function Worklist({
   scopedUploaderId,
   scopedRadiologistId,
@@ -92,10 +108,7 @@ export function Worklist({
         setTimeout(() => setOhifWarning(null), 6000);
         return;
       }
-      const parsed = new URL(rawViewerUrl);
-      parsed.protocol = window.location.protocol;
-      parsed.hostname = window.location.hostname;
-      const viewerUrl = parsed.toString();
+      const viewerUrl = rewriteViewerUrlForCurrentOrigin(rawViewerUrl);
       window.open(viewerUrl, "_blank", "noopener,noreferrer");
     } catch (error) {
       let apiMessage: string | undefined;
