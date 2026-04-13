@@ -97,6 +97,8 @@ const schema = z.object({
     z.string().email().default("reports@example.com"),
   ),
   WEASIS_BASE_URL: optionalUrl,
+  WAV2VEC2_SERVER_URL: z.string().url().default("http://localhost:5001"),
+  MEDASR_SERVER_URL: z.string().url().default("http://localhost:5002"),
   MONAI_SERVER_URL: z.string().url().default("http://localhost:5000"),
   MONAI_ENABLED: z.enum(["true", "false"]).default("false"),
   DICOOGLE_BASE_URL: z.string().url().default("http://localhost:8080"),
