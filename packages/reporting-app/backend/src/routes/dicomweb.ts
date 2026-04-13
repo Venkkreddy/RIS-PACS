@@ -8,7 +8,7 @@ import { Decoder as JpegLosslessDecoder } from "jpeg-lossless-decoder-js";
 import { env } from "../config/env";
 import { ensureAuthenticated } from "../middleware/auth";
 import type { GatewayRequest } from "../middleware/apiGateway";
-import { getDicoogleAuthHeaders } from "../services/dicoogleAuth";
+import { getDicoogleAuthHeaders, clearDicoogleTokenCache } from "../services/dicoogleAuth";
 import { logger } from "../services/logger";
 import { verifyWeasisAccessToken } from "../services/weasisAccess";
 
@@ -521,6 +521,11 @@ async function queryDicoogleDIM(): Promise<DicoogleDIMPatient[]> {
           querySucceeded = true;
           break;
         } catch (error) {
+          if (axios.isAxiosError(error) && error.response?.status === 401 && headers === authHeaders) {
+            clearDicoogleTokenCache();
+            endpointErrors.push(`${endpoint}: 401 Unauthorized (token cleared, will retry)`);
+            continue;
+          }
           if (axios.isAxiosError(error) && error.response?.status === 400) {
             const payload = error.response.data as { error?: unknown } | undefined;
             const apiError = typeof payload?.error === "string" ? payload.error : "";
