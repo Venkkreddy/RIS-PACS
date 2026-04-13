@@ -107,7 +107,7 @@ const corsMiddleware = (isProduction && env.CORS_ALLOW_ALL)
       credentials: true,
     })
   : env.CORS_ALLOW_ALL
-    ? cors({ origin: "*" })
+    ? cors({ origin: true, credentials: true })
     : cors({
         origin(origin, callback) {
           if (isConfiguredOriginAllowed(origin) || (origin ? isLocalDevOrigin(origin) : false)) {
