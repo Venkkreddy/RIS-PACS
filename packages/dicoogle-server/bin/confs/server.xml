@@ -6,12 +6,8 @@
     <save-thumbnails>false</save-thumbnails>
     <thumbnail-size>64</thumbnail-size>
     <indexer-effort>100</indexer-effort>
-    <dim-providers>
-      <dim-provider>lucene</dim-provider>
-    </dim-providers>
-    <default-storages>
-      <default-storage>file-storage</default-storage>
-    </default-storages>
+    <dim-providers/>
+    <default-storages/>
     <enable-watch-directory>false</enable-watch-directory>
     <watch-directory></watch-directory>
     <use-iio-registry>false</use-iio-registry>

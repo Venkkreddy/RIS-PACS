@@ -3,20 +3,13 @@ FROM maven:3.9.9-eclipse-temurin-11 AS builder
 WORKDIR /src
 COPY . .
 
-# Build Dicoogle core jar
+# Build Dicoogle core and plugin jars from vendored source so Fly deploys
+# do not depend on manually checked-in runtime binaries.
 RUN mvn -f pom.xml -DskipTests -Dskip.installnodenpm -Dskip.npm package && \
     mkdir -p /runtime/bin /runtime/plugins && \
     cp dicoogle/target/dicoogle.jar /runtime/bin/dicoogle.jar && \
     (ls dicoogle/target/plugins/*.jar >/dev/null 2>&1 && cp dicoogle/target/plugins/*.jar /runtime/plugins/ || true) && \
     (ls bin/*.jar >/dev/null 2>&1 && cp bin/*.jar /runtime/plugins/ || true)
-
-# Build the official lucene + filestorage plugins from source
-RUN curl -sL https://github.com/dicoogle/dicoogle-plugins/archive/refs/heads/main.tar.gz | tar xz -C /tmp && \
-    cd /tmp/dicoogle-plugins-main && \
-    mvn -DskipTests package && \
-    cp plugins/lucene/target/lucene-*.jar /runtime/plugins/ && \
-    cp plugins/filestorage/target/filestorage-*.jar /runtime/plugins/ && \
-    rm -rf /tmp/dicoogle-plugins-main
 
 FROM eclipse-temurin:11-jre
 
