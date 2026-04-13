@@ -485,7 +485,7 @@ export function RadiologistDashboard() {
       await api.delete(`/patients/${deleteTarget.registryId}`);
       setDeleteTarget(null);
       await queryClient.invalidateQueries({ queryKey: ["patients"] });
-      await worklistQuery.refetch();
+      await queryClient.invalidateQueries({ queryKey: ["worklist"] });
     } catch (err: unknown) {
       setDeleteError(formatPatientApiError(err));
     } finally {

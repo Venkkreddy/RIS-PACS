@@ -103,6 +103,7 @@ export function PatientsPage() {
       await api.delete(`/patients/${deleteTarget.id}`);
       setDeleteTarget(null);
       await queryClient.invalidateQueries({ queryKey: ["patients"] });
+      await queryClient.invalidateQueries({ queryKey: ["worklist"] });
     } catch (err: any) {
       setError(err?.response?.data?.error ?? err.message ?? "Failed to delete patient");
     } finally {
