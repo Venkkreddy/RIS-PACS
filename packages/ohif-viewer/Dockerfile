@@ -9,7 +9,8 @@ RUN apk add --no-cache openssl \
       -newkey rsa:2048 \
       -keyout /etc/nginx/ssl/selfsigned.key \
       -out    /etc/nginx/ssl/selfsigned.crt \
-      -subj   "/C=US/ST=State/L=City/O=TDAI/CN=localhost"
+      -subj   "/C=US/ST=State/L=City/O=TDAI/CN=tdai-viewer" \
+      -addext "subjectAltName=DNS:localhost,DNS:ohif-viewer,IP:127.0.0.1,IP:34.16.87.46"
 
 COPY default.conf /etc/nginx/conf.d/default.conf
 COPY platform/app/public/config/default.js /usr/share/nginx/html/app-config.js

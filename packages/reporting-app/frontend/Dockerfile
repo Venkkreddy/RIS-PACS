@@ -37,7 +37,8 @@ RUN apk add --no-cache openssl \
       -newkey rsa:2048 \
       -keyout /etc/nginx/ssl/selfsigned.key \
       -out    /etc/nginx/ssl/selfsigned.crt \
-      -subj   "/C=US/ST=State/L=City/O=TDAI/CN=localhost" \
+      -subj   "/C=US/ST=State/L=City/O=TDAI/CN=tdai-frontend" \
+      -addext "subjectAltName=DNS:localhost,DNS:reporting-app-frontend,IP:127.0.0.1,IP:34.16.87.46" \
  && openssl dhparam -out /etc/nginx/ssl/dhparam.pem 2048
 
 COPY --from=builder /app/packages/reporting-app/frontend/dist /usr/share/nginx/html
