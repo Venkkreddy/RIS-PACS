@@ -768,10 +768,12 @@ export function worklistRouter(
         });
       }
 
+      const patientId = (recordMetadata.patientId as string | undefined) ?? undefined;
       const validation = await validateStudyAvailability({
         studyInstanceUID: studyInstanceUid,
         dicomwebBaseUrl: getDicomwebValidationBaseUrl(req),
         tenantId,
+        patientId,
         maxAttempts: 3,
         retryDelayMs: 2000,
       });

@@ -1246,12 +1246,14 @@ export async function validateStudyAvailability({
   studyInstanceUID,
   dicomwebBaseUrl,
   tenantId,
+  patientId,
   maxAttempts = 3,
   retryDelayMs = 2000,
 }: {
   studyInstanceUID: string;
   dicomwebBaseUrl: string;
   tenantId?: string;
+  patientId?: string;
   maxAttempts?: number;
   retryDelayMs?: number;
 }): Promise<DicomwebStudyValidationResult> {
@@ -1281,6 +1283,13 @@ export async function validateStudyAvailability({
         if (foundStudy) {
           matchedStudy = foundStudy;
           break;
+        }
+      }
+
+      if (!matchedStudy && patientId) {
+        const patientMatch = patients.find((p) => p.id === patientId);
+        if (patientMatch && patientMatch.studies.length > 0) {
+          matchedStudy = patientMatch.studies[0];
         }
       }
 
