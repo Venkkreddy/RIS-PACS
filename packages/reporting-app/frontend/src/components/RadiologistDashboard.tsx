@@ -542,7 +542,19 @@ export function RadiologistDashboard() {
     return byMrn;
   }, [registryPatientsQuery.data, recentlyRegisteredPatients]);
 
+  const knownPatientsByName = useMemo(() => {
+    const byName = new Map<string, Patient>();
+    for (const patient of registryPatientsQuery.data ?? []) {
+      byName.set(`${patient.firstName} ${patient.lastName}`.trim().toLowerCase(), patient);
+    }
+    for (const patient of recentlyRegisteredPatients) {
+      byName.set(`${patient.firstName} ${patient.lastName}`.trim().toLowerCase(), patient);
+    }
+    return byName;
+  }, [registryPatientsQuery.data, recentlyRegisteredPatients]);
+
   const rawData = worklistQuery.data ?? [];
+  const allRegistryPatients = registryPatientsQuery.data ?? [];
   const data = useMemo(() => {
     const latestStudyByPatient = new Map<string, WorklistStudy>();
     for (const study of rawData) {
@@ -558,13 +570,27 @@ export function RadiologistDashboard() {
         .map((study) => getHumanPatientMrn(study).trim().toLowerCase())
         .filter(Boolean),
     );
+    const existingNameKeys = new Set(
+      merged
+        .map((study) => (study.patientName ?? "").replace(/[\^,]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase())
+        .filter(Boolean),
+    );
+    const addedMrnKeys = new Set<string>();
+    for (const patient of allRegistryPatients) {
+      const mrnKey = patient.patientId.trim().toLowerCase();
+      const nameKey = `${patient.firstName} ${patient.lastName}`.trim().toLowerCase();
+      if (!mrnKey || existingMrnKeys.has(mrnKey) || existingNameKeys.has(nameKey)) continue;
+      addedMrnKeys.add(mrnKey);
+      merged.push(buildRegistryOnlyWorklistStudy(patient));
+    }
     for (const patient of recentlyRegisteredPatients) {
       const mrnKey = patient.patientId.trim().toLowerCase();
-      if (!mrnKey || existingMrnKeys.has(mrnKey)) continue;
+      const nameKey = `${patient.firstName} ${patient.lastName}`.trim().toLowerCase();
+      if (!mrnKey || existingMrnKeys.has(mrnKey) || existingNameKeys.has(nameKey) || addedMrnKeys.has(mrnKey)) continue;
       merged.push(buildRegistryOnlyWorklistStudy(patient));
     }
     return merged.sort(compareStudiesByRecencyDesc);
-  }, [rawData, recentlyRegisteredPatients]);
+  }, [rawData, allRegistryPatients, recentlyRegisteredPatients]);
 
   async function validateAndOpenViewer(study: WorklistStudy): Promise<void> {
     if (!study.viewerUrl) return;
@@ -920,7 +946,12 @@ export function RadiologistDashboard() {
             )}
             {canDeletePatient && (() => {
               const mrn = getHumanPatientMrn(row.original);
-              const registryId = getStudyRegistryPatientId(row.original) || (mrn ? (knownPatientsByMrn.get(mrn.toLowerCase())?.id ?? "") : "");
+              const nameKey = (row.original.patientName ?? "").replace(/[\^,]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+              const registryId =
+                getStudyRegistryPatientId(row.original) ||
+                (mrn ? (knownPatientsByMrn.get(mrn.toLowerCase())?.id ?? "") : "") ||
+                (nameKey ? (knownPatientsByName.get(nameKey)?.id ?? "") : "");
+              const displayMrn = mrn || (registryId && nameKey ? (knownPatientsByName.get(nameKey)?.patientId ?? "—") : "—");
               return (
                 <button
                   className={`rounded-md p-0.5 transition-colors ${registryId ? "text-red-500 hover:bg-red-50" : "text-tdai-gray-300 cursor-not-allowed"}`}
@@ -931,7 +962,7 @@ export function RadiologistDashboard() {
                     setDeleteTarget({
                       studyId: row.original.studyId,
                       patientName: row.original.patientName ?? "Unknown",
-                      patientMrn: mrn || "—",
+                      patientMrn: displayMrn,
                       registryId,
                     });
                   }}
@@ -946,7 +977,7 @@ export function RadiologistDashboard() {
         },
       },
     ],
-    [viewerStudyId, expandedRowId, data, rawData, copiedId, canDicomUpload, canDeletePatient, filteredData, selectedRows, navigate, validatingViewerStudyId, knownPatientsByMrn],
+    [viewerStudyId, expandedRowId, data, rawData, copiedId, canDicomUpload, canDeletePatient, filteredData, selectedRows, navigate, validatingViewerStudyId, knownPatientsByMrn, knownPatientsByName],
   );
 
   const table = useReactTable({ data: filteredData, columns, getCoreRowModel: getCoreRowModel() });

@@ -7,6 +7,7 @@ import type { GatewayRequest } from "../middleware/apiGateway";
 import { DicoogleService } from "../services/dicoogleService";
 import { logger } from "../services/logger";
 import { StoreService, StudyRecord, StudyStatus } from "../services/store";
+import type { Patient } from "@medical-report-system/shared";
 import { TenantScopedStore, type StudyRow } from "../services/tenantScopedStore";
 import { createWeasisAccessToken } from "../services/weasisAccess";
 import { validateStudyAvailability, getStudyUidsForSamePatient, buildPatientStudyGroupMap } from "./dicomweb";
@@ -650,13 +651,36 @@ export function worklistRouter(
       return patientCacheByMrn.get(key) ?? null;
     };
 
+    let allPatientsCache: Awaited<ReturnType<StoreService["listPatients"]>> | null = null;
+    const patientByNameCache = new Map<string, Patient>();
+    const resolvePatientByName = async (name: string | undefined) => {
+      const normalized = name?.replace(/[\^,]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+      if (!normalized) return null;
+      if (patientByNameCache.has(normalized)) return patientByNameCache.get(normalized) ?? null;
+      if (!allPatientsCache) {
+        allPatientsCache = await store.listPatients();
+      }
+      const match = allPatientsCache.find(
+        (p) => `${p.firstName} ${p.lastName}`.toLowerCase() === normalized,
+      ) ?? null;
+      patientByNameCache.set(normalized, match!);
+      return match;
+    };
+
     const data = await Promise.all(records.map(async (record) => {
       const studyInstanceUid = recordUidMap.get(record.studyId) ?? null;
       const hasDicom = studyInstanceUid !== null;
 
       const meta = record.metadata as Record<string, unknown> | undefined;
-      const mrn = resolvePatientMrn(meta);
-      const registryPatient = await resolvePatientByMrn(mrn);
+      let mrn = resolvePatientMrn(meta);
+      let registryPatient = await resolvePatientByMrn(mrn);
+
+      if (!registryPatient && record.patientName) {
+        registryPatient = await resolvePatientByName(record.patientName);
+        if (registryPatient) {
+          mrn = registryPatient.patientId;
+        }
+      }
       let viewerUids: string[];
 
       const mrnGroup = mrn ? patientStudyUids.get(mrn) : undefined;

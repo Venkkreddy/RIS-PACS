@@ -110,7 +110,13 @@ export async function seedDevData(store: InMemoryStoreService): Promise<void> {
     { studyId: "1.2.826.0.1.3680043.8.498.38295520635455189473067266483083688997", patientName: "Suresh Reddy", studyDate: "2026-03-14", modality: "CR", description: "X-Ray Right Knee (3 views)", bodyPart: "Right Knee", location: "Apollo Diagnostics, Chennai", status: "assigned" as const, assignedTo: "rad-dr-sneha", assignedAt: new Date().toISOString(), uploaderId: "tech-rajesh" },
     { studyId: "1.2.826.0.1.3680043.8.498.30846453286534628577940689408376587200", patientName: "Anjali Mehta", studyDate: "2026-03-11", modality: "CR", description: "Chest X-Ray PA & Lateral", bodyPart: "Chest", location: "Medanta, Kolkata", status: "assigned" as const, assignedTo: "rad-dr-sanjay", assignedAt: new Date().toISOString(), uploaderId: "tech-rajesh" },
   ];
+  const patientMrnByName = new Map<string, string>();
+  for (const p of patients) {
+    patientMrnByName.set(`${p.firstName} ${p.lastName}`, p.patientId.toUpperCase());
+  }
+
   for (const s of studies) {
+    const mrn = patientMrnByName.get(s.patientName);
     await store.upsertStudyRecord(s.studyId, {
       patientName: s.patientName,
       studyDate: s.studyDate,
@@ -122,6 +128,7 @@ export async function seedDevData(store: InMemoryStoreService): Promise<void> {
       assignedTo: s.assignedTo,
       assignedAt: s.assignedAt,
       uploaderId: s.uploaderId,
+      metadata: mrn ? { patientId: mrn } : undefined,
     });
   }
 
