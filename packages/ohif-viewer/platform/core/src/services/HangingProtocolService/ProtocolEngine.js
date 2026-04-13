@@ -16,8 +16,11 @@ export default class ProtocolEngine {
    * @param props.displaySets are the list of display sets which can be modified.
    */
   run({ studies, displaySets, activeStudy }) {
-    this.studies = studies;
-    this.study = activeStudy || studies[0];
+    this.studies = studies || [];
+    this.study =
+      activeStudy?.StudyInstanceUID
+        ? activeStudy
+        : this.studies.find(s => s?.StudyInstanceUID) || this.studies[0];
     this.displaySets = displaySets;
     return this.getBestProtocolMatch();
   }
@@ -107,6 +110,16 @@ export default class ProtocolEngine {
   findMatchByStudy(study, options) {
     const matched = [];
 
+    if (!study?.StudyInstanceUID) {
+      console.warn('ProtocolEngine::findMatchByStudy called without a valid study');
+      const fallbackProtocol =
+        this.protocols.find(protocol => protocol.id === 'default') ?? this.protocols[0];
+      if (!fallbackProtocol) {
+        return matched;
+      }
+      return [{ score: 0, protocol: fallbackProtocol }];
+    }
+
     this.protocols.forEach(protocol => {
       // Clone the protocol's protocolMatchingRules array
       // We clone it so that we don't accidentally add the
@@ -138,6 +151,10 @@ export default class ProtocolEngine {
     if (!matched.length) {
       const protocol =
         this.protocols.find(protocol => protocol.id === 'default') ?? this.protocols[0];
+      if (!protocol) {
+        console.warn('ProtocolEngine::findMatchByStudy no protocols registered');
+        return [];
+      }
       console.log('No protocol matches, defaulting to', protocol);
       return [
         {

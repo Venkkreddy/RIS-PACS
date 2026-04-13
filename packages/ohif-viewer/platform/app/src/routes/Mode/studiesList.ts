@@ -25,14 +25,19 @@ const compare = (a, b, defaultCompare = 0): number => {
  * order or in study instance UID order - not very useful, but
  * if not specifically specified then at least making it consistent is useful.
  */
-const getStudiesfromDisplaySets = (displaysets): StudyMetadata[] => {
-  const studyMap = {};
+const getStudiesfromDisplaySets = (
+  displaySets: Array<{ StudyInstanceUID?: string }> = []
+): StudyMetadata[] => {
+  const studyMap: Record<string, boolean> = {};
 
-  const ret = displaySets.reduce((prev, curr) => {
-    const { StudyInstanceUID } = curr;
-    if (!studyMap[StudyInstanceUID]) {
-      const study = DicomMetadataStore.getStudy(StudyInstanceUID);
-      studyMap[StudyInstanceUID] = study;
+  const ret = displaySets.reduce<StudyMetadata[]>((prev, curr) => {
+    const { StudyInstanceUID } = curr ?? {};
+    if (!StudyInstanceUID || studyMap[StudyInstanceUID]) {
+      return prev;
+    }
+    const study = DicomMetadataStore.getStudy(StudyInstanceUID);
+    if (study) {
+      studyMap[StudyInstanceUID] = true;
       prev.push(study);
     }
     return prev;
@@ -48,15 +53,21 @@ const getStudiesfromDisplaySets = (displaysets): StudyMetadata[] => {
  * The studies retrieve from the Uids is faster and gets the studies
  * in the original order, as specified.
  */
-const getStudiesFromUIDs = (studyUids: string[]): StudyMetadata[] => {
+const getStudiesFromUIDs = (studyUids?: string[]): StudyMetadata[] | undefined => {
   if (!studyUids?.length) {
     return;
   }
-  return studyUids.map(uid => DicomMetadataStore.getStudy(uid));
+  const studies = studyUids
+    .map(uid => DicomMetadataStore.getStudy(uid))
+    .filter(Boolean) as StudyMetadata[];
+  return studies.length > 0 ? studies : undefined;
 };
 
 /** Gets the array of studies */
-const getStudies = (studyUids?: string[], displaySets): StudyMetadata[] => {
+const getStudies = (
+  studyUids?: string[],
+  displaySets: Array<{ StudyInstanceUID?: string }> = []
+): StudyMetadata[] => {
   return getStudiesFromUIDs(studyUids) || getStudiesfromDisplaySets(displaySets);
 };
 

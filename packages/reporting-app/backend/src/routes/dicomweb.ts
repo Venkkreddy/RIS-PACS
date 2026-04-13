@@ -1241,6 +1241,33 @@ function decodeJpegLosslessFrame(
   }
 }
 
+/**
+ * Whether the WADO-RS /frames/1 route can return pixel data for this file.
+ * OHIF calls GET .../studies/:uid/validate before viewing; that path used only
+ * {@link hasReadableFirstFrameCached}, which is stricter than actual frame
+ * extraction (e.g. some encapsulated JPEG layouts). Weasis skips this check.
+ */
+function canWadoServeFirstFrame(filePath: string): boolean {
+  try {
+    const fileBuffer = fs.readFileSync(filePath);
+    const byteArray = new Uint8Array(fileBuffer.buffer, fileBuffer.byteOffset, fileBuffer.byteLength);
+    const dataSet = dicomParser.parseDicom(byteArray);
+    const pixelDataElement = dataSet.elements["x7fe00010"];
+    if (!pixelDataElement) return false;
+
+    const frameIndex = 0;
+
+    if (pixelDataElement.encapsulatedPixelData) {
+      const frameData = extractEncapsulatedFrame(dataSet, pixelDataElement, frameIndex, byteArray);
+      return Boolean(frameData && frameData.length > 0);
+    }
+
+    const nativeFrame = extractNativeFrame(dataSet, pixelDataElement, frameIndex, byteArray);
+    return nativeFrame != null && nativeFrame.length > 0;
+  } catch {
+    return false;
+  }
+}
 
 export async function validateStudyAvailability({
   studyInstanceUID,
@@ -1268,6 +1295,8 @@ export async function validateStudyAvailability({
   };
 
   let lastFailure: DicomwebStudyValidationResult | null = null;
+  // Validation is used for launch gating, so avoid serving stale cache snapshots.
+  clearDimCache();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -1277,19 +1306,22 @@ export async function validateStudyAvailability({
 
       const patients = await queryDicoogleDIM();
       let matchedStudy: DicoogleDIMStudy | null = null;
+      const matchingStudies: Array<{ patient: DicoogleDIMPatient; study: DicoogleDIMStudy }> = [];
 
       for (const patient of patients) {
-        const foundStudy = patient.studies.find((study) => study.studyInstanceUID === studyInstanceUID);
-        if (foundStudy) {
-          matchedStudy = foundStudy;
-          break;
+        for (const study of patient.studies) {
+          if (study.studyInstanceUID === studyInstanceUID) {
+            matchingStudies.push({ patient, study });
+          }
         }
       }
 
-      if (!matchedStudy && patientId) {
-        const patientMatch = patients.find((p) => p.id === patientId);
-        if (patientMatch && patientMatch.studies.length > 0) {
-          matchedStudy = patientMatch.studies[0];
+      if (matchingStudies.length > 0) {
+        if (patientId) {
+          matchedStudy =
+            matchingStudies.find(({ patient }) => patient.id === patientId)?.study ?? matchingStudies[0].study;
+        } else {
+          matchedStudy = matchingStudies[0].study;
         }
       }
 
@@ -1381,7 +1413,7 @@ export async function validateStudyAvailability({
                 if (!filePath) {
                   continue;
                 }
-                if (!hasReadableFirstFrameCached(filePath)) {
+                if (!hasReadableFirstFrameCached(filePath) && !canWadoServeFirstFrame(filePath)) {
                   continue;
                 }
 

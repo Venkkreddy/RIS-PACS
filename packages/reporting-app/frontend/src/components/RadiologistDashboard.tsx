@@ -290,28 +290,12 @@ function isLaunchableViewerUrl(viewerUrl: string): boolean {
 }
 
 function resolveLaunchableViewerUrl(...candidates: Array<string | null | undefined>): string | null {
-  let bestCandidate: { url: string; uidCount: number } | null = null;
   for (const candidate of candidates) {
-    if (!candidate || !isLaunchableViewerUrl(candidate)) continue;
-    try {
-      const parsed = new URL(candidate);
-      const combined = [
-        parsed.searchParams.get("StudyInstanceUIDs") ?? "",
-        parsed.searchParams.get("studyInstanceUIDs") ?? "",
-      ]
-        .join(",")
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean);
-      const uidCount = new Set(combined).size;
-      if (!bestCandidate || uidCount > bestCandidate.uidCount) {
-        bestCandidate = { url: candidate, uidCount };
-      }
-    } catch {
-      // ignore malformed URL candidates
+    if (candidate && isLaunchableViewerUrl(candidate)) {
+      return candidate;
     }
   }
-  return bestCandidate?.url ?? null;
+  return null;
 }
 
 const isPendingStudy = (study: WorklistStudy) =>
@@ -809,7 +793,7 @@ export function RadiologistDashboard() {
         id: "modality",
         header: "Modality",
         cell: ({ row }) => (
-          <div className="text-center">
+          <div className="flex items-center justify-center text-center">
             <span className="inline-block rounded-md bg-tdai-navy-700 px-2 py-0.5 text-[10px] font-bold tracking-wider text-white shadow-sm">{row.original.modality ?? "OT"}</span>
           </div>
         ),
@@ -1204,12 +1188,12 @@ export function RadiologistDashboard() {
       <div className={`flex-1 overflow-auto ${darkMode ? "bg-tdai-navy-950" : "bg-white"}`}>
         {/* ── Column header filter row ──────── */}
         <div className={`border-b sticky top-0 z-10 ${darkMode ? "bg-tdai-navy-900 border-white/10" : "bg-tdai-surface-alt border-tdai-border"}`}>
-          <div className={`grid grid-cols-[32px_32px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] gap-0 text-[10px] font-bold uppercase tracking-wider ${darkMode ? "text-tdai-gray-400" : "text-tdai-secondary"}`}>
+          <div className={`grid grid-cols-[32px_32px_minmax(0,1.2fr)_minmax(0,0.72fr)_minmax(0,0.72fr)_minmax(0,1.28fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,1fr)] gap-0 text-[10px] font-bold uppercase tracking-wider ${darkMode ? "text-tdai-gray-400" : "text-tdai-secondary"}`}>
             <div className="px-3 py-3" />
             <div className="px-3 py-3" />
             <div className={`px-2 py-3 flex items-center justify-start gap-1 cursor-pointer ${darkMode ? "hover:text-white" : "hover:text-tdai-navy-700"}`}>Patient <ChevronDown className="h-3 w-3" /></div>
             <div className={`px-2 py-3 flex items-center justify-start gap-1 cursor-pointer ${darkMode ? "hover:text-white" : "hover:text-tdai-navy-700"}`}>Acc/Diag <ChevronDown className="h-3 w-3" /></div>
-            <div className={`px-2 py-3 flex items-center justify-start gap-1 cursor-pointer ${darkMode ? "hover:text-white" : "hover:text-tdai-navy-700"}`}>Modality <ChevronDown className="h-3 w-3" /></div>
+            <div className={`px-2 py-3 flex items-center justify-center gap-1 text-center cursor-pointer ${darkMode ? "hover:text-white" : "hover:text-tdai-navy-700"}`}>Modality <ChevronDown className="h-3 w-3" /></div>
             <div className={`px-2 py-3 flex items-center justify-start gap-1 cursor-pointer ${darkMode ? "hover:text-white" : "hover:text-tdai-navy-700"}`}>Description <ChevronDown className="h-3 w-3" /></div>
             <div className={`px-2 py-3 flex items-center justify-start gap-1 whitespace-nowrap cursor-pointer ${darkMode ? "hover:text-white" : "hover:text-tdai-navy-700"}`}>Report Status <ChevronDown className="h-3 w-3" /></div>
             <div className={`px-2 py-3 flex items-center justify-start gap-1 whitespace-nowrap cursor-pointer ${darkMode ? "hover:text-white" : "hover:text-tdai-navy-700"}`}>Priority <ChevronDown className="h-3 w-3" /></div>
@@ -1270,7 +1254,7 @@ export function RadiologistDashboard() {
                       if (isRegistryOnlyStudy(row.original)) return;
                       navigate(row.original.reportUrl);
                     }}
-                    className={`grid grid-cols-[32px_32px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-0 px-0 cursor-pointer ${compactMode ? "py-2.5" : "py-3.5"} transition-all duration-200 origin-left will-change-transform transform-gpu hover:z-[1] hover:brightness-[1.02] ${
+                    className={`grid grid-cols-[32px_32px_minmax(0,1.2fr)_minmax(0,0.72fr)_minmax(0,0.72fr)_minmax(0,1.28fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,1fr)] items-center gap-0 px-0 cursor-pointer ${compactMode ? "py-2.5" : "py-3.5"} transition-all duration-200 origin-left will-change-transform transform-gpu hover:z-[1] hover:brightness-[1.02] ${
                       viewerStudyId === row.original.studyId
                         ? darkMode ? "bg-tdai-teal-900/30 shadow-[inset_4px_0_0_0_#00B4A6]" : "bg-tdai-teal-50/50 shadow-[inset_4px_0_0_0_#00B4A6]"
                         : isExpanded
@@ -1284,8 +1268,10 @@ export function RadiologistDashboard() {
                         className={`${
                           cell.column.id === "patientName"
                             ? "px-2"
-                            : cell.column.id === "accDiag" || cell.column.id === "modality"
+                            : cell.column.id === "accDiag"
                               ? "px-2"
+                              : cell.column.id === "modality"
+                                ? "px-2 flex items-center justify-center text-center"
                               : cell.column.id === "reportStatus"
                                 ? "px-2 flex items-center justify-start text-left"
                                 : cell.column.id === "priority"

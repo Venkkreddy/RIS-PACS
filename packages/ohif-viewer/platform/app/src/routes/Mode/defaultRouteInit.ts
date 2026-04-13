@@ -43,9 +43,15 @@ export async function defaultRouteInit(
 
     // Gets the studies list to use
     const studies = getStudies(studyInstanceUIDs, sortedDisplaySets);
+    if (!studies?.length) {
+      return;
+    }
 
     // study being displayed, and is thus the "active" study.
-    const activeStudy = studies[0];
+    const activeStudy = studies.find(study => Boolean(study?.StudyInstanceUID)) || studies[0];
+    if (!activeStudy?.StudyInstanceUID) {
+      return;
+    }
 
     // run the hanging protocol matching on the displaySets with the predefined
     // hanging protocol in the mode configuration

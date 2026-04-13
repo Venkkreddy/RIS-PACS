@@ -420,11 +420,24 @@ export default class HangingProtocolService extends PubSubService {
    * @param protocol is a specific protocol to apply.
    */
   public run({ studies, displaySets, activeStudy }, protocolId, options = {}) {
-    this.studies = [...(studies || this.studies)];
-    this.displaySets = displaySets;
-    this.setActiveStudyUID(
-      activeStudy?.StudyInstanceUID || (activeStudy || this.studies[0])?.StudyInstanceUID
-    );
+    const nextStudies = (studies || this.studies || []).filter(study => Boolean(study?.StudyInstanceUID));
+    this.studies = [...nextStudies];
+    this.displaySets = displaySets || this.displaySets || [];
+
+    const requestedActiveStudyUID =
+      activeStudy?.StudyInstanceUID || (activeStudy || this.studies[0])?.StudyInstanceUID;
+    if (requestedActiveStudyUID) {
+      this.setActiveStudyUID(requestedActiveStudyUID);
+    } else {
+      this.activeStudy = this.studies.find(study => Boolean(study?.StudyInstanceUID));
+    }
+
+    if (!this.activeStudy?.StudyInstanceUID || this.studies.length === 0) {
+      console.warn(
+        'HangingProtocolService.run skipped: no valid active study available for protocol matching'
+      );
+      return;
+    }
 
     this.protocolEngine = new ProtocolEngine(
       this.getProtocols(),
@@ -440,7 +453,7 @@ export default class HangingProtocolService extends PubSubService {
     } else {
       const matchedProtocol = this.protocolEngine.run({
         studies: this.studies,
-        activeStudy,
+        activeStudy: this.activeStudy,
         displaySets,
       });
       this._setProtocol(matchedProtocol);
@@ -1029,6 +1042,11 @@ export default class HangingProtocolService extends PubSubService {
     protocol: HangingProtocol.Protocol,
     options = null as HangingProtocol.SetProtocolOptions
   ): void {
+    if (!protocol?.id) {
+      console.warn('HangingProtocolService._setProtocol: missing protocol — skipping');
+      return;
+    }
+
     const old = this.getActiveProtocol();
 
     try {
@@ -1241,7 +1259,15 @@ export default class HangingProtocolService extends PubSubService {
     viewportMatchDetails: Map<string, HangingProtocol.ViewportMatchDetails>;
     displaySetMatchDetails: Map<string, HangingProtocol.DisplaySetMatchDetails>;
   } {
-    this.activeStudy ||= this.studies[0];
+    this.activeStudy ||= this.studies.find(study => Boolean(study?.StudyInstanceUID));
+    if (!this.activeStudy?.StudyInstanceUID) {
+      console.warn('No active study available while matching hanging protocol viewports');
+      return {
+        matchedViewports: 0,
+        viewportMatchDetails,
+        displaySetMatchDetails,
+      };
+    }
     let matchedViewports = 0;
     stageModel.viewports.forEach(viewport => {
       const viewportId = viewport.viewportOptions.viewportId;
@@ -1358,11 +1384,11 @@ export default class HangingProtocolService extends PubSubService {
     // DisplaySets for the viewport, Note: this is not the actual displaySet,
     // but it is a info to locate the displaySet from the displaySetService
     const displaySetsInfo = [];
-    const { StudyInstanceUID: activeStudyUID } = this.activeStudy;
+    const activeStudyUID = this.activeStudy?.StudyInstanceUID || this.studies[0]?.StudyInstanceUID;
     viewport.displaySets.forEach(displaySetOptions => {
       const { id, matchedDisplaySetsIndex = 0 } = displaySetOptions;
       const reuseDisplaySetUIDs =
-        id && displaySetSelectorMap[`${activeStudyUID}:${id}:${matchedDisplaySetsIndex || 0}`];
+        activeStudyUID && id && displaySetSelectorMap[`${activeStudyUID}:${id}:${matchedDisplaySetsIndex || 0}`];
       const viewportDisplaySetMain = this.displaySetMatchDetails.get(id);
 
       const viewportDisplaySet = this.findDeduplicatedMatchDetails(
@@ -1513,6 +1539,9 @@ export default class HangingProtocolService extends PubSubService {
     console.log('ProtocolEngine::matchImages', studyMatchingRules, seriesMatchingRules);
     const matchActiveOnly = this.protocol.numberOfPriorsReferenced === -1;
     this.studies.forEach((study, studyInstanceUIDsIndex) => {
+      if (!study?.StudyInstanceUID) {
+        return;
+      }
       // Skip non-active if active only
       if (matchActiveOnly && this.activeStudy !== study) {
         return;
@@ -1537,6 +1566,9 @@ export default class HangingProtocolService extends PubSubService {
 
       this.debug('study', study.StudyInstanceUID, 'display sets #', studyDisplaySets.length);
       studyDisplaySets.forEach(displaySet => {
+        if (!displaySet) {
+          return;
+        }
         const { StudyInstanceUID, SeriesInstanceUID, displaySetInstanceUID } = displaySet;
         const seriesMatchDetails = this.protocolEngine.findMatch(
           displaySet,

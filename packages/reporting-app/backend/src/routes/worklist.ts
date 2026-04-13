@@ -122,13 +122,41 @@ function getRequestOrigin(req: Request): string | null {
   return `${forwardedProto || req.protocol}://${host}`;
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function formatHostForUrl(hostname: string): string {
+  return hostname.includes(":") ? `[${hostname}]` : hostname;
+}
+
 function getWeasisBaseUrl(req: Request, studyId: string, tenantSlug?: string): string {
   const configuredBaseUrl = env.WEASIS_BASE_URL?.replace(/\/+$/, "");
   const normalizedConfiguredBaseUrl = configuredBaseUrl?.replace(/\/dicomweb$/i, "/dicom-web");
   const requestOrigin = getRequestOrigin(req);
-  const dicomwebBaseUrl =
-    normalizedConfiguredBaseUrl ||
-    (requestOrigin ? `${requestOrigin}/dicom-web` : `${env.FRONTEND_URL.replace(/\/+$/, "")}/dicom-web`);
+  let dicomwebBaseUrl: string | undefined;
+
+  // Weasis desktop apps often reject the self-signed HTTPS cert used by local Docker.
+  // For localhost sessions, force plain HTTP directly to the backend host port.
+  if (requestOrigin) {
+    try {
+      const requestUrl = new URL(requestOrigin);
+      if (isLoopbackHostname(requestUrl.hostname)) {
+        dicomwebBaseUrl = `http://${formatHostForUrl(requestUrl.hostname)}:8081/dicom-web`;
+      }
+    } catch {
+      // Fallback to configured/public bases below.
+    }
+  }
+
+  if (!dicomwebBaseUrl) {
+    dicomwebBaseUrl =
+      normalizedConfiguredBaseUrl ||
+      (requestOrigin
+        ? `${requestOrigin}/dicom-web`
+        : `${env.FRONTEND_URL.replace(/\/+$/, "")}/dicom-web`);
+  }
+
   const accessToken = createWeasisAccessToken(studyId, undefined, tenantSlug);
   return `${dicomwebBaseUrl}/weasis/${encodeURIComponent(accessToken)}`;
 }
@@ -275,6 +303,28 @@ function buildViewerUrl(studyInstanceUids: string | string[]): string | null {
   ohifUrl.searchParams.set("studyInstanceUIDs", joinedUids);
   ohifUrl.searchParams.set("datasources", dataSourceName);
   return ohifUrl.toString();
+}
+
+function filterViewerUidsByAvailability(candidateUids: string[], availableUids: Set<string>): string[] {
+  if (candidateUids.length === 0 || availableUids.size === 0) {
+    return candidateUids;
+  }
+  const filtered = candidateUids.filter((uid) => availableUids.has(uid));
+  return filtered.length > 0 ? filtered : candidateUids;
+}
+
+function prioritizeViewerUids(candidateUids: string[], preferredUid: string | null | undefined): string[] {
+  if (!preferredUid || !candidateUids.includes(preferredUid)) {
+    return candidateUids;
+  }
+  return [preferredUid, ...candidateUids.filter((uid) => uid !== preferredUid)];
+}
+
+function pickLaunchStudyUid(viewerUids: string[], fallbackUid: string | null): string | null {
+  if (viewerUids.length > 0) {
+    return viewerUids[0]!;
+  }
+  return fallbackUid;
 }
 
 export async function syncStudiesFromDicoogle(
@@ -432,6 +482,12 @@ export function worklistRouter(
       }
 
       const dimGroupMapMt = await buildPatientStudyGroupMap();
+      const availableStudyUidsMt = new Set<string>();
+      for (const groupedUids of dimGroupMapMt.values()) {
+        for (const uid of groupedUids) {
+          availableStudyUidsMt.add(uid);
+        }
+      }
       const patientCacheByMrnMt = new Map<string, Awaited<ReturnType<TenantScopedStore["getPatientByMrn"]>>>();
       const resolveTenantPatientByMrn = async (mrn: string | undefined) => {
         const key = mrn?.trim().toUpperCase();
@@ -460,8 +516,12 @@ export function worklistRouter(
           viewerUids = [];
         }
 
+        viewerUids = prioritizeViewerUids(
+          filterViewerUidsByAvailability(viewerUids, availableStudyUidsMt),
+          studyUid ?? null,
+        );
         const viewerUrl = viewerUids.length > 0 ? buildViewerUrl(viewerUids) : null;
-        const weasisStudyUid = hasUid ? studyUid! : null;
+        const weasisStudyUid = pickLaunchStudyUid(viewerUids, hasUid ? studyUid! : null);
 
         return {
           studyId: study.id,
@@ -641,6 +701,12 @@ export function worklistRouter(
     // from DICOM headers) so studies whose Firestore metadata lacks a
     // recognisable MRN field are still grouped correctly.
     const dimGroupMap = await buildPatientStudyGroupMap();
+    const availableStudyUids = new Set<string>();
+    for (const groupedUids of dimGroupMap.values()) {
+      for (const uid of groupedUids) {
+        availableStudyUids.add(uid);
+      }
+    }
     const patientCacheByMrn = new Map<string, Awaited<ReturnType<StoreService["getPatientByMrn"]>>>();
     const resolvePatientByMrn = async (mrn: string | undefined) => {
       const key = mrn?.trim().toUpperCase();
@@ -693,7 +759,12 @@ export function worklistRouter(
         viewerUids = [];
       }
 
+      viewerUids = prioritizeViewerUids(
+        filterViewerUidsByAvailability(viewerUids, availableStudyUids),
+        studyInstanceUid,
+      );
       const viewerUrl = viewerUids.length > 0 ? buildViewerUrl(viewerUids) : null;
+      const weasisStudyUid = pickLaunchStudyUid(viewerUids, studyInstanceUid);
       const metadata = {
         ...(meta ?? {}),
         ...(mrn ? { patientId: mrn } : {}),
@@ -712,8 +783,8 @@ export function worklistRouter(
         ...record,
         metadata,
         viewerUrl,
-        weasisUrl: hasDicom && studyInstanceUid
-          ? `weasis://?%24dicom%3Ars%20--url%20%22${encodeURIComponent(getWeasisBaseUrl(req, studyInstanceUid))}%22%20-r%20%22studyUID%3D${encodeURIComponent(studyInstanceUid)}%22`
+        weasisUrl: hasDicom && weasisStudyUid
+          ? `weasis://?%24dicom%3Ars%20--url%20%22${encodeURIComponent(getWeasisBaseUrl(req, weasisStudyUid))}%22%20-r%20%22studyUID%3D${encodeURIComponent(weasisStudyUid)}%22`
           : null,
         reportUrl: `/reports/study/${encodeURIComponent(record.studyId)}`,
         viewerValidation: (metadata as Record<string, unknown>).dicomValidation ?? null,
@@ -811,20 +882,12 @@ export function worklistRouter(
 
       if (!validation.isValid) {
         logger.warn({
-          message: "Viewer launch blocked by Dicoogle validation",
+          message: "Primary study failed Dicoogle validation; attempting sibling fallback",
           studyId: record?.studyId ?? tenantRecord?.id ?? studyId,
           studyInstanceUID: studyInstanceUid,
           tenantId: tenantId ?? null,
           validation,
         });
-        const statusCode = validation.reason === "STUDY_NOT_FOUND" ? 404 : 409;
-        res.status(statusCode).json({
-          allowed: false,
-          viewerUrl: null,
-          message: validation.message,
-          validation,
-        });
-        return;
       }
 
       // Include all studies for the same patient so OHIF shows everything
@@ -940,36 +1003,41 @@ export function worklistRouter(
         }
       }
 
-      // Filter out sibling UIDs whose DICOM data is not actually available
-      if (allUids.length > 1) {
-        const siblingValidationPromises = allUids.slice(1).map(async (uid) => {
-          try {
-            const v = await validateStudyAvailability({
-              studyInstanceUID: uid,
-              dicomwebBaseUrl: getDicomwebValidationBaseUrl(req),
-              tenantId,
-              maxAttempts: 1,
-              retryDelayMs: 0,
-            });
-            return { uid, valid: v.isValid };
-          } catch {
-            return { uid, valid: false };
-          }
-        });
-        const siblingResults = await Promise.all(siblingValidationPromises);
-        const invalidSiblings = siblingResults.filter((r) => !r.valid).map((r) => r.uid);
-        if (invalidSiblings.length > 0) {
-          logger.info({
-            message: "Removed sibling UIDs without available DICOM data",
-            removedUids: invalidSiblings,
-            studyInstanceUID: studyInstanceUid,
+      // Filter out any UIDs (including requested UID) whose DICOM data is unavailable.
+      const availabilityChecks = allUids.map(async (uid) => {
+        if (uid === studyInstanceUid) {
+          return { uid, valid: validation.isValid };
+        }
+        try {
+          const v = await validateStudyAvailability({
+            studyInstanceUID: uid,
+            dicomwebBaseUrl: getDicomwebValidationBaseUrl(req),
+            tenantId,
+            maxAttempts: 1,
+            retryDelayMs: 0,
           });
-          for (const badUid of invalidSiblings) {
-            const idx = allUids.indexOf(badUid);
-            if (idx > 0) allUids.splice(idx, 1);
+          return { uid, valid: v.isValid };
+        } catch {
+          return { uid, valid: false };
+        }
+      });
+      const availabilityResults = await Promise.all(availabilityChecks);
+      const invalidUids = availabilityResults.filter((result) => !result.valid).map((result) => result.uid);
+      if (invalidUids.length > 0) {
+        logger.info({
+          message: "Removed UIDs without available DICOM data",
+          removedUids: invalidUids,
+          studyInstanceUID: studyInstanceUid,
+        });
+        for (const badUid of invalidUids) {
+          const idx = allUids.indexOf(badUid);
+          if (idx >= 0) {
+            allUids.splice(idx, 1);
           }
         }
       }
+
+      const requestedStudyAvailable = allUids.includes(studyInstanceUid);
 
       logger.info({
         message: "Viewer access sibling lookup summary",
@@ -986,18 +1054,33 @@ export function worklistRouter(
         sameMrnInvalidUidCount,
         samePatientNameRecordCount,
         samePatientNameValidUidCount,
+        requestedStudyAvailable,
         usedPatientNameFallback,
         usedDimFallback: metadataSiblingCount <= 1,
       });
 
-      const viewerUrl = buildViewerUrl(allUids);
+      if (allUids.length === 0) {
+        const statusCode = validation.reason === "STUDY_NOT_FOUND" ? 404 : 409;
+        res.status(statusCode).json({
+          allowed: false,
+          viewerUrl: null,
+          message: validation.message,
+          validation,
+        });
+        return;
+      }
+
+      const launchUids = requestedStudyAvailable
+        ? prioritizeViewerUids(allUids, studyInstanceUid)
+        : allUids;
+      const viewerUrl = buildViewerUrl(launchUids);
       if (!viewerUrl) {
         logger.warn({
           message: "Viewer launch blocked: no valid StudyInstanceUIDs available for URL generation",
           studyId: record?.studyId ?? tenantRecord?.id ?? studyId,
           studyInstanceUID: studyInstanceUid,
           tenantId: tenantId ?? null,
-          allUidsCount: allUids.length,
+          allUidsCount: launchUids.length,
         });
         res.status(409).json({
           allowed: false,
@@ -1018,7 +1101,9 @@ export function worklistRouter(
       res.json({
         allowed: true,
         viewerUrl,
-        message: "Study validated and ready for viewer",
+        message: requestedStudyAvailable
+          ? "Study validated and ready for viewer"
+          : "Requested study is unavailable; opening other available studies for the same patient",
         validation,
       });
     }),

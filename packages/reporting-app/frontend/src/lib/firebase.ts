@@ -1,9 +1,27 @@
 import { initializeApp } from "firebase/app";
 import { GoogleAuthProvider, getAuth, type Auth } from "firebase/auth";
 
-function readEnvOrFallback(value: string | undefined, fallback: string): string {
+function isPlaceholderEnvValue(value: string | undefined): boolean {
   const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : fallback;
+  if (!trimmed) {
+    return true;
+  }
+
+  const normalized = trimmed.toLowerCase();
+  return (
+    normalized === "placeholder" ||
+    normalized === "placeholder.firebaseapp.com" ||
+    normalized.startsWith("your-") ||
+    normalized.includes("your-project") ||
+    normalized.includes("your-firebase") ||
+    normalized.includes("example.com") ||
+    normalized.includes("change-me") ||
+    normalized.includes("changeme")
+  );
+}
+
+function readEnvOrFallback(value: string | undefined, fallback: string): string {
+  return isPlaceholderEnvValue(value) ? fallback : value!.trim();
 }
 
 const firebaseConfig = {
@@ -16,10 +34,8 @@ const firebaseConfig = {
 };
 
 const configEntries = Object.entries(firebaseConfig);
-const invalidFirebaseValues = new Set(["", "placeholder", "placeholder.firebaseapp.com"]);
-
 const baseConfigIssues = configEntries
-  .filter(([, value]) => invalidFirebaseValues.has(value))
+  .filter(([, value]) => isPlaceholderEnvValue(value))
   .map(([key]) => key);
 
 let firebaseAuth: Auth | null = null;
