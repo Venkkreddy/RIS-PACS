@@ -1,6 +1,7 @@
 import { Router } from "express";
 import fs from "fs";
 import path from "path";
+import dicomParser from "dicom-parser";
 import { z } from "zod";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { ensureAuthenticated, ensurePermission } from "../middleware/auth";
@@ -22,6 +23,7 @@ const inferSchema = z.object({
 const DICOOGLE_STORAGE_DIR =
   env.DICOOGLE_STORAGE_DIR || path.resolve(__dirname, "..", "..", "..", "..", "..", "storage");
 const AI_OUTPUT_DIR = path.join(DICOOGLE_STORAGE_DIR, "ai-sr");
+const MAX_DICOM_HEADER_READ_BYTES = 8 * 1024 * 1024;
 
 function ensureOutputDir() {
   if (!fs.existsSync(AI_OUTPUT_DIR)) {
@@ -52,48 +54,68 @@ const DICOM_IMAGE_SOPS = new Set([
   "1.2.840.10008.5.1.4.1.1.7",     // Secondary Capture
 ]);
 
-function looksLikeDicomImage(headerContent: string): boolean {
-  for (const sop of DICOM_IMAGE_SOPS) {
-    if (headerContent.includes(sop)) return true;
+function normalizeDicomUid(rawValue: string | undefined | null): string | undefined {
+  if (!rawValue) return undefined;
+  const normalized = rawValue.replace(/\0/g, "").trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function readDicomHeaderDataSet(filePath: string): dicomParser.DataSet | null {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(filePath, "r");
+    const headerBuffer = Buffer.alloc(MAX_DICOM_HEADER_READ_BYTES);
+    const bytesRead = fs.readSync(fd, headerBuffer, 0, MAX_DICOM_HEADER_READ_BYTES, 0);
+    if (bytesRead === 0) {
+      return null;
+    }
+    const byteArray = new Uint8Array(headerBuffer.buffer, headerBuffer.byteOffset, bytesRead);
+    return dicomParser.parseDicom(byteArray, { untilTag: "x7FE00010" });
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Ignore close failures.
+      }
+    }
   }
-  const srSops = ["1.2.840.10008.5.1.4.1.1.88", "1.2.840.10008.5.1.4.1.1.11"];
-  for (const sop of srSops) {
-    if (headerContent.includes(sop)) return false;
-  }
-  return true;
+}
+
+function looksLikeDicomImage(sopClassUid: string | undefined, modality: string | undefined): boolean {
+  const normalizedSopClass = normalizeDicomUid(sopClassUid);
+  const normalizedModality = (modality ?? "").trim().toUpperCase();
+  if (normalizedModality === "SR" || normalizedModality === "PR") return false;
+  if (!normalizedSopClass) return normalizedModality !== "SR" && normalizedModality !== "PR";
+  return DICOM_IMAGE_SOPS.has(normalizedSopClass);
 }
 
 function findDicomFileForStudy(studyId: string): string | null {
   if (!fs.existsSync(DICOOGLE_STORAGE_DIR)) return null;
 
   const files = collectDcmFiles(DICOOGLE_STORAGE_DIR);
-  let fallback: string | null = null;
+  const normalizedStudyId = normalizeDicomUid(studyId);
+  if (!normalizedStudyId) return null;
 
   for (const filePath of files) {
-    try {
-      const fd = fs.openSync(filePath, "r");
-      const headerBuf = Buffer.alloc(16384);
-      const bytesRead = fs.readSync(fd, headerBuf, 0, 16384, 0);
-      fs.closeSync(fd);
-      const content = headerBuf.toString("latin1", 0, bytesRead);
+    const dataSet = readDicomHeaderDataSet(filePath);
+    if (!dataSet) continue;
 
-      if (!looksLikeDicomImage(content)) continue;
+    const fileStudyUid = normalizeDicomUid(dataSet.string("x0020000d"));
+    if (!fileStudyUid || fileStudyUid !== normalizedStudyId) continue;
 
-      if (content.includes(studyId)) {
-        logger.info({ message: "DICOM file matched for study", studyId, path: filePath });
-        return filePath;
-      }
+    const sopClassUid = normalizeDicomUid(dataSet.string("x00080016"));
+    const modality = (dataSet.string("x00080060") ?? "").trim().toUpperCase();
+    if (!looksLikeDicomImage(sopClassUid, modality)) continue;
 
-      if (!fallback) fallback = filePath;
-    } catch {
-      continue;
-    }
+    logger.info({ message: "DICOM file matched for study", studyId, path: filePath });
+    return filePath;
   }
 
-  if (fallback) {
-    logger.info({ message: "No exact DICOM match for study; using fallback", studyId, path: fallback });
-  }
-  return fallback;
+  logger.warn({ message: "No DICOM file matched for study", studyId });
+  return null;
 }
 
 function cleanOldFiles(prefix: string) {
@@ -139,6 +161,35 @@ function saveDicomObject(
   }
 }
 
+function normalizePerImageResults(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object"));
+}
+
+function mergeAiMetadata(
+  existingMetadata: Record<string, unknown> | undefined,
+  metadataPatch: Record<string, unknown>,
+  perImageResult?: Record<string, unknown>,
+): Record<string, unknown> {
+  const mergedMetadata: Record<string, unknown> = {
+    ...(existingMetadata ?? {}),
+    ...metadataPatch,
+  };
+
+  if (perImageResult) {
+    const sourceFileKey = String(perImageResult.sourceFile ?? "");
+    const prior = normalizePerImageResults(existingMetadata?.aiPerImageResults);
+    const next = [
+      ...prior.filter((entry) => String(entry.sourceFile ?? "") !== sourceFileKey),
+      perImageResult,
+    ].sort((a, b) => String(a.processedAt ?? "").localeCompare(String(b.processedAt ?? "")));
+    mergedMetadata.aiPerImageResults = next;
+    mergedMetadata.aiProcessedImageCount = next.length;
+  }
+
+  return mergedMetadata;
+}
+
 export function aiRouter(monaiService: MonaiService, store: StoreService): Router {
   const router = Router();
 
@@ -156,6 +207,7 @@ export function aiRouter(monaiService: MonaiService, store: StoreService): Route
       const safeStudy = body.studyId.replace(/\./g, "_");
 
       cleanOldFiles(`ai_sr_${safeStudy}_`);
+      cleanOldFiles(`ai_seg_${safeStudy}_`);
       cleanOldFiles(`ai_sc_${safeStudy}_`);
       cleanOldFiles(`ai_gsps_${safeStudy}_`);
 
@@ -184,11 +236,12 @@ export function aiRouter(monaiService: MonaiService, store: StoreService): Route
         });
       }
 
-      if (result.status === "completed" && result.findings.length > 0) {
+      if (result.status === "completed") {
         const metadataPatch: Record<string, unknown> = {
           aiFindings: result.findings,
           aiSummary: result.summary,
           aiModel: result.model,
+          aiProcessedAt: result.processedAt,
         };
 
         if (result.dicomSrBase64) {
@@ -196,6 +249,14 @@ export function aiRouter(monaiService: MonaiService, store: StoreService): Route
           if (srPath) {
             metadataPatch.aiDicomSrPath = srPath;
             metadataPatch.aiDicomSrSizeBytes = result.dicomSrSizeBytes;
+          }
+        }
+
+        if (result.dicomSegBase64) {
+          const segPath = saveDicomObject(result.dicomSegBase64, "ai_seg", body.studyId, "DICOM SEG");
+          if (segPath) {
+            metadataPatch.aiDicomSegPath = segPath;
+            metadataPatch.aiDicomSegSizeBytes = result.dicomSegSizeBytes;
           }
         }
 
@@ -219,11 +280,30 @@ export function aiRouter(monaiService: MonaiService, store: StoreService): Route
           metadataPatch.aiHeatmapPngBase64 = result.heatmapPngBase64;
         }
 
+        const sourceFile = dicomFilePath ? path.basename(dicomFilePath) : "manual-analysis";
+        const perImageResult: Record<string, unknown> = {
+          sourceFile,
+          model: result.model,
+          summary: result.summary,
+          findings: result.findings,
+          processedAt: result.processedAt,
+        };
+        if (metadataPatch.aiDicomSegPath) perImageResult.dicomSegPath = metadataPatch.aiDicomSegPath;
+        if (metadataPatch.aiDicomSrPath) perImageResult.dicomSrPath = metadataPatch.aiDicomSrPath;
+        if (metadataPatch.aiDicomScPath) perImageResult.dicomScPath = metadataPatch.aiDicomScPath;
+        if (metadataPatch.aiDicomGspsPath) perImageResult.dicomGspsPath = metadataPatch.aiDicomGspsPath;
+        if (result.heatmapPngBase64) perImageResult.heatmapAvailable = true;
+
+        const existingRecord = await store.getStudyRecord(body.studyId).catch(() => null);
+        const existingMetadata = (existingRecord?.metadata ?? {}) as Record<string, unknown>;
+        const mergedMetadata = mergeAiMetadata(existingMetadata, metadataPatch, perImageResult);
+
         clearDimCache();
-        await store.upsertStudyRecord(body.studyId, { metadata: metadataPatch }).catch(() => {});
+        await store.upsertStudyRecord(body.studyId, { metadata: mergedMetadata }).catch(() => {});
       }
 
       const {
+        dicomSegBase64: _seg,
         dicomSrBase64: _a,
         dicomScBase64: _b,
         dicomGspsBase64: _c,
@@ -232,6 +312,7 @@ export function aiRouter(monaiService: MonaiService, store: StoreService): Route
 
       res.json({
         ...responseClean,
+        dicomSegGenerated: !!result.dicomSegBase64,
         dicomSrGenerated: !!result.dicomSrBase64,
         dicomScGenerated: !!result.dicomScBase64,
         dicomGspsGenerated: !!result.dicomGspsBase64,
@@ -256,6 +337,8 @@ export function aiRouter(monaiService: MonaiService, store: StoreService): Route
         findings: metadata.aiFindings ?? [],
         summary: metadata.aiSummary ?? null,
         model: metadata.aiModel ?? null,
+        perImageResults: metadata.aiPerImageResults ?? [],
+        dicomSegAvailable: !!metadata.aiDicomSegPath,
         dicomSrAvailable: !!metadata.aiDicomSrPath,
         dicomScAvailable: !!metadata.aiDicomScPath,
         dicomGspsAvailable: !!metadata.aiDicomGspsPath,

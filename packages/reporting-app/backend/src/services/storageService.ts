@@ -15,4 +15,20 @@ export class StorageService {
     const bucket = this.storage.bucket(env.GCS_BUCKET);
     await bucket.file(path).delete({ ignoreNotFound: true });
   }
+
+  async uploadFile(
+    localFilePath: string,
+    destinationPath: string,
+    contentType?: string,
+    bucketName: string = env.GCS_BUCKET,
+  ): Promise<string> {
+    const bucket = this.storage.bucket(bucketName);
+    const normalizedDestination = destinationPath.replace(/\\/g, "/");
+    await bucket.upload(localFilePath, {
+      destination: normalizedDestination,
+      contentType,
+      resumable: false,
+    });
+    return `gs://${bucketName}/${normalizedDestination}`;
+  }
 }

@@ -51,6 +51,49 @@
     <div id="root">
       <div id="root-loader"><div class="spinner"></div></div>
     </div>
+    <script>
+      // #region agent log
+      window.__tdaiAgentDebugLog = function (hypothesisId, location, message, data, runId) {
+        fetch("http://127.0.0.1:7829/ingest/0823df88-6411-4f3d-9920-ebf0779efd31", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "b161f5",
+          },
+          body: JSON.stringify({
+            sessionId: "b161f5",
+            runId: runId || "run-2",
+            hypothesisId: hypothesisId,
+            location: location,
+            message: message,
+            data: data || {},
+            timestamp: Date.now(),
+          }),
+        }).catch(function () {});
+      };
+      window.__tdaiAgentDebugLog("H10", "index.html:inline", "index inline debug script executed", {
+        path: window.location.pathname,
+      }, "run-2");
+      window.addEventListener("error", function (event) {
+        var scriptTarget = event.target && event.target.tagName === "SCRIPT";
+        window.__tdaiAgentDebugLog("H10", "index.html:error", "window error captured", {
+          scriptError: !!scriptTarget,
+          scriptSrc: scriptTarget ? (event.target.getAttribute("src") || "") : "",
+          message: event.message || "",
+          filename: event.filename || "",
+          lineno: event.lineno || 0,
+        }, "run-2");
+      }, true);
+      window.addEventListener("unhandledrejection", function (event) {
+        var reason = event.reason;
+        var reasonMessage = typeof reason === "string" ? reason : (reason && reason.message) || "unknown";
+        window.__tdaiAgentDebugLog("H11", "index.html:unhandledrejection", "unhandled promise rejection before app mount", {
+          reason: reasonMessage,
+          path: window.location.pathname,
+        }, "run-2");
+      });
+      // #endregion
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

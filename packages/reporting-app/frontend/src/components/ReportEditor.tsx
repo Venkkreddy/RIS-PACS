@@ -59,7 +59,6 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
       : DEFAULT_SECTIONS;
 
   const [sections, setSections] = useState<ReportSection[]>(initialSections);
-  const [freeContent, setFreeContent] = useState(report.content ?? "");
   const [activeTab, setActiveTab] = useState<string>("findings");
   const [priority, setPriority] = useState<CriticalPriority>(report.priority ?? "routine");
   const [saving, setSaving] = useState(false);
@@ -78,7 +77,6 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
   useEffect(() => {
     const newSections = report.sections && report.sections.length > 0 ? report.sections : DEFAULT_SECTIONS;
     setSections(newSections);
-    setFreeContent(report.content ?? "");
     setPriority(report.priority ?? "routine");
     setDirty(false);
     dirtyRef.current = false;
@@ -201,6 +199,23 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
   const badge = STATUS_BADGE[status] ?? STATUS_BADGE.draft;
   const completedSections = sections.filter((s) => s.content.replace(/<[^>]*>/g, "").trim()).length;
   const completionPct = Math.round((completedSections / sections.length) * 100);
+  const patientMeta = (() => {
+    const rawMetadata = report.metadata as Record<string, unknown> | undefined;
+    const patient = rawMetadata?.patient;
+    if (!patient || typeof patient !== "object") return null;
+    const data = patient as Record<string, unknown>;
+    const getString = (key: string): string =>
+      typeof data[key] === "string" && data[key].trim() ? data[key].trim() : "";
+    const result = {
+      name: getString("patientName"),
+      mrn: getString("patientId"),
+      registryId: getString("patientRegistryId"),
+      dateOfBirth: getString("dateOfBirth"),
+      phone: getString("phone"),
+    };
+    if (!result.name && !result.mrn && !result.registryId && !result.dateOfBirth && !result.phone) return null;
+    return result;
+  })();
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -217,6 +232,15 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
               <div>
                 <h2 className="text-base font-bold text-white">Radiology Report</h2>
                 <p className="text-[11px] text-white/50 font-mono">Study: {report.studyId.slice(0, 40)}...</p>
+                {patientMeta && (
+                  <p className="text-[11px] text-white/70">
+                    {patientMeta.name || "Unknown Patient"}
+                    {patientMeta.mrn ? ` • MRN ${patientMeta.mrn}` : ""}
+                    {patientMeta.registryId ? ` • UID ${patientMeta.registryId.slice(0, 10)}…` : ""}
+                    {patientMeta.dateOfBirth ? ` • DOB ${patientMeta.dateOfBirth}` : ""}
+                    {patientMeta.phone ? ` • ${patientMeta.phone}` : ""}
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-2.5">

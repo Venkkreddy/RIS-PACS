@@ -1,12 +1,13 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api/client";
+import { formatInr } from "../lib/currency";
 import type { BillingRecord, BillingStatus } from "@medical-report-system/shared";
 import { animate, motion } from "framer-motion";
 import {
   CheckCircle2,
   Clock,
-  DollarSign,
   FileText,
+  IndianRupee,
   Tag,
 } from "lucide-react";
 
@@ -60,7 +61,7 @@ function AnimatedMoney({ value }: { value: number }) {
     return () => ctrl.stop();
   }, [value]);
 
-  return <span>${display.toFixed(2)}</span>;
+  return <span>{formatInr(display)}</span>;
 }
 
 type BillingTab = "queue" | "coded" | "submitted";
@@ -129,7 +130,7 @@ export function BillingDashboard() {
       <div className="bg-gradient-to-r from-tdai-navy-800 to-tdai-navy-700 px-6 py-2.5 dark:from-tdai-navy-900 dark:to-tdai-navy-800">
         <div className="flex items-center gap-2.5">
           <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/10 dark:bg-white/[0.06]">
-            <DollarSign className="h-3.5 w-3.5 text-tdai-teal-400 dark:text-tdai-teal-300" strokeWidth={2} />
+            <IndianRupee className="h-3.5 w-3.5 text-tdai-teal-400 dark:text-tdai-teal-300" strokeWidth={2} />
           </div>
           <span className="text-sm font-bold tracking-wider text-white">BILLING &amp; CODING</span>
         </div>
@@ -213,7 +214,7 @@ export function BillingDashboard() {
               <div className="relative flex items-start justify-between gap-3">
                 <div className="flex min-w-0 flex-1 items-start gap-3">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 dark:bg-emerald-900/20">
-                    <DollarSign className="h-5 w-5 text-emerald-500 dark:text-emerald-400" strokeWidth={1.75} />
+                    <IndianRupee className="h-5 w-5 text-emerald-500 dark:text-emerald-400" strokeWidth={1.75} />
                   </div>
                   <div className="min-w-0">
                     <p className="text-[10px] font-medium uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Paid</p>
@@ -268,7 +269,7 @@ export function BillingDashboard() {
           {/* ── Empty ───────────────────── */}
           {!loading && filtered.length === 0 && (
             <motion.div variants={item} className="card py-16 text-center">
-              <DollarSign className="mx-auto h-12 w-12 text-tdai-muted dark:text-tdai-gray-500" strokeWidth={1} />
+              <IndianRupee className="mx-auto h-12 w-12 text-tdai-muted dark:text-tdai-gray-500" strokeWidth={1} />
               <p className="mt-3 text-sm text-tdai-secondary dark:text-tdai-gray-400">No records in this category</p>
             </motion.div>
           )}

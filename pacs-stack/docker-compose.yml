@@ -1,3 +1,6 @@
+# Optional: DICOOGLE_STORAGE_HOST_PATH=../storage docker compose --profile dicoogle up
+# uses the same host folder as the root repo compose (./storage) for Dicoogle.
+
 services:
   # ── Primary PACS: Orthanc with DICOMWeb ──
   orthanc:
@@ -35,8 +38,43 @@ services:
       orthanc:
         condition: service_healthy
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - pacs-net
+
+  # ── AI / ML: MONAI Inference Server ──
+  monai-server:
+    build:
+      context: ../packages/monai-server
+    container_name: monai-server
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${MONAI_PORT:-5000}:5000"
+    volumes:
+      - monai-models:/opt/monai/models
+    environment:
+      MONAI_SERVER_PORT: 5000
+      ORTHANC_URL: "http://orthanc:8042"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GEMINI_MODEL: "${GEMINI_MODEL:-gemini-2.0-flash}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-gemini}"
+      OLLAMA_URL: "http://host.docker.internal:11434"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3}"
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:8081"
+    depends_on:
+      orthanc:
+        condition: service_healthy
+    networks:
+      - pacs-net
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/health')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 5
 
   # ── Optional: Dicoogle for indexing/search only ──
   # Activate with: docker-compose --profile dicoogle up
@@ -49,8 +87,10 @@ services:
       - "8080:8080"
       - "6666:104"
     volumes:
-      - dicoogle-storage:/var/dicoogle/storage
+      - ${DICOOGLE_STORAGE_HOST_PATH:-dicoogle-storage}:/var/dicoogle/storage
       - dicoogle-index:/var/dicoogle/index
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       orthanc:
         condition: service_healthy
@@ -66,3 +106,4 @@ volumes:
   orthanc-storage:
   dicoogle-storage:
   dicoogle-index:
+  monai-models:

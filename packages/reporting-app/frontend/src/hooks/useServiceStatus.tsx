@@ -22,6 +22,12 @@ interface ServiceConfig {
     useMedGemma: boolean;
     uiVisible?: boolean;
   };
+  storage: {
+    mode: "local" | "cloud";
+    cloudBucket: string;
+    cloudPrefix: string;
+    keepLocalCopy: boolean;
+  };
   updatedAt: string;
   updatedBy: string;
 }

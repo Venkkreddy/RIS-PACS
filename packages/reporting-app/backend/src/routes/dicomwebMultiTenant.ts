@@ -2,7 +2,9 @@ import { Router, Request, Response } from "express";
 import axios from "axios";
 import fs from "fs";
 import path from "path";
+import { createHash } from "node:crypto";
 import dicomParser from "dicom-parser";
+import { Decoder as JpegLosslessDecoder } from "jpeg-lossless-decoder-js";
 import { env } from "../config/env";
 import { JwtService } from "../services/jwtService";
 import { TenantScopedStore } from "../services/tenantScopedStore";
@@ -55,14 +57,19 @@ const tenantDimCaches = new Map<string, { data: DIMPatient[]; ts: number }>();
 const tenantSopMaps = new Map<string, Map<string, string>>();
 const DIM_CACHE_TTL = 120_000;
 const MAX_SCAN_HEADER_BYTES = 4 * 1024 * 1024;
+const MAX_DICOM_SCAN_DEPTH = 16;
 const dicomTagCache = new Map<string, Record<string, unknown>>();
+
+function firstParam(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+}
 
 function shouldInspectAsDicomFile(filename: string): boolean {
   const lower = filename.toLowerCase();
   return lower.endsWith(".dcm") || lower.endsWith(".dicom") || lower.endsWith(".ima") || lower.endsWith(".img") || !path.extname(lower);
 }
 
-function findDicomFilesRecursive(dir: string, maxDepth = 3, depth = 0): string[] {
+function findDicomFilesRecursive(dir: string, maxDepth = MAX_DICOM_SCAN_DEPTH, depth = 0): string[] {
   const results: string[] = [];
   if (depth > maxDepth || !fs.existsSync(dir)) return results;
   try {
@@ -74,6 +81,133 @@ function findDicomFilesRecursive(dir: string, maxDepth = 3, depth = 0): string[]
     }
   } catch { /* skip unreadable */ }
   return results;
+}
+
+function buildSyntheticSopInstanceUid(seed: string): string {
+  const digest = createHash("sha1").update(seed).digest("hex");
+  return `2.25.${BigInt(`0x${digest}`).toString()}`;
+}
+
+function normalizeDicomUid(rawValue: string | undefined | null): string | null {
+  if (typeof rawValue !== "string") return null;
+  const normalized = rawValue.replace(/\0/g, "").trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+const JPEG_LOSSLESS_TRANSFER_SYNTAX_UIDS = new Set([
+  "1.2.840.10008.1.2.4.57",
+  "1.2.840.10008.1.2.4.70",
+]);
+const EXPLICIT_VR_LITTLE_ENDIAN_TRANSFER_SYNTAX_UID = "1.2.840.10008.1.2.1";
+
+function getEffectiveFrameTransferSyntaxUID(transferSyntaxUID?: string): string {
+  const normalized = normalizeDicomUid(transferSyntaxUID);
+  if (normalized && JPEG_LOSSLESS_TRANSFER_SYNTAX_UIDS.has(normalized)) {
+    return EXPLICIT_VR_LITTLE_ENDIAN_TRANSFER_SYNTAX_UID;
+  }
+  return normalized || EXPLICIT_VR_LITTLE_ENDIAN_TRANSFER_SYNTAX_UID;
+}
+
+function decodeJpegLosslessFrame(
+  frameData: Buffer,
+  dataSet: dicomParser.DataSet,
+): Buffer | null {
+  try {
+    const decoder = new JpegLosslessDecoder();
+    const decoded = decoder.decode(
+      frameData.buffer as ArrayBufferLike,
+      frameData.byteOffset,
+      frameData.byteLength,
+    );
+    const valueCount = (decoded as { length?: number }).length ?? 0;
+    if (valueCount <= 0) {
+      return null;
+    }
+
+    const values = decoded as ArrayLike<number>;
+    const bitsAllocated = dataSet.uint16("x00280100") ?? 16;
+    if (bitsAllocated <= 8) {
+      const out = Buffer.allocUnsafe(valueCount);
+      for (let i = 0; i < valueCount; i += 1) {
+        const value = values[i] ?? 0;
+        out[i] = value & 0xff;
+      }
+      return out;
+    }
+
+    const out = Buffer.allocUnsafe(valueCount * 2);
+    for (let i = 0; i < valueCount; i += 1) {
+      const value = values[i] ?? 0;
+      out.writeUInt16LE(value & 0xffff, i * 2);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+function getRequestedFrameIndex(frameNumbers: string): number {
+  const firstFrame = frameNumbers.split(",")[0]?.trim() ?? "1";
+  const parsed = Number.parseInt(firstFrame, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0;
+  }
+  return parsed - 1;
+}
+
+function extractNativeFrame(
+  dataSet: dicomParser.DataSet,
+  pixelDataElement: dicomParser.Element,
+  frameIndex: number,
+  byteArray: Uint8Array,
+): Buffer | null {
+  if (frameIndex < 0) return null;
+
+  const numberOfFramesRaw = dataSet.intString("x00280008");
+  const numberOfFrames = numberOfFramesRaw && numberOfFramesRaw > 0 ? numberOfFramesRaw : 1;
+  if (frameIndex >= numberOfFrames) return null;
+
+  const rows = dataSet.uint16("x00280010") ?? 0;
+  const columns = dataSet.uint16("x00280011") ?? 0;
+  const samplesPerPixel = dataSet.uint16("x00280002") ?? 1;
+  const bitsAllocated = dataSet.uint16("x00280100") ?? 16;
+
+  if (rows <= 0 || columns <= 0 || samplesPerPixel <= 0 || bitsAllocated <= 0) {
+    if (frameIndex === 0) {
+      return Buffer.from(
+        byteArray.buffer,
+        byteArray.byteOffset + pixelDataElement.dataOffset,
+        pixelDataElement.length,
+      );
+    }
+    return null;
+  }
+
+  const bitsPerFrame = rows * columns * samplesPerPixel * bitsAllocated;
+  const bytesPerFrame = Math.ceil(bitsPerFrame / 8);
+  if (!Number.isFinite(bytesPerFrame) || bytesPerFrame <= 0) {
+    return null;
+  }
+
+  const pixelDataStart = byteArray.byteOffset + pixelDataElement.dataOffset;
+  const pixelDataEnd = pixelDataStart + pixelDataElement.length;
+  const frameStart = pixelDataStart + frameIndex * bytesPerFrame;
+  if (frameStart >= pixelDataEnd) {
+    return null;
+  }
+
+  const frameLength = Math.min(bytesPerFrame, pixelDataEnd - frameStart);
+  return Buffer.from(byteArray.buffer, frameStart, frameLength);
+}
+
+
+function isNonEmptyDicomFile(filePath: string): boolean {
+  try {
+    const stats = fs.statSync(filePath);
+    return stats.isFile() && stats.size > 0;
+  } catch {
+    return false;
+  }
 }
 
 function parseDicomHeader(filePath: string): dicomParser.DataSet | null {
@@ -102,9 +236,9 @@ function scanTenantStorage(tenantSlug: string): DIMPatient[] {
     const ds = parseDicomHeader(filePath);
     if (!ds) continue;
 
-    const studyUID = ds.string("x0020000d");
-    const seriesUID = ds.string("x0020000e");
-    const sopUID = ds.string("x00080018")?.trim() ?? "";
+    const studyUID = normalizeDicomUid(ds.string("x0020000d"));
+    const seriesUID = normalizeDicomUid(ds.string("x0020000e"));
+    const sopUID = normalizeDicomUid(ds.string("x00080018")) ?? "";
     if (!studyUID || !seriesUID) continue;
 
     const patientId = ds.string("x00100020") || "UNKNOWN";
@@ -160,13 +294,31 @@ function queryTenantDIM(tenantSlug: string): DIMPatient[] {
 
   const data = scanTenantStorage(tenantSlug);
   const sopMap = new Map<string, string>();
+  const usedSopUids = new Set<string>();
 
   for (const patient of data) {
     for (const study of patient.studies) {
       for (const series of study.series) {
-        for (const image of series.images) {
-          if (image.sopInstanceUID && image.rawPath && fs.existsSync(image.rawPath)) {
-            sopMap.set(image.sopInstanceUID, image.rawPath);
+        for (let index = 0; index < series.images.length; index += 1) {
+          const image = series.images[index];
+          const original = (image.sopInstanceUID ?? "").trim();
+          let effective = original;
+
+          if (!effective || usedSopUids.has(effective)) {
+            let salt = 0;
+            do {
+              const seed =
+                `${original}|${image.uri}|${image.filename}|${study.studyInstanceUID}|${series.serieInstanceUID}|${index}|${salt}`;
+              effective = buildSyntheticSopInstanceUid(seed);
+              salt += 1;
+            } while (usedSopUids.has(effective));
+            image.sopInstanceUID = effective;
+          }
+
+          usedSopUids.add(effective);
+
+          if (image.rawPath && fs.existsSync(image.rawPath)) {
+            sopMap.set(effective, image.rawPath);
           }
         }
       }
@@ -226,6 +378,281 @@ function parseDicomTags(filePath: string): Record<string, unknown> {
   } catch { return {}; }
 }
 
+const STRING_VRS = new Set([
+  "AE", "AS", "CS", "DA", "DT", "LO", "LT", "SH", "ST", "TM", "UC", "UI", "UR", "UT",
+]);
+const BINARY_VRS = new Set(["OB", "OD", "OF", "OL", "OW", "UN"]);
+
+function parserTagToDicomTag(tag: string): string {
+  return tag.replace(/^x/i, "").toUpperCase();
+}
+
+function splitDicomValues(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split("\\")
+    .map((part) => part.replace(/\0/g, "").trim())
+    .filter((part) => part.length > 0);
+}
+
+function readElementValues(
+  dataSet: dicomParser.DataSet,
+  parserTag: string,
+  vr: string,
+): unknown[] | undefined {
+  if (BINARY_VRS.has(vr)) return undefined;
+  const element = dataSet.elements[parserTag];
+  if (!element || element.length <= 0) {
+    return undefined;
+  }
+
+  if (vr === "PN") {
+    const values = splitDicomValues(dataSet.string(parserTag));
+    if (values.length === 0) return undefined;
+    return values.map((v) => ({ Alphabetic: v }));
+  }
+  if (vr === "US") {
+    const count = Math.floor(element.length / 2);
+    const values: number[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const value = dataSet.uint16(parserTag, i);
+      if (value !== undefined) values.push(value);
+    }
+    return values.length > 0 ? values : undefined;
+  }
+  if (vr === "SS") {
+    const count = Math.floor(element.length / 2);
+    const values: number[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const value = dataSet.int16(parserTag, i);
+      if (value !== undefined) values.push(value);
+    }
+    return values.length > 0 ? values : undefined;
+  }
+  if (vr === "UL") {
+    const count = Math.floor(element.length / 4);
+    const values: number[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const value = dataSet.uint32(parserTag, i);
+      if (value !== undefined) values.push(value);
+    }
+    return values.length > 0 ? values : undefined;
+  }
+  if (vr === "SL") {
+    const count = Math.floor(element.length / 4);
+    const values: number[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const value = dataSet.int32(parserTag, i);
+      if (value !== undefined) values.push(value);
+    }
+    return values.length > 0 ? values : undefined;
+  }
+  if (vr === "FL") {
+    const count = Math.floor(element.length / 4);
+    const values: number[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const value = dataSet.float(parserTag, i);
+      if (value !== undefined && Number.isFinite(value)) values.push(value);
+    }
+    return values.length > 0 ? values : undefined;
+  }
+  if (vr === "FD") {
+    const count = Math.floor(element.length / 8);
+    const values: number[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const value = dataSet.double(parserTag, i);
+      if (value !== undefined && Number.isFinite(value)) values.push(value);
+    }
+    return values.length > 0 ? values : undefined;
+  }
+  if (vr === "IS") {
+    const values = splitDicomValues(dataSet.string(parserTag));
+    if (values.length === 0) return undefined;
+    return values.map((v) => {
+      const parsed = Number.parseInt(v, 10);
+      return Number.isFinite(parsed) ? parsed : v;
+    });
+  }
+  if (vr === "DS") {
+    const values = splitDicomValues(dataSet.string(parserTag));
+    if (values.length === 0) return undefined;
+    return values.map((v) => {
+      const parsed = Number.parseFloat(v);
+      return Number.isFinite(parsed) ? parsed : v;
+    });
+  }
+  if (STRING_VRS.has(vr) || vr === "AT") {
+    const values = splitDicomValues(dataSet.string(parserTag));
+    if (values.length === 0) return undefined;
+    return values;
+  }
+  return undefined;
+}
+
+function convertDataSetToDicomJson(
+  dataSet: dicomParser.DataSet,
+  bulkDataURI?: string,
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {};
+  const elements = dataSet.elements as Record<string, dicomParser.Element>;
+
+  for (const parserTag of Object.keys(elements).sort()) {
+    const element = elements[parserTag];
+    if (!element) continue;
+
+    const tag = parserTagToDicomTag(parserTag);
+    const vr = String(element.vr || "").toUpperCase();
+    if (!vr) continue;
+
+    if (vr === "SQ") {
+      const items: Record<string, unknown>[] = [];
+      for (const item of element.items ?? []) {
+        const itemDataSet = (item as unknown as { dataSet?: dicomParser.DataSet }).dataSet;
+        if (!itemDataSet) continue;
+        const converted = convertDataSetToDicomJson(itemDataSet);
+        if (Object.keys(converted).length > 0) {
+          items.push(converted);
+        }
+      }
+      metadata[tag] = { vr, Value: items };
+      continue;
+    }
+
+    if (tag === "7FE00010" && bulkDataURI) {
+      metadata[tag] = { vr, BulkDataURI: bulkDataURI };
+      continue;
+    }
+
+    const values = readElementValues(dataSet, parserTag, vr);
+    if (values && values.length > 0) {
+      metadata[tag] = { vr, Value: values };
+    } else {
+      metadata[tag] = { vr };
+    }
+  }
+
+  return metadata;
+}
+
+function parseRichDicomMetadata(
+  filePath: string,
+  bulkDataURI: string,
+): Record<string, unknown> | null {
+  try {
+    const buffer = fs.readFileSync(filePath);
+    const byteArray = new Uint8Array(
+      buffer.buffer,
+      buffer.byteOffset,
+      buffer.byteLength,
+    );
+    const dataSet = dicomParser.parseDicom(byteArray, { untilTag: "x7FE00010" });
+    const metadata = convertDataSetToDicomJson(dataSet, bulkDataURI);
+    return Object.keys(metadata).length > 0 ? metadata : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyMetadataOverrides(
+  metadata: Record<string, unknown>,
+  patient: DIMPatient,
+  studyUID: string,
+  seriesUID: string,
+  sopUID: string,
+  modality: string,
+  bulkDataURI: string,
+): Record<string, unknown> {
+  const result = { ...metadata };
+
+  result["00080018"] = { vr: "UI", Value: [sopUID] };
+  result["0020000D"] = { vr: "UI", Value: [studyUID] };
+  result["0020000E"] = { vr: "UI", Value: [seriesUID] };
+  result["00080060"] = { vr: "CS", Value: [modality || "OT"] };
+  result["00100010"] = { vr: "PN", Value: [{ Alphabetic: patient.name || "" }] };
+  result["00100020"] = { vr: "LO", Value: [patient.id || ""] };
+  const transferSyntaxTag = result["00020010"] as { Value?: unknown[] } | undefined;
+  const transferSyntaxValue =
+    transferSyntaxTag && Array.isArray(transferSyntaxTag.Value)
+      ? normalizeDicomUid(String(transferSyntaxTag.Value[0] ?? ""))
+      : null;
+  result["00020010"] = {
+    vr: "UI",
+    Value: [getEffectiveFrameTransferSyntaxUID(transferSyntaxValue ?? undefined)],
+  };
+
+  const pixelDataAttr = result["7FE00010"] as Record<string, unknown> | undefined;
+  if (pixelDataAttr) {
+    result["7FE00010"] = {
+      vr: String(pixelDataAttr.vr || "OW"),
+      BulkDataURI: bulkDataURI,
+    };
+  } else {
+    result["7FE00010"] = { vr: "OW", BulkDataURI: bulkDataURI };
+  }
+
+  return result;
+}
+
+const OHIF_REQUIRED_IMAGE_METADATA_TAGS = [
+  "00080016",
+  "00280002",
+  "00280004",
+  "00280008",
+  "00280010",
+  "00280011",
+  "00280100",
+  "00280101",
+  "00280102",
+  "00280103",
+  "7FE00010",
+] as const;
+
+function getMissingImageMetadataTags(metadata: Record<string, unknown>): string[] {
+  const missing: string[] = [];
+  for (const tag of OHIF_REQUIRED_IMAGE_METADATA_TAGS) {
+    if (!(tag in metadata)) {
+      missing.push(tag);
+    }
+  }
+  return missing;
+}
+
+function fillMissingMetadataTags(
+  primary: Record<string, unknown>,
+  fallback: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = { ...primary };
+  for (const [tag, value] of Object.entries(fallback)) {
+    if (!(tag in merged)) {
+      merged[tag] = value;
+    }
+  }
+  return merged;
+}
+
+function streamMultipartDicomFiles(
+  res: Response,
+  filePaths: string[],
+  cacheControl = "private, max-age=3600",
+): void {
+  const boundary = "tenant-boundary";
+  const headerPrefix = `--${boundary}\r\nContent-Type: application/dicom\r\n\r\n`;
+
+  res.setHeader(
+    "Content-Type",
+    `multipart/related; type="application/dicom"; boundary=${boundary}`,
+  );
+  res.setHeader("Cache-Control", cacheControl);
+
+  for (const filePath of filePaths) {
+    const dicomBuffer = fs.readFileSync(filePath);
+    res.write(Buffer.from(headerPrefix));
+    res.write(dicomBuffer);
+    res.write(Buffer.from("\r\n"));
+  }
+  res.end(Buffer.from(`--${boundary}--\r\n`));
+}
+
 function getRequestOrigin(req: Request): string | null {
   const forwardedProto = req.get("x-forwarded-proto")?.split(",")[0]?.trim();
   const forwardedHost = req.get("x-forwarded-host")?.split(",")[0]?.trim();
@@ -235,10 +662,10 @@ function getRequestOrigin(req: Request): string | null {
 }
 
 function getDicomwebBaseUrl(req: Request): string {
-  return `${getRequestOrigin(req) ?? env.FRONTEND_URL.replace(/\/+$/, "")}${req.baseUrl}`;
+  return `${getRequestOrigin(req) ?? env.BACKEND_URL.replace(/\/+$/, "")}${req.baseUrl}`;
 }
 
-function buildInstanceMetadata(
+function buildFallbackInstanceMetadata(
   patient: DIMPatient, studyUID: string, seriesUID: string, sopUID: string,
   modality: string, bulkDataURI: string, filePath?: string,
 ): Record<string, unknown> {
@@ -253,7 +680,10 @@ function buildInstanceMetadata(
     "0020000E": { vr: "UI", Value: [seriesUID] },
     "00100010": { vr: "PN", Value: [{ Alphabetic: patient.name || "" }] },
     "00100020": { vr: "LO", Value: [patient.id || ""] },
-    "00020010": { vr: "UI", Value: [tags.transferSyntaxUID || "1.2.840.10008.1.2.1"] },
+    "00020010": {
+      vr: "UI",
+      Value: [getEffectiveFrameTransferSyntaxUID(tags.transferSyntaxUID as string | undefined)],
+    },
     "00280002": { vr: "US", Value: [tags.samplesPerPixel ?? 1] },
     "00280004": { vr: "CS", Value: [tags.photometricInterpretation || "MONOCHROME2"] },
     "00280008": { vr: "IS", Value: [tags.numberOfFrames || "1"] },
@@ -267,6 +697,55 @@ function buildInstanceMetadata(
     "00281051": { vr: "DS", Value: [tags.windowWidth || "4096"] },
     "7FE00010": { vr: "OW", BulkDataURI: bulkDataURI },
   };
+}
+
+function buildInstanceMetadata(
+  patient: DIMPatient, studyUID: string, seriesUID: string, sopUID: string,
+  modality: string, bulkDataURI: string, filePath?: string,
+): Record<string, unknown> {
+  if (filePath) {
+    const richMetadata = parseRichDicomMetadata(filePath, bulkDataURI);
+    if (richMetadata) {
+      const metadataWithOverrides = applyMetadataOverrides(
+        richMetadata,
+        patient,
+        studyUID,
+        seriesUID,
+        sopUID,
+        modality,
+        bulkDataURI,
+      );
+      const missingTags = getMissingImageMetadataTags(metadataWithOverrides);
+      if (missingTags.length === 0) {
+        return metadataWithOverrides;
+      }
+      const fallbackMetadata = buildFallbackInstanceMetadata(
+        patient,
+        studyUID,
+        seriesUID,
+        sopUID,
+        modality,
+        bulkDataURI,
+        filePath,
+      );
+      logger.debug({
+        message: "Tenant rich DICOM metadata missing required image tags — filling from fallback parser",
+        sopUID,
+        missingTags,
+      });
+      return fillMissingMetadataTags(metadataWithOverrides, fallbackMetadata);
+    }
+  }
+
+  return buildFallbackInstanceMetadata(
+    patient,
+    studyUID,
+    seriesUID,
+    sopUID,
+    modality,
+    bulkDataURI,
+    filePath,
+  );
 }
 
 /**
@@ -453,6 +932,12 @@ export function dicomwebMultiTenantRouter(
           }
         }
       }
+      logger.info({
+        message: "Tenant QIDO /studies/{studyUID}/series response",
+        tenantSlug,
+        studyUID,
+        seriesCount: seriesList.length,
+      });
       res.json(seriesList);
     }),
   );
@@ -476,6 +961,7 @@ export function dicomwebMultiTenantRouter(
 
       const patients = queryTenantDIM(tenantSlug);
       const instances: Record<string, unknown>[] = [];
+      const seenInstanceKeys = new Set<string>();
       for (const patient of patients) {
         for (const study of patient.studies) {
           if (study.studyInstanceUID !== studyUID) continue;
@@ -483,21 +969,164 @@ export function dicomwebMultiTenantRouter(
             if (series.serieInstanceUID !== seriesUID) continue;
             for (const image of series.images) {
               const fp = resolveTenantFilePath(tenantSlug, image.sopInstanceUID) ?? image.rawPath;
-              const imgTags = fp ? parseDicomTags(fp) : {};
-              instances.push({
-                "00080016": { vr: "UI", Value: [(imgTags.sopClassUID as string) || "1.2.840.10008.5.1.4.1.1.7"] },
-                "00080018": { vr: "UI", Value: [image.sopInstanceUID] },
-                "0020000D": { vr: "UI", Value: [studyUID] },
-                "0020000E": { vr: "UI", Value: [seriesUID] },
-                "00200013": { vr: "IS", Value: [(imgTags.instanceNumber as string) || "1"] },
-                "00280010": { vr: "US", Value: [(imgTags.rows as number) ?? 512] },
-                "00280011": { vr: "US", Value: [(imgTags.columns as number) ?? 512] },
-              });
+              if (!fp || !isNonEmptyDicomFile(fp)) continue;
+              const instanceKey = `${image.sopInstanceUID}|${fp}`;
+              if (seenInstanceKeys.has(instanceKey)) continue;
+              seenInstanceKeys.add(instanceKey);
+              const bulkUri =
+                `${getDicomwebBaseUrl(req)}/studies/${studyUID}/series/${seriesUID}` +
+                `/instances/${image.sopInstanceUID}/frames/1`;
+              instances.push(
+                buildInstanceMetadata(
+                  patient,
+                  studyUID,
+                  seriesUID,
+                  image.sopInstanceUID,
+                  series.serieModality,
+                  bulkUri,
+                  fp,
+                ),
+              );
             }
           }
         }
       }
+      logger.info({
+        message: "Tenant QIDO /studies/{studyUID}/series/{seriesUID}/instances response",
+        tenantSlug,
+        studyUID,
+        seriesUID,
+        instanceCount: instances.length,
+      });
       res.json(instances);
+    }),
+  );
+
+  // WADO-RS: Retrieve series (all instances in one series)
+  router.get("/studies/:studyUID/series/:seriesUID",
+    validateStudyAccess(),
+    asyncHandler(async (req: Request, res: Response) => {
+      const tenantReq = req as TenantRequest;
+      const tenantSlug = tenantReq.tenant.slug;
+      const { studyUID, seriesUID } = req.params;
+
+      if (useOrthanc) {
+        try {
+          const response = await axios.get(
+            `${orthancBase}/dicom-web/studies/${studyUID}/series/${seriesUID}`,
+            {
+              headers: { ...orthancAuth, Accept: "multipart/related; type=application/dicom" },
+              responseType: "stream",
+              timeout: 30_000,
+            },
+          );
+          res.setHeader(
+            "Content-Type",
+            response.headers["content-type"] || "multipart/related; type=application/dicom",
+          );
+          res.setHeader("Cache-Control", "private, max-age=3600");
+          response.data.pipe(res);
+        } catch {
+          res.status(404).json({ error: "No DICOM files found for this series" });
+        }
+        return;
+      }
+
+      const patients = queryTenantDIM(tenantSlug);
+      const filePathSet = new Set<string>();
+
+      for (const patient of patients) {
+        for (const study of patient.studies) {
+          if (study.studyInstanceUID !== studyUID) continue;
+          for (const series of study.series) {
+            if (series.serieInstanceUID !== seriesUID) continue;
+            for (const image of series.images) {
+              const filePath = resolveTenantFilePath(tenantSlug, image.sopInstanceUID) ?? image.rawPath;
+              if (filePath && fs.existsSync(filePath)) {
+                filePathSet.add(filePath);
+              }
+            }
+          }
+        }
+      }
+
+      const filePaths = Array.from(filePathSet).filter((filePath) => isNonEmptyDicomFile(filePath));
+      if (filePaths.length === 0) {
+        res.status(404).json({ error: "No DICOM files found for this series" });
+        return;
+      }
+
+      logger.info({
+        message: "Tenant WADO series retrieve response",
+        tenantSlug,
+        studyUID,
+        seriesUID,
+        instanceCount: filePaths.length,
+      });
+      streamMultipartDicomFiles(res, filePaths);
+    }),
+  );
+
+  // WADO-RS: Retrieve study (all instances in all series)
+  router.get("/studies/:studyUID",
+    validateStudyAccess(),
+    asyncHandler(async (req: Request, res: Response) => {
+      const tenantReq = req as TenantRequest;
+      const tenantSlug = tenantReq.tenant.slug;
+      const { studyUID } = req.params;
+
+      if (useOrthanc) {
+        try {
+          const response = await axios.get(
+            `${orthancBase}/dicom-web/studies/${studyUID}`,
+            {
+              headers: { ...orthancAuth, Accept: "multipart/related; type=application/dicom" },
+              responseType: "stream",
+              timeout: 30_000,
+            },
+          );
+          res.setHeader(
+            "Content-Type",
+            response.headers["content-type"] || "multipart/related; type=application/dicom",
+          );
+          res.setHeader("Cache-Control", "private, max-age=3600");
+          response.data.pipe(res);
+        } catch {
+          res.status(404).json({ error: "No DICOM files found for this study" });
+        }
+        return;
+      }
+
+      const patients = queryTenantDIM(tenantSlug);
+      const filePathSet = new Set<string>();
+
+      for (const patient of patients) {
+        for (const study of patient.studies) {
+          if (study.studyInstanceUID !== studyUID) continue;
+          for (const series of study.series) {
+            for (const image of series.images) {
+              const filePath = resolveTenantFilePath(tenantSlug, image.sopInstanceUID) ?? image.rawPath;
+              if (filePath && fs.existsSync(filePath)) {
+                filePathSet.add(filePath);
+              }
+            }
+          }
+        }
+      }
+
+      const filePaths = Array.from(filePathSet).filter((filePath) => isNonEmptyDicomFile(filePath));
+      if (filePaths.length === 0) {
+        res.status(404).json({ error: "No DICOM files found for this study" });
+        return;
+      }
+
+      logger.info({
+        message: "Tenant WADO study retrieve response",
+        tenantSlug,
+        studyUID,
+        instanceCount: filePaths.length,
+      });
+      streamMultipartDicomFiles(res, filePaths);
     }),
   );
 
@@ -507,7 +1136,7 @@ export function dicomwebMultiTenantRouter(
     asyncHandler(async (req: Request, res: Response) => {
       const tenantReq = req as TenantRequest;
       const tenantSlug = tenantReq.tenant.slug;
-      const { sopUID } = req.params;
+      const sopUID = firstParam(req.params.sopUID);
 
       if (useOrthanc) {
         try {
@@ -544,7 +1173,7 @@ export function dicomwebMultiTenantRouter(
     asyncHandler(async (req: Request, res: Response) => {
       const tenantReq = req as TenantRequest;
       const tenantSlug = tenantReq.tenant.slug;
-      const { sopUID } = req.params;
+      const sopUID = firstParam(req.params.sopUID);
 
       if (useOrthanc) {
         const { studyUID, seriesUID, frames } = req.params;
@@ -572,17 +1201,67 @@ export function dicomwebMultiTenantRouter(
       const pixelDataElement = dataSet.elements["x7fe00010"];
       if (!pixelDataElement) { res.status(404).json({ error: "No pixel data" }); return; }
 
+      const transferSyntaxUID = normalizeDicomUid(dataSet.string("x00020010"));
       let pixelData: Buffer;
+      const frameIndex = getRequestedFrameIndex(firstParam(req.params.frames));
       if (pixelDataElement.encapsulatedPixelData) {
-        const frameIndex = Math.max(0, parseInt(req.params.frames, 10) - 1);
-        const fragments = pixelDataElement.fragments;
-        if (!fragments || frameIndex >= fragments.length) { res.status(404).json({ error: `Frame ${frameIndex + 1} not found` }); return; }
-        const fragment = fragments[frameIndex];
-        pixelData = Buffer.from(byteArray.buffer, byteArray.byteOffset + fragment.position, fragment.length);
+        const parserWithFrameReader = dicomParser as unknown as {
+          readEncapsulatedImageFrame?: (
+            dataSet: dicomParser.DataSet,
+            pixelDataElement: dicomParser.Element,
+            frameIndex: number,
+          ) => Uint8Array;
+        };
+
+        let frameBuffer: Buffer | null = null;
+        if (typeof parserWithFrameReader.readEncapsulatedImageFrame === "function") {
+          try {
+            const frameBytes = parserWithFrameReader.readEncapsulatedImageFrame(dataSet, pixelDataElement, frameIndex);
+            if (frameBytes && frameBytes.byteLength > 0) {
+              frameBuffer = Buffer.from(frameBytes.buffer, frameBytes.byteOffset, frameBytes.byteLength);
+            }
+          } catch {
+            // fall through to fragment fallback
+          }
+        }
+
+        if (!frameBuffer) {
+          const fragments = pixelDataElement.fragments;
+          if (!fragments || frameIndex >= fragments.length) {
+            res.status(404).json({ error: `Frame ${frameIndex + 1} not found` });
+            return;
+          }
+          const fragment = fragments[frameIndex];
+          frameBuffer = Buffer.from(byteArray.buffer, byteArray.byteOffset + fragment.position, fragment.length);
+        }
+
+        if (transferSyntaxUID && JPEG_LOSSLESS_TRANSFER_SYNTAX_UIDS.has(transferSyntaxUID)) {
+          const decodedFrame = decodeJpegLosslessFrame(frameBuffer, dataSet);
+          if (decodedFrame) {
+            pixelData = decodedFrame;
+          } else {
+            logger.warn({
+              message: "Tenant JPEG Lossless frame decode failed — returning original encapsulated bytes",
+              tenantSlug,
+              sopUID,
+              transferSyntaxUID,
+              frameIndex,
+            });
+            pixelData = frameBuffer;
+          }
+        } else {
+          pixelData = frameBuffer;
+        }
       } else {
-        pixelData = Buffer.from(byteArray.buffer, byteArray.byteOffset + pixelDataElement.dataOffset, pixelDataElement.length);
+        const nativeFrame = extractNativeFrame(dataSet, pixelDataElement, frameIndex, byteArray);
+        if (!nativeFrame) {
+          res.status(404).json({ error: `Frame ${frameIndex + 1} not found` });
+          return;
+        }
+        pixelData = nativeFrame;
       }
 
+      const mediaType = "application/octet-stream";
       const acceptHeader = (req.headers.accept || "").toLowerCase();
       res.setHeader("Cache-Control", "private, max-age=3600");
       if (acceptHeader.includes("multipart")) {

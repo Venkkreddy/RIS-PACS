@@ -809,6 +809,80 @@ describe("VIII. Worklist & Sync", () => {
     expect(r.body.status).toBe("reported");
     expect(r.body.tatHours).toBeDefined();
   });
+
+  it("VIII.11: viewerUrl includes all StudyInstanceUIDs for same patient", async () => {
+    const { app, store } = buildApp();
+    const uidA = "1.2.840.113619.2.55.3.604688435.12.1001";
+    const uidB = "1.2.840.113619.2.55.3.604688435.12.1002";
+
+    await store.upsertStudyRecord(uidA, {
+      patientName: "Alice",
+      metadata: { patientId: "MRN-AL-1" },
+    });
+    await store.upsertStudyRecord(uidB, {
+      patientName: "Alice",
+      metadata: { patientId: "MRN-AL-1" },
+    });
+
+    const a = await login(app, "radiologist");
+    const r = await a.get("/worklist");
+    expect(r.status).toBe(200);
+    expect(r.body).toHaveLength(2);
+
+    const viewerUrls = (r.body as Array<{ viewerUrl: string | null }>)
+      .map((study) => study.viewerUrl)
+      .filter((viewerUrl): viewerUrl is string => Boolean(viewerUrl));
+    expect(viewerUrls).toHaveLength(2);
+
+    for (const viewerUrl of viewerUrls) {
+      const parsed = new URL(viewerUrl);
+      const values = parsed.searchParams.getAll("StudyInstanceUIDs");
+      expect(values).toHaveLength(1);
+      const uids = values[0]!
+        .split(",")
+        .map((uid) => uid.trim())
+        .filter(Boolean);
+      expect(new Set(uids)).toEqual(new Set([uidA, uidB]));
+      expect(parsed.searchParams.get("studyInstanceUIDs")).toBe(values[0]);
+    }
+  });
+
+  it("VIII.12: viewerUrl groups same patient when metadata uses patient_id", async () => {
+    const { app, store } = buildApp();
+    const uidA = "1.2.840.113619.2.55.3.604688435.12.2001";
+    const uidB = "1.2.840.113619.2.55.3.604688435.12.2002";
+
+    await store.upsertStudyRecord(uidA, {
+      patientName: "Alice",
+      metadata: { patient_id: "MRN-AL-2" },
+    });
+    await store.upsertStudyRecord(uidB, {
+      patientName: "Alice",
+      metadata: { patient_id: "MRN-AL-2" },
+    });
+
+    const a = await login(app, "radiologist");
+    const r = await a.get("/worklist");
+    expect(r.status).toBe(200);
+    expect(r.body).toHaveLength(2);
+
+    const viewerUrls = (r.body as Array<{ viewerUrl: string | null }>)
+      .map((study) => study.viewerUrl)
+      .filter((viewerUrl): viewerUrl is string => Boolean(viewerUrl));
+    expect(viewerUrls).toHaveLength(2);
+
+    for (const viewerUrl of viewerUrls) {
+      const parsed = new URL(viewerUrl);
+      const values = parsed.searchParams.getAll("StudyInstanceUIDs");
+      expect(values).toHaveLength(1);
+      const uids = values[0]!
+        .split(",")
+        .map((uid) => uid.trim())
+        .filter(Boolean);
+      expect(new Set(uids)).toEqual(new Set([uidA, uidB]));
+      expect(parsed.searchParams.get("studyInstanceUIDs")).toBe(values[0]);
+    }
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -15,10 +15,12 @@
 
 -- AE Title → tenant_id mapping (populated from backend API)
 local ae_tenant_map = {}
+local backend_base_url = os.getenv("BACKEND_URL") or "http://localhost:8081"
+local backend_api_v1 = backend_base_url .. "/api/v1"
 
 -- Refresh the AE→tenant mapping from the backend API
 function RefreshTenantMapping()
-  local response = HttpGet("http://reporting-app-backend:8080/api/v1/internal/dicom-tenant-map", false)
+  local response = HttpGet(backend_api_v1 .. "/internal/dicom-tenant-map", false)
   if response then
     local ok, mapping = pcall(ParseJson, response)
     if ok and mapping then
@@ -58,7 +60,7 @@ function IncomingCStoreRequestFilter(dicom, origin)
       -- Check if any tenant's institution matches
       if institution ~= "" then
         local inst_response = HttpGet(
-          "http://reporting-app-backend:8080/api/v1/internal/tenant-by-institution?name=" ..
+          backend_api_v1 .. "/internal/tenant-by-institution?name=" ..
           UrlEncode(institution), false
         )
         if inst_response then
@@ -119,7 +121,7 @@ function OnStableStudy(studyId, tags, metadata)
     ["X-Webhook-Secret"] = os.getenv("WEBHOOK_SECRET") or ""
   }
 
-  HttpPost("http://reporting-app-backend:8080/api/v1/webhook/study",
+  HttpPost(backend_api_v1 .. "/webhook/study",
            DumpJson(payload, true), headers)
 
   PrintToLog("Notified backend: Study=" .. study_uid .. " Tenant=" .. tenant_id)

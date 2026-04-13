@@ -3,7 +3,7 @@ import multer from "multer";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { ensureAuthenticated, ensureRole } from "../middleware/auth";
 
-const ensureVoiceAccess = ensureRole("radiologist", "admin", "developer");
+const ensureVoiceAccess = ensureRole("radiologist", "admin", "super_admin", "developer");
 import { SpeechService } from "../services/speechService";
 
 const upload = multer({ storage: multer.memoryStorage() });

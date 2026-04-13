@@ -216,6 +216,23 @@
     dark:border-white/[0.08] dark:bg-[#0c1322]/80 dark:text-tdai-gray-100 dark:shadow-[0_0_0_1px_rgba(255,255,255,0.03)] dark:hover:border-white/[0.12] dark:focus:border-tdai-teal-500/60;
   }
 
+  /* Native date inputs: match form controls and avoid legacy-looking controls where possible */
+  .input-date {
+    @apply min-h-[2.75rem] pr-2;
+    color-scheme: light;
+  }
+  .input-date::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.65;
+    margin-left: 0.25rem;
+  }
+  .input-date:hover::-webkit-calendar-picker-indicator {
+    opacity: 1;
+  }
+  .input-date:focus::-webkit-calendar-picker-indicator {
+    opacity: 1;
+  }
+
   /* ── Cards ─────────────────────────────────────────── */
   .card {
     @apply rounded-2xl border border-tdai-gray-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_4px_16px_-8px_rgba(26,43,86,0.12)] transition-all duration-300

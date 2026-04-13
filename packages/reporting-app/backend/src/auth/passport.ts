@@ -21,7 +21,7 @@ if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
           id: profile.id,
           email,
           displayName: profile.displayName,
-          role: isMasterAdmin ? "admin" : "viewer",
+          role: isMasterAdmin ? "super_admin" : "viewer",
           approved: isMasterAdmin,
           requestStatus: isMasterAdmin ? "approved" : "pending",
         });

@@ -1,0 +1,62 @@
+# Version control
+.git
+.github
+.gitignore
+
+# IDE / editor
+.vscode
+.idea
+.cursor
+
+# Node
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build artifacts (rebuilt inside containers)
+**/dist
+**/build
+**/coverage
+**/.next
+**/.turbo
+**/.nx
+
+# Python caches
+**/__pycache__
+**/*.pyc
+**/*.pyo
+
+# Java build output (rebuilt in dicoogle image)
+**/target
+
+# Runtime / local data
+storage
+dicoogle-index
+dicoogle-local
+monai-models
+Plugins
+
+# Environment files (injected via compose env/env_file)
+.env
+.env.local
+.env.docker
+
+# Test artifacts
+tests/artifacts
+
+# Documentation
+docs
+*.md
+!packages/reporting-app/backend/migrations/*.sql
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Docker compose files themselves
+docker-compose*.yml
+Dockerfile

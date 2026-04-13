@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api/client";
+import { formatInr } from "../lib/currency";
 import type { BillingRecord, BillingStatus, Patient } from "@medical-report-system/shared";
 
 const statusStyle: Record<BillingStatus, string> = {
@@ -102,7 +103,7 @@ export function BillingPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs font-medium uppercase tracking-wider text-amber-600">Pending</p>
-              <p className="mt-1 text-2xl font-semibold text-tdai-text">${totalPending.toFixed(2)}</p>
+              <p className="mt-1 text-2xl font-semibold text-tdai-text">{formatInr(totalPending)}</p>
             </div>
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50">
               <svg className="h-5 w-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -113,7 +114,7 @@ export function BillingPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs font-medium uppercase tracking-wider text-tdai-teal-600">Invoiced</p>
-              <p className="mt-1 text-2xl font-semibold text-tdai-text">${totalInvoiced.toFixed(2)}</p>
+              <p className="mt-1 text-2xl font-semibold text-tdai-text">{formatInr(totalInvoiced)}</p>
             </div>
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-tdai-teal-50">
               <svg className="h-5 w-5 text-tdai-teal-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
@@ -124,7 +125,7 @@ export function BillingPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs font-medium uppercase tracking-wider text-emerald-600">Paid</p>
-              <p className="mt-1 text-2xl font-semibold text-tdai-text">${totalPaid.toFixed(2)}</p>
+              <p className="mt-1 text-2xl font-semibold text-tdai-text">{formatInr(totalPaid)}</p>
             </div>
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50">
               <svg className="h-5 w-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -174,8 +175,8 @@ export function BillingPage() {
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Amount *</label>
                 <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-tdai-muted">$</span>
-                  <input className="input-field pl-7" type="number" step="0.01" min="0" placeholder="0.00" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required />
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-tdai-muted" aria-hidden>₹</span>
+                  <input className="input-field pl-8" type="number" step="0.01" min="0" placeholder="0.00" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required />
                 </div>
               </div>
               <div className="sm:col-span-2">
@@ -225,7 +226,7 @@ export function BillingPage() {
                     </div>
                   </td>
                   <td className="table-cell text-tdai-secondary">{r.description}</td>
-                  <td className="table-cell font-semibold font-mono">${r.amount.toFixed(2)}</td>
+                  <td className="table-cell font-semibold font-mono">{formatInr(r.amount)}</td>
                   <td className="table-cell">
                     <span className={`badge ${statusStyle[r.status]}`}>{r.status}</span>
                   </td>

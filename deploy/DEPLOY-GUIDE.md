@@ -81,6 +81,38 @@ sudo bash deploy/05-setup-nginx.sh YOUR_IP_OR_DOMAIN
 bash deploy/06-auto-restart.sh
 ```
 
+## HIPAA Compliance Checklist (Production)
+
+Before deploying with PHI, verify:
+
+- [ ] `NODE_ENV=production` is set
+- [ ] `ENABLE_AUTH=true` is set
+- [ ] `CORS_ALLOW_ALL=false` (enforced in production regardless)
+- [ ] `SESSION_SECRET` is a strong, unique 32+ character value
+- [ ] `JWT_SECRET` is a strong, unique 32+ character value
+- [ ] `HIPAA_AUDIT_ENABLED=true` is set
+- [ ] `HIPAA_REQUIRE_HTTPS=true` is set
+- [ ] TLS/HTTPS enabled on all endpoints (load balancer + application)
+- [ ] All default passwords and secrets are changed
+- [ ] Master admin emails configured in `MASTER_ADMIN_EMAILS`
+- [ ] BAA signed with Google Cloud/Firebase
+- [ ] BAA signed with SendGrid (if sending PHI via email)
+
+### HIPAA Environment Variables
+
+Add to your `.env`:
+
+```env
+HIPAA_AUDIT_ENABLED=true
+HIPAA_SESSION_TIMEOUT_MINUTES=15
+HIPAA_MAX_FAILED_LOGINS=5
+HIPAA_LOCKOUT_DURATION_MINUTES=30
+HIPAA_REQUIRE_HTTPS=true
+HIPAA_MIN_PASSWORD_LENGTH=12
+```
+
+See [`HIPAA_COMPLIANCE.md`](../HIPAA_COMPLIANCE.md) for full deployment checklist and compliance documentation.
+
 ## Troubleshooting
 
 ```bash

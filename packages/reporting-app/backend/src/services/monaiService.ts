@@ -33,6 +33,8 @@ export interface MonaiInferenceResult {
   summary: string;
   processedAt: string;
   processingTimeMs: number;
+  dicomSegBase64?: string;
+  dicomSegSizeBytes?: number;
   dicomSrBase64?: string;
   dicomSrSizeBytes?: number;
   dicomScBase64?: string;
@@ -226,12 +228,16 @@ export class MonaiService {
         summary,
         processedAt: new Date().toISOString(),
         processingTimeMs: Date.now() - startTime,
+        dicomSegBase64: data.dicom_seg_base64 as string | undefined,
+        dicomSegSizeBytes: data.dicom_seg_size_bytes as number | undefined,
         dicomSrBase64: data.dicom_sr_base64 as string | undefined,
         dicomSrSizeBytes: data.dicom_sr_size_bytes as number | undefined,
         dicomScBase64: data.dicom_sc_base64 as string | undefined,
         dicomScSizeBytes: data.dicom_sc_size_bytes as number | undefined,
-        dicomGspsBase64: data.dicom_gsps_base64 as string | undefined,
-        dicomGspsSizeBytes: data.dicom_gsps_size_bytes as number | undefined,
+        dicomGspsBase64: (data.dicom_gsps_base64 as string | undefined)
+          ?? (data.dicom_pr_base64 as string | undefined),
+        dicomGspsSizeBytes: (data.dicom_gsps_size_bytes as number | undefined)
+          ?? (data.dicom_pr_size_bytes as number | undefined),
       };
     } catch (error: unknown) {
       const axErr = error as { response?: { data?: unknown; status?: number } };
@@ -256,6 +262,105 @@ export class MonaiService {
         status: "failed",
         findings: [],
         summary: userMessage,
+        processedAt: new Date().toISOString(),
+        processingTimeMs: Date.now() - startTime,
+      };
+    }
+  }
+
+  async analyzeDicomAutoRoute(
+    dicomBuffer: Buffer,
+    filename: string,
+    studyId: string,
+  ): Promise<MonaiInferenceResult> {
+    if (!this.enabled) {
+      return this.mockInferenceResult({ studyId, model: "auto" });
+    }
+
+    const startTime = Date.now();
+
+    try {
+      const form = new FormData();
+      form.append("file", dicomBuffer, { filename, contentType: "application/dicom" });
+      form.append("study_uid", studyId);
+      form.append("push_to_orthanc", "true");
+
+      const response = await axios.post(`${env.MONAI_SERVER_URL}/v1/analyze-auto`, form, {
+        headers: form.getHeaders(),
+        timeout: 180_000,
+        maxContentLength: 100_000_000,
+        maxBodyLength: 100_000_000,
+      });
+
+      const data = response.data as Record<string, unknown>;
+      const modelsRun = (data.models_run as string[]) ?? [];
+      // #region agent log
+      fetch("http://127.0.0.1:7406/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"5ecab0"},body:JSON.stringify({sessionId:"5ecab0",runId:"pre-fix",hypothesisId:"H4",location:"monaiService.ts:analyzeDicomAutoRoute:response",message:"MONAI auto-route raw response",data:{studyId,modality:typeof data.modality==="string"?data.modality:null,bodyPart:typeof data.body_part==="string"?data.body_part:null,modelsRun,errors:Array.isArray(data.errors)?data.errors.length:0,dicomOutputsCount:typeof data.dicom_outputs_count==="number"?data.dicom_outputs_count:null,hasHeatmap:Boolean(data.heatmap_png_base64),hasDicomSeg:Boolean(data.dicom_seg_base64),hasDicomSr:Boolean(data.dicom_sr_base64),hasDicomSc:Boolean(data.dicom_sc_base64)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      const allFindings: MonaiFinding[] = [];
+
+      // Parse findings from the top-level "findings" array first (new format),
+      // then fall back to per-model results (legacy format).
+      const topFindings = (data.findings ?? []) as Array<Record<string, unknown>>;
+      if (topFindings.length > 0) {
+        allFindings.push(...this.parseFindings({ findings: topFindings }));
+      } else {
+        const results = (data.results ?? {}) as Record<string, Record<string, unknown>>;
+        for (const [modelName, modelResult] of Object.entries(results)) {
+          const modelFindings = this.parseFindings(modelResult);
+          for (const f of modelFindings) {
+            f.description = f.description || `[${modelName}]`;
+          }
+          allFindings.push(...modelFindings);
+        }
+      }
+
+      const serverErrors = (data.errors as string[] | undefined) ?? [];
+      // A model that runs but finds no abnormalities is still a successful analysis.
+      const modelsDidRun = modelsRun.length > 0;
+      const summary = (data.summary as string | undefined)
+        ?? (modelsDidRun
+          ? this.buildSummary(allFindings, modelsRun.join(", "))
+          : "No applicable models found for this study's modality.");
+
+      return {
+        studyId,
+        model: modelsRun.join(", ") || "auto",
+        status: modelsDidRun ? "completed" : "failed",
+        findings: allFindings,
+        summary: serverErrors.length > 0 ? `${summary} [Errors: ${serverErrors.join("; ")}]` : summary,
+        processedAt: new Date().toISOString(),
+        processingTimeMs: Date.now() - startTime,
+        dicomSegBase64: data.dicom_seg_base64 as string | undefined,
+        dicomSegSizeBytes: data.dicom_seg_size_bytes as number | undefined,
+        dicomSrBase64: data.dicom_sr_base64 as string | undefined,
+        dicomSrSizeBytes: data.dicom_sr_size_bytes as number | undefined,
+        dicomScBase64: data.dicom_sc_base64 as string | undefined,
+        dicomScSizeBytes: data.dicom_sc_size_bytes as number | undefined,
+        dicomGspsBase64: (data.dicom_gsps_base64 as string | undefined)
+          ?? (data.dicom_pr_base64 as string | undefined),
+        dicomGspsSizeBytes: (data.dicom_gsps_size_bytes as number | undefined)
+          ?? (data.dicom_pr_size_bytes as number | undefined),
+        heatmapPngBase64: data.heatmap_png_base64 as string | undefined,
+      };
+    } catch (error: unknown) {
+      const axErr = error as { response?: { data?: unknown; status?: number } };
+      const serverDetail =
+        axErr.response?.data && typeof axErr.response.data === "object"
+          ? (axErr.response.data as { detail?: string }).detail
+          : undefined;
+      logger.error({
+        message: "MONAI auto-route analysis failed",
+        studyId,
+        error: String(error),
+        responseStatus: axErr.response?.status,
+      });
+      return {
+        studyId,
+        model: "auto",
+        status: "failed",
+        findings: [],
+        summary: `Auto AI analysis failed: ${serverDetail ?? (error instanceof Error ? error.message : "Unknown error")}`,
         processedAt: new Date().toISOString(),
         processingTimeMs: Date.now() - startTime,
       };
@@ -311,12 +416,16 @@ export class MonaiService {
         summary,
         processedAt: new Date().toISOString(),
         processingTimeMs: Date.now() - startTime,
+        dicomSegBase64: data.dicom_seg_base64 as string | undefined,
+        dicomSegSizeBytes: data.dicom_seg_size_bytes as number | undefined,
         dicomSrBase64: data.dicom_sr_base64 as string | undefined,
         dicomSrSizeBytes: data.dicom_sr_size_bytes as number | undefined,
         dicomScBase64: data.dicom_sc_base64 as string | undefined,
         dicomScSizeBytes: data.dicom_sc_size_bytes as number | undefined,
-        dicomGspsBase64: data.dicom_gsps_base64 as string | undefined,
-        dicomGspsSizeBytes: data.dicom_gsps_size_bytes as number | undefined,
+        dicomGspsBase64: (data.dicom_gsps_base64 as string | undefined)
+          ?? (data.dicom_pr_base64 as string | undefined),
+        dicomGspsSizeBytes: (data.dicom_gsps_size_bytes as number | undefined)
+          ?? (data.dicom_pr_size_bytes as number | undefined),
         heatmapPngBase64: data.heatmap_png_base64 as string | undefined,
         medgemmaNarrative: useMedGemma ? (data.medgemma_narrative as string | undefined) : undefined,
         medgemmaFindings: useMedGemma ? (data.medgemma_findings as string | undefined) : undefined,

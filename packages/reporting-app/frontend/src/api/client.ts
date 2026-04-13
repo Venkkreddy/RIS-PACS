@@ -1,10 +1,77 @@
 import axios from "axios";
 
+function debugApiLog(
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown> = {},
+  runId = "run-1",
+) {
+  fetch("http://127.0.0.1:7829/ingest/0823df88-6411-4f3d-9920-ebf0779efd31", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": "b161f5",
+    },
+    body: JSON.stringify({
+      sessionId: "b161f5",
+      runId,
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+}
+
+function debugAgentLog(
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown> = {},
+  runId = "run-quick-access-1",
+) {
+  fetch("http://127.0.0.1:7406/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": "b20a13",
+    },
+    body: JSON.stringify({
+      sessionId: "b20a13",
+      runId,
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+}
+
 export const api = axios.create({
   baseURL: "/api",
   withCredentials: true,
   timeout: 30000,
 });
+
+function isPublicRoute(pathname: string) {
+  return pathname === "/" || pathname.startsWith("/login") || pathname.startsWith("/pending-approval");
+}
+
+function redirectToLoginIfNeeded() {
+  const shouldRedirect = !isPublicRoute(window.location.pathname);
+  // #region agent log
+  debugAgentLog("H2", "client.ts:redirectToLoginIfNeeded", "evaluated login redirect after auth failure", {
+    currentPath: window.location.pathname,
+    shouldRedirect,
+  });
+  // #endregion
+  if (shouldRedirect) {
+    window.location.href = "/login";
+  }
+}
 
 /**
  * Multi-tenant token management.
@@ -41,6 +108,14 @@ export function getTenantContext() {
 
 // Inject tenant context headers on every request
 api.interceptors.request.use((config) => {
+  (config as unknown as { _debugStartedAt?: number })._debugStartedAt = Date.now();
+  // #region agent log
+  debugApiLog("H8", "client.ts:request", "api request start", {
+    method: config.method ?? "get",
+    url: config.url ?? "unknown",
+    path: typeof window !== "undefined" ? window.location.pathname : "unknown",
+  });
+  // #endregion
   if (_accessToken) {
     config.headers.Authorization = `Bearer ${_accessToken}`;
   }
@@ -55,23 +130,51 @@ api.interceptors.request.use((config) => {
 
 // Handle 401 — attempt token refresh for multi-tenant, redirect for session auth
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    const startedAt = (res.config as unknown as { _debugStartedAt?: number })._debugStartedAt;
+    // #region agent log
+    debugApiLog("H8", "client.ts:response", "api request success", {
+      method: res.config.method ?? "get",
+      url: res.config.url ?? "unknown",
+      status: res.status,
+      elapsedMs: typeof startedAt === "number" ? Date.now() - startedAt : -1,
+    });
+    // #endregion
+    return res;
+  },
   async (error) => {
+    const startedAt = (error?.config as { _debugStartedAt?: number } | undefined)?._debugStartedAt;
+    // #region agent log
+    debugApiLog("H9", "client.ts:responseError", "api request failed", {
+      method: error?.config?.method ?? "get",
+      url: error?.config?.url ?? "unknown",
+      status: error?.response?.status ?? "no_response",
+      code: error?.code ?? "unknown",
+      elapsedMs: typeof startedAt === "number" ? Date.now() - startedAt : -1,
+      currentPath: typeof window !== "undefined" ? window.location.pathname : "unknown",
+    });
+    // #endregion
     if (!axios.isAxiosError(error) || error.response?.status !== 401) {
       return Promise.reject(error);
     }
 
+    // #region agent log
+    debugAgentLog("H2", "client.ts:received401", "received HTTP 401 from API response", {
+      method: error?.config?.method ?? "get",
+      url: error?.config?.url ?? "unknown",
+      currentPath: typeof window !== "undefined" ? window.location.pathname : "unknown",
+    });
+    // #endregion
+
     const originalRequest = error.config;
-    if (!originalRequest || (originalRequest as Record<string, unknown>)._retry) {
-      if (!window.location.pathname.startsWith("/login")) {
-        window.location.href = "/login";
-      }
+    if (!originalRequest || (originalRequest as unknown as Record<string, unknown>)._retry) {
+      redirectToLoginIfNeeded();
       return Promise.reject(error);
     }
 
     // Multi-tenant: try refresh token
     if (_refreshToken && _accessToken) {
-      (originalRequest as Record<string, unknown>)._retry = true;
+      (originalRequest as unknown as Record<string, unknown>)._retry = true;
       try {
         const refreshRes = await axios.post("/api/api/v1/auth/refresh", {
           refreshToken: _refreshToken,
@@ -83,17 +186,13 @@ api.interceptors.response.use(
         return api(originalRequest);
       } catch {
         clearTenantAuth();
-        if (!window.location.pathname.startsWith("/login")) {
-          window.location.href = "/login";
-        }
+        redirectToLoginIfNeeded();
         return Promise.reject(error);
       }
     }
 
     // Session auth: redirect to login
-    if (!window.location.pathname.startsWith("/login")) {
-      window.location.href = "/login";
-    }
+    redirectToLoginIfNeeded();
     return Promise.reject(error);
   },
 );

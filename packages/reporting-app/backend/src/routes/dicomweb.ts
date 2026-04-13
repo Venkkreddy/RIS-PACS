@@ -1,9 +1,10 @@
 import { NextFunction, Request, Response, Router } from "express";
 import axios from "axios";
-import fs from "fs";
+import fs from "fs"; 
 import path from "path";
 import { createHash } from "node:crypto";
 import dicomParser from "dicom-parser";
+import { Decoder as JpegLosslessDecoder } from "jpeg-lossless-decoder-js";
 import { env } from "../config/env";
 import { ensureAuthenticated } from "../middleware/auth";
 import type { GatewayRequest } from "../middleware/apiGateway";
@@ -19,15 +20,17 @@ import { verifyWeasisAccessToken } from "../services/weasisAccess";
  *   GET /studies                           → QIDO-RS: list studies
  *   GET /studies/:studyUID/series          → QIDO-RS: list series
  *   GET /studies/:studyUID/series/:seriesUID/instances → QIDO-RS: list instances
+ *   GET /studies/:studyUID/series/:seriesUID → WADO-RS: retrieve full series
  *   GET /studies/:studyUID/series/:seriesUID/instances/:sopUID → WADO-RS: retrieve DICOM
+ *   GET /studies/:studyUID                 → WADO-RS: retrieve full study
  */
 
 const DICOOGLE_STORAGE_DIR =
   env.DICOOGLE_STORAGE_DIR || path.resolve(__dirname, "..", "..", "..", "..", "..", "storage");
+const TENANT_STORAGE_ROOT = path.resolve(env.TENANT_STORAGE_ROOT || DICOOGLE_STORAGE_DIR);
 
-interface DicoogleSearchResult {
-  uri: string;
-  fields: Record<string, string>;
+function getStorageScanRoots(): string[] {
+  return Array.from(new Set([path.resolve(DICOOGLE_STORAGE_DIR), path.resolve(TENANT_STORAGE_ROOT)]));
 }
 
 interface DicoogleDIMPatient {
@@ -61,6 +64,18 @@ interface DicoogleDIMImage {
   rawPath: string;
   uri: string;
   filename: string;
+}
+
+const LONG_VR_TYPES = new Set(["OB", "OD", "OF", "OL", "OW", "SQ", "UC", "UN", "UR", "UT"]);
+
+function getDicoogleEndpoints(): string[] {
+  return Array.from(
+    new Set(
+      [env.DICOOGLE_BASE_URL, env.DICOOGLE_FALLBACK_BASE_URL].filter(
+        (value): value is string => Boolean(value),
+      ),
+    ),
+  );
 }
 
 export type DicomwebStudyValidationReason =
@@ -115,6 +130,7 @@ function validationMessageFromReason(reason: DicomwebStudyValidationReason): str
 
 // Cached DIM query — avoids hitting Dicoogle on every request
 let dimCache: { data: DicoogleDIMPatient[]; ts: number } | null = null;
+let dicoogleDimProviderState: "unknown" | "available" | "unavailable" = "unknown";
 const DIM_CACHE_TTL = 120_000; // 2 minutes
 
 // Per-tenant DIM caches: tenant slug → { data, ts }
@@ -123,13 +139,17 @@ const tenantDimCaches = new Map<string, { data: DicoogleDIMPatient[]; ts: number
 const tenantSopFilePathMaps = new Map<string, Map<string, string>>();
 
 /** Built lazily for uploads stored as storage/<patientId>/*.dcm (flat basename fallback misses subfolders) */
-let storedBasenameToPathCache: Map<string, string> | null = null;
+let storedBasenameToPathCache: Map<string, string[]> | null = null;
 
 /** Clear the DIM cache so next request fetches fresh data from Dicoogle */
 export function clearDimCache(): void {
   dimCache = null;
   sopFilePathMap.clear();
   dicomTagCache.clear();
+  fileSopUidCache.clear();
+  readableFrameCache.clear();
+  pixelDataStatusCache.clear();
+  syntheticSopUids.clear();
   tenantDimCaches.clear();
   tenantSopFilePathMaps.clear();
   storedBasenameToPathCache = null;
@@ -146,9 +166,9 @@ export function registerExtraDicomFile(filePath: string): void {
     const byteArray = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
     const ds = dicomParser.parseDicom(byteArray, { untilTag: "x7FE00010" });
 
-    const studyUID = ds.string("x0020000d") ?? "";
-    const seriesUID = ds.string("x0020000e") ?? "";
-    const sopUID = ds.string("x00080018") ?? "";
+    const studyUID = normalizeDicomUid(ds.string("x0020000d")) ?? "";
+    const seriesUID = normalizeDicomUid(ds.string("x0020000e")) ?? "";
+    const sopUID = normalizeDicomUid(ds.string("x00080018")) ?? "";
     const modality = ds.string("x00080060") ?? "SR";
     const seriesDesc = ds.string("x0008103e") ?? "AI Structured Report";
     const patientName = ds.string("x00100010") ?? "";
@@ -201,6 +221,18 @@ interface ExtraDicomEntry {
 const pendingExtraFiles: ExtraDicomEntry[] = [];
 
 const MAX_SCAN_HEADER_BYTES = 4 * 1024 * 1024;
+const MAX_DICOM_SCAN_DEPTH = 16;
+const fileSopUidCache = new Map<string, string | null>();
+const readableFrameCache = new Map<string, boolean>();
+type DicomPixelDataStatus = "present" | "absent" | "unknown";
+const pixelDataStatusCache = new Map<string, DicomPixelDataStatus>();
+const syntheticSopUids = new Set<string>();
+
+function normalizeDicomUid(rawValue: string | undefined | null): string | null {
+  if (typeof rawValue !== "string") return null;
+  const normalized = rawValue.replace(/\0/g, "").trim();
+  return normalized.length > 0 ? normalized : null;
+}
 
 function buildSyntheticSopInstanceUid(seed: string): string {
   const digest = createHash("sha1").update(seed).digest("hex");
@@ -222,7 +254,7 @@ function shouldInspectAsDicomFile(filename: string): boolean {
   );
 }
 
-function findDicomFilesRecursive(dir: string, maxDepth = 3, depth = 0): string[] {
+function findDicomFilesRecursive(dir: string, maxDepth = MAX_DICOM_SCAN_DEPTH, depth = 0): string[] {
   const results: string[] = [];
   if (depth > maxDepth || !fs.existsSync(dir)) return results;
   try {
@@ -243,16 +275,24 @@ function findDicomFilesRecursive(dir: string, maxDepth = 3, depth = 0): string[]
   return results;
 }
 
-/** Locate a stored DICOM by basename under the full storage tree (patient/tenant subfolders). */
-function findStoredFileByBasename(filename: string): string | null {
-  if (!filename) return null;
+/** Locate stored DICOM paths by basename under the full storage tree (patient/tenant subfolders). */
+function findStoredFilesByBasename(filename: string): string[] {
+  if (!filename) return [];
   if (!storedBasenameToPathCache) {
-    storedBasenameToPathCache = new Map<string, string>();
-    for (const p of findDicomFilesRecursive(DICOOGLE_STORAGE_DIR, 16)) {
-      storedBasenameToPathCache.set(path.basename(p), p);
+    storedBasenameToPathCache = new Map<string, string[]>();
+    for (const root of getStorageScanRoots()) {
+      for (const p of findDicomFilesRecursive(root, MAX_DICOM_SCAN_DEPTH)) {
+        const basename = path.basename(p);
+        const existing = storedBasenameToPathCache.get(basename);
+        if (existing) {
+          existing.push(p);
+        } else {
+          storedBasenameToPathCache.set(basename, [p]);
+        }
+      }
     }
   }
-  return storedBasenameToPathCache.get(filename) ?? null;
+  return storedBasenameToPathCache.get(filename) ?? [];
 }
 
 function parseDicomHeaderFromFile(filePath: string): dicomParser.DataSet | null {
@@ -275,17 +315,31 @@ function parseDicomHeaderFromFile(filePath: string): dicomParser.DataSet | null 
   }
 }
 
+function getFileSopInstanceUid(filePath: string): string | null {
+  if (fileSopUidCache.has(filePath)) {
+    return fileSopUidCache.get(filePath) ?? null;
+  }
+  const ds = parseDicomHeaderFromFile(filePath);
+  const sopUid = ds?.string("x00080018")?.trim() ?? null;
+  fileSopUidCache.set(filePath, sopUid);
+  return sopUid;
+}
+
 function scanStorageForDIM(): DicoogleDIMPatient[] {
   const patientMap = new Map<string, DicoogleDIMPatient>();
-  const dicomFiles = findDicomFilesRecursive(DICOOGLE_STORAGE_DIR);
-
+  const scanRoots = getStorageScanRoots();
+  const dicomFiles = Array.from(
+    new Set(
+      scanRoots.flatMap((root) => findDicomFilesRecursive(root)),
+    ),
+  );
   for (const filePath of dicomFiles) {
     const ds = parseDicomHeaderFromFile(filePath);
     if (!ds) continue;
 
-    const studyUID = ds.string("x0020000d");
-    const seriesUID = ds.string("x0020000e");
-    const sopUID = ds.string("x00080018")?.trim() ?? "";
+    const studyUID = normalizeDicomUid(ds.string("x0020000d"));
+    const seriesUID = normalizeDicomUid(ds.string("x0020000e"));
+    const sopUID = normalizeDicomUid(ds.string("x00080018")) ?? "";
     if (!studyUID || !seriesUID) continue;
 
     const patientId = ds.string("x00100020") || "UNKNOWN";
@@ -397,6 +451,7 @@ function mergeDIMData(target: DicoogleDIMPatient[], source: DicoogleDIMPatient[]
 function normalizeDimSopUids(patients: DicoogleDIMPatient[]): void {
   const usedSopUids = new Set<string>();
   sopFilePathMap.clear();
+  syntheticSopUids.clear();
 
   for (const patient of patients) {
     for (const study of patient.studies) {
@@ -415,6 +470,7 @@ function normalizeDimSopUids(patients: DicoogleDIMPatient[]): void {
               salt += 1;
             } while (usedSopUids.has(effective));
             image.sopInstanceUID = effective;
+            syntheticSopUids.add(effective);
           }
 
           usedSopUids.add(effective);
@@ -432,17 +488,7 @@ function normalizeDimSopUids(patients: DicoogleDIMPatient[]): void {
 async function queryDicoogleDIM(): Promise<DicoogleDIMPatient[]> {
   if (dimCache && Date.now() - dimCache.ts < DIM_CACHE_TTL) return dimCache.data;
   let data: DicoogleDIMPatient[] = [];
-  const endpoints = Array.from(
-    new Set(
-      [
-        env.DICOOGLE_BASE_URL,
-        env.DICOOGLE_FALLBACK_BASE_URL,
-        "http://tdairad-dicoogle.internal",
-        "http://tdairad-dicoogle.flycast",
-        "https://tdairad-dicoogle.fly.dev",
-      ].filter(Boolean),
-    ),
-  );
+  const endpoints = getDicoogleEndpoints();
 
   let authHeaders: Record<string, string> = {};
   try {
@@ -453,44 +499,48 @@ async function queryDicoogleDIM(): Promise<DicoogleDIMPatient[]> {
 
   const endpointErrors: string[] = [];
   let querySucceeded = false;
-  let noDimProvidersAvailable = false;
-  for (const endpoint of endpoints) {
-    const headersCandidates = Object.keys(authHeaders).length > 0 ? [authHeaders, {}] : [{}];
-    for (const headers of headersCandidates) {
-      try {
-        const response = await axios.get(`${endpoint}/searchDIM`, {
-          params: { query: "SOPInstanceUID:*", provider: "lucene" },
-          headers,
-          timeout: 10000,
-          validateStatus: (status) => status >= 200 && status < 300,
-        });
-        data = (response.data as { results: DicoogleDIMPatient[] }).results || [];
-        logger.info({
-          message: "DICOMWeb DIM query succeeded",
-          endpoint,
-          studyCount: data.reduce((sum, patient) => sum + patient.studies.length, 0),
-        });
-        querySucceeded = true;
-        break;
-      } catch (error) {
-        if (axios.isAxiosError(error) && error.response?.status === 400) {
-          const payload = error.response.data as { error?: unknown } | undefined;
-          const apiError = typeof payload?.error === "string" ? payload.error : "";
-          if (/no valid dim providers supplied/i.test(apiError)) {
-            noDimProvidersAvailable = true;
-            endpointErrors.push(`${endpoint}: ${apiError}`);
-            break;
+  let noDimProvidersAvailable = dicoogleDimProviderState === "unavailable";
+
+  if (!noDimProvidersAvailable) {
+    for (const endpoint of endpoints) {
+      const headersCandidates = Object.keys(authHeaders).length > 0 ? [authHeaders, {}] : [{}];
+      for (const headers of headersCandidates) {
+        try {
+          const response = await axios.get(`${endpoint}/searchDIM`, {
+            params: { query: "SOPInstanceUID:*", provider: "lucene" },
+            headers,
+            timeout: 10000,
+            validateStatus: (status) => status >= 200 && status < 300,
+          });
+          data = (response.data as { results: DicoogleDIMPatient[] }).results || [];
+          logger.info({
+            message: "DICOMWeb DIM query succeeded",
+            endpoint,
+            studyCount: data.reduce((sum, patient) => sum + patient.studies.length, 0),
+          });
+          querySucceeded = true;
+          break;
+        } catch (error) {
+          if (axios.isAxiosError(error) && error.response?.status === 400) {
+            const payload = error.response.data as { error?: unknown } | undefined;
+            const apiError = typeof payload?.error === "string" ? payload.error : "";
+            if (/no valid dim providers supplied/i.test(apiError)) {
+              noDimProvidersAvailable = true;
+              endpointErrors.push(`${endpoint}: ${apiError}`);
+              break;
+            }
           }
+          const message = error instanceof Error ? error.message : "Unknown error";
+          endpointErrors.push(`${endpoint}: ${message}`);
         }
-        const message = error instanceof Error ? error.message : "Unknown error";
-        endpointErrors.push(`${endpoint}: ${message}`);
       }
+      if (querySucceeded || noDimProvidersAvailable) break;
     }
-    if (querySucceeded || noDimProvidersAvailable) break;
   }
 
   if (!querySucceeded) {
     if (noDimProvidersAvailable) {
+      dicoogleDimProviderState = "unavailable";
       logger.warn({
         message: "DICOMweb: Dicoogle is reachable but has no DIM providers enabled — falling back to filesystem scan",
         attempts: endpointErrors,
@@ -508,6 +558,7 @@ async function queryDicoogleDIM(): Promise<DicoogleDIMPatient[]> {
       studyCount: data.reduce((sum, p) => sum + p.studies.length, 0),
     });
   } else {
+    dicoogleDimProviderState = "available";
     const fsData = scanStorageForDIM();
     mergeDIMData(data, fsData);
   }
@@ -526,7 +577,7 @@ async function queryTenantDIM(tenantSlug: string): Promise<DicoogleDIMPatient[]>
   const cached = tenantDimCaches.get(tenantSlug);
   if (cached && Date.now() - cached.ts < DIM_CACHE_TTL) return cached.data;
 
-  const tenantStorageDir = path.join(DICOOGLE_STORAGE_DIR, tenantSlug);
+  const tenantStorageDir = path.join(TENANT_STORAGE_ROOT, tenantSlug);
   if (!fs.existsSync(tenantStorageDir)) {
     logger.info({ message: "Tenant storage dir does not exist yet", tenantSlug, tenantStorageDir });
     tenantDimCaches.set(tenantSlug, { data: [], ts: Date.now() });
@@ -555,6 +606,7 @@ async function queryTenantDIM(tenantSlug: string): Promise<DicoogleDIMPatient[]>
               salt += 1;
             } while (usedSopUids.has(effective));
             image.sopInstanceUID = effective;
+            syntheticSopUids.add(effective);
           }
 
           usedSopUids.add(effective);
@@ -592,9 +644,9 @@ function scanStorageForDIMInDir(dir: string): DicoogleDIMPatient[] {
     const ds = parseDicomHeaderFromFile(filePath);
     if (!ds) continue;
 
-    const studyUID = ds.string("x0020000d");
-    const seriesUID = ds.string("x0020000e");
-    const sopUID = ds.string("x00080018")?.trim() ?? "";
+    const studyUID = normalizeDicomUid(ds.string("x0020000d"));
+    const seriesUID = normalizeDicomUid(ds.string("x0020000e"));
+    const sopUID = normalizeDicomUid(ds.string("x00080018")) ?? "";
     if (!studyUID || !seriesUID) continue;
 
     const patientId = ds.string("x00100020") || "UNKNOWN";
@@ -734,21 +786,183 @@ function resolveFilePathFast(sopUID: string): string | null {
   return sopFilePathMap.get(sopUID) || null;
 }
 
+function resolveAndCacheImagePath(image: DicoogleDIMImage): string | null {
+  const sopUID = (image.sopInstanceUID ?? "").trim();
+  if (sopUID) {
+    const cachedPath = resolveFilePathFast(sopUID);
+    if (cachedPath) {
+      return cachedPath;
+    }
+  }
+
+  const resolvedPath = resolveExistingImagePath(image);
+  if (resolvedPath && sopUID) {
+    sopFilePathMap.set(sopUID, resolvedPath);
+  }
+  return resolvedPath;
+}
+
+function isNonEmptyDicomFile(filePath: string): boolean {
+  try {
+    const stats = fs.statSync(filePath);
+    return stats.isFile() && stats.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns a path suitable for QIDO/metadata listing.
+ *
+ * Avoid strict frame-readability filtering here; if DIM metadata is slightly
+ * stale or parser capabilities differ, aggressive filtering collapses valid
+ * series into empty lists (OHIF then shows a blank viewport).
+ */
+function resolveUsableImagePath(image: DicoogleDIMImage): string | null {
+  const resolvedPath = resolveAndCacheImagePath(image);
+  if (!resolvedPath) {
+    return null;
+  }
+  if (!isNonEmptyDicomFile(resolvedPath)) {
+    return null;
+  }
+  return resolvedPath;
+}
+
 function fileUriToPath(uri: string): string {
-  // Convert file:///C:/... to C:\...
-  return uri.replace(/^file:\/\/\//, "").replace(/\//g, "\\");
+  if (!uri.startsWith("file://")) return uri;
+  try {
+    const parsed = new URL(uri);
+    const decodedPath = decodeURIComponent(parsed.pathname);
+    // Windows file:// URIs come in as /C:/path
+    if (/^\/[A-Za-z]:\//.test(decodedPath)) {
+      return decodedPath.slice(1).replace(/\//g, "\\");
+    }
+    return decodedPath;
+  } catch {
+    const stripped = uri.replace(/^file:\/\//, "");
+    return stripped.startsWith("/") ? stripped : `/${stripped}`;
+  }
+}
+
+/**
+ * Keep WADO instance payload SOP UID aligned with the requested path param.
+ *
+ * DIM normalization may synthesize unique 2.25.* SOP UIDs to avoid collisions.
+ * If we return the original file unchanged, the embedded SOP UID can differ from
+ * the requested synthetic UID, causing client-side dedup/caching issues.
+ */
+function rewriteSopUidInDicomBuffer(fileBuffer: Buffer, requestedSopUid: string): Buffer {
+  if (!requestedSopUid?.trim()) return fileBuffer;
+
+  const byteArray = new Uint8Array(
+    fileBuffer.buffer,
+    fileBuffer.byteOffset,
+    fileBuffer.byteLength,
+  );
+
+  let dataSet: dicomParser.DataSet;
+  try {
+    dataSet = dicomParser.parseDicom(byteArray, { untilTag: "x7FE00010" });
+  } catch {
+    return fileBuffer;
+  }
+
+  const targetUid = requestedSopUid.trim();
+  const rewriteElements: Array<dicomParser.Element> = [];
+  for (const tag of ["x00080018", "x00020003"] as const) {
+    const el = dataSet.elements[tag];
+    if (!el || el.dataOffset == null || el.length < 0) continue;
+    const current = (dataSet.string(tag) ?? "").trim();
+    if (current !== targetUid) {
+      rewriteElements.push(el);
+    }
+  }
+
+  if (rewriteElements.length === 0) return fileBuffer;
+
+  rewriteElements.sort((a, b) => b.dataOffset - a.dataOffset);
+  let buf = Buffer.from(fileBuffer);
+
+  for (const element of rewriteElements) {
+    let padded = targetUid;
+    if (padded.length % 2 !== 0) padded += " ";
+    const newValue = Buffer.from(padded, "latin1");
+
+    const oldDataOffset = element.dataOffset;
+    const oldLength = element.length;
+
+    if (newValue.length <= oldLength) {
+      const paddedBuf = Buffer.alloc(oldLength, 0x20);
+      newValue.copy(paddedBuf);
+      paddedBuf.copy(buf, oldDataOffset);
+      continue;
+    }
+
+    let lengthFieldOffset: number;
+    let lengthFieldSize: number;
+
+    if (element.vr) {
+      if (LONG_VR_TYPES.has(element.vr)) {
+        lengthFieldOffset = oldDataOffset - 4;
+        lengthFieldSize = 4;
+      } else {
+        lengthFieldOffset = oldDataOffset - 2;
+        lengthFieldSize = 2;
+      }
+    } else {
+      lengthFieldOffset = oldDataOffset - 4;
+      lengthFieldSize = 4;
+    }
+
+    const before = buf.subarray(0, lengthFieldOffset);
+    const lengthBuf = Buffer.alloc(lengthFieldSize);
+    if (lengthFieldSize === 2) {
+      lengthBuf.writeUInt16LE(newValue.length);
+    } else {
+      lengthBuf.writeUInt32LE(newValue.length);
+    }
+    const after = buf.subarray(oldDataOffset + oldLength);
+    buf = Buffer.concat([before, lengthBuf, newValue, after]);
+  }
+
+  return buf;
 }
 
 /** Resolve DIM image to a readable local path (upload layout uses nested patient directories). */
 function resolveExistingImagePath(image: DicoogleDIMImage): string | null {
-  if (image.rawPath && fs.existsSync(image.rawPath)) {
-    return image.rawPath;
+  const candidatePaths: string[] = [];
+  const pushCandidate = (candidate: string | null | undefined) => {
+    if (!candidate || !fs.existsSync(candidate)) return;
+    if (!candidatePaths.includes(candidate)) {
+      candidatePaths.push(candidate);
+    }
+  };
+
+  pushCandidate(image.rawPath);
+  pushCandidate(fileUriToPath(image.uri));
+  pushCandidate(path.join(DICOOGLE_STORAGE_DIR, image.filename));
+  for (const candidate of findStoredFilesByBasename(image.filename)) {
+    pushCandidate(candidate);
   }
-  let filePath = fileUriToPath(image.uri);
-  if (fs.existsSync(filePath)) return filePath;
-  const flat = path.join(DICOOGLE_STORAGE_DIR, image.filename);
-  if (fs.existsSync(flat)) return flat;
-  return findStoredFileByBasename(image.filename);
+
+  if (candidatePaths.length === 0) {
+    return null;
+  }
+
+  const sopUID = (image.sopInstanceUID ?? "").trim();
+  if (!sopUID || syntheticSopUids.has(sopUID)) {
+    return candidatePaths[0] ?? null;
+  }
+
+  const matchingBySop = candidatePaths.find((candidatePath) => {
+    return getFileSopInstanceUid(candidatePath) === sopUID;
+  });
+  if (matchingBySop) {
+    return matchingBySop;
+  }
+
+  return candidatePaths[0] ?? null;
 }
 
 async function resolveWadoFilePath(req: Request, sopUID: string): Promise<string | null> {
@@ -774,6 +988,29 @@ async function resolveWadoFilePath(req: Request, sopUID: string): Promise<string
   return null;
 }
 
+function streamMultipartDicomFiles(
+  res: Response,
+  filePaths: string[],
+  cacheControl = "public, max-age=3600",
+): void {
+  const boundary = "dicoogle-boundary";
+  const headerPrefix = `--${boundary}\r\nContent-Type: application/dicom\r\nContent-Transfer-Encoding: binary\r\n\r\n`;
+
+  res.setHeader(
+    "Content-Type",
+    `multipart/related; type="application/dicom"; boundary=${boundary}`,
+  );
+  res.setHeader("Cache-Control", cacheControl);
+
+  for (const filePath of filePaths) {
+    const dicomBuffer = fs.readFileSync(filePath);
+    res.write(Buffer.from(headerPrefix));
+    res.write(dicomBuffer);
+    res.write(Buffer.from("\r\n"));
+  }
+  res.end(Buffer.from(`--${boundary}--\r\n`));
+}
+
 function getRequestOrigin(req: Request): string | null {
   const forwardedProto = req.get("x-forwarded-proto")?.split(",")[0]?.trim();
   const forwardedHost = req.get("x-forwarded-host")?.split(",")[0]?.trim();
@@ -783,7 +1020,7 @@ function getRequestOrigin(req: Request): string | null {
 }
 
 function getDicomwebBaseUrl(req: Request): string {
-  return `${getRequestOrigin(req) ?? env.FRONTEND_URL.replace(/\/+$/, "")}${req.baseUrl}`;
+  return `${getRequestOrigin(req) ?? env.BACKEND_URL.replace(/\/+$/, "")}${req.baseUrl}`;
 }
 
 function collectStudyUidQueryFragments(query: Request["query"]): string[] {
@@ -845,6 +1082,160 @@ function hasReadableFirstFrame(filePath: string): boolean {
     return false;
   }
 }
+
+function hasReadableFirstFrameCached(filePath: string): boolean {
+  const cached = readableFrameCache.get(filePath);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const readable = hasReadableFirstFrame(filePath);
+  readableFrameCache.set(filePath, readable);
+  return readable;
+}
+
+function extractEncapsulatedFrame(
+  dataSet: dicomParser.DataSet,
+  pixelDataElement: dicomParser.Element,
+  frameIndex: number,
+  byteArray: Uint8Array,
+): Buffer | null {
+  const parserWithFrameReader = dicomParser as unknown as {
+    readEncapsulatedImageFrame?: (
+      dataSet: dicomParser.DataSet,
+      pixelDataElement: dicomParser.Element,
+      frameIndex: number,
+    ) => Uint8Array;
+  };
+
+  if (typeof parserWithFrameReader.readEncapsulatedImageFrame === "function") {
+    try {
+      const frameBytes = parserWithFrameReader.readEncapsulatedImageFrame(
+        dataSet,
+        pixelDataElement,
+        frameIndex,
+      );
+      if (frameBytes && frameBytes.byteLength > 0) {
+        return Buffer.from(frameBytes.buffer, frameBytes.byteOffset, frameBytes.byteLength);
+      }
+    } catch {
+      // Fall through to fragment-based fallback.
+    }
+  }
+
+  const fragments = pixelDataElement.fragments;
+  if (!fragments || frameIndex >= fragments.length) {
+    return null;
+  }
+  const fragment = fragments[frameIndex];
+  return Buffer.from(byteArray.buffer, byteArray.byteOffset + fragment.position, fragment.length);
+}
+
+function getRequestedFrameIndex(frameNumbers: string): number {
+  const firstFrame = frameNumbers.split(",")[0]?.trim() ?? "1";
+  const parsed = Number.parseInt(firstFrame, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0;
+  }
+  return parsed - 1;
+}
+
+function extractNativeFrame(
+  dataSet: dicomParser.DataSet,
+  pixelDataElement: dicomParser.Element,
+  frameIndex: number,
+  byteArray: Uint8Array,
+): Buffer | null {
+  if (frameIndex < 0) return null;
+
+  const numberOfFramesRaw = dataSet.intString("x00280008");
+  const numberOfFrames = numberOfFramesRaw && numberOfFramesRaw > 0 ? numberOfFramesRaw : 1;
+  if (frameIndex >= numberOfFrames) return null;
+
+  const rows = dataSet.uint16("x00280010") ?? 0;
+  const columns = dataSet.uint16("x00280011") ?? 0;
+  const samplesPerPixel = dataSet.uint16("x00280002") ?? 1;
+  const bitsAllocated = dataSet.uint16("x00280100") ?? 16;
+
+  if (rows <= 0 || columns <= 0 || samplesPerPixel <= 0 || bitsAllocated <= 0) {
+    if (frameIndex === 0) {
+      return Buffer.from(
+        byteArray.buffer,
+        byteArray.byteOffset + pixelDataElement.dataOffset,
+        pixelDataElement.length,
+      );
+    }
+    return null;
+  }
+
+  const bitsPerFrame = rows * columns * samplesPerPixel * bitsAllocated;
+  const bytesPerFrame = Math.ceil(bitsPerFrame / 8);
+  if (!Number.isFinite(bytesPerFrame) || bytesPerFrame <= 0) {
+    return null;
+  }
+
+  const pixelDataStart = byteArray.byteOffset + pixelDataElement.dataOffset;
+  const pixelDataEnd = pixelDataStart + pixelDataElement.length;
+  const frameStart = pixelDataStart + frameIndex * bytesPerFrame;
+  if (frameStart >= pixelDataEnd) {
+    return null;
+  }
+
+  const frameLength = Math.min(bytesPerFrame, pixelDataEnd - frameStart);
+  return Buffer.from(byteArray.buffer, frameStart, frameLength);
+}
+
+const JPEG_LOSSLESS_TRANSFER_SYNTAX_UIDS = new Set([
+  "1.2.840.10008.1.2.4.57",
+  "1.2.840.10008.1.2.4.70",
+]);
+const EXPLICIT_VR_LITTLE_ENDIAN_TRANSFER_SYNTAX_UID = "1.2.840.10008.1.2.1";
+
+function getEffectiveFrameTransferSyntaxUID(transferSyntaxUID?: string): string {
+  const normalized = normalizeDicomUid(transferSyntaxUID);
+  if (normalized && JPEG_LOSSLESS_TRANSFER_SYNTAX_UIDS.has(normalized)) {
+    return EXPLICIT_VR_LITTLE_ENDIAN_TRANSFER_SYNTAX_UID;
+  }
+  return normalized || EXPLICIT_VR_LITTLE_ENDIAN_TRANSFER_SYNTAX_UID;
+}
+
+function decodeJpegLosslessFrame(
+  frameData: Buffer,
+  dataSet: dicomParser.DataSet,
+): Buffer | null {
+  try {
+    const decoder = new JpegLosslessDecoder();
+    const decoded = decoder.decode(
+      frameData.buffer as ArrayBufferLike,
+      frameData.byteOffset,
+      frameData.byteLength,
+    );
+    const valueCount = (decoded as { length?: number }).length ?? 0;
+    if (valueCount <= 0) {
+      return null;
+    }
+
+    const values = decoded as ArrayLike<number>;
+    const bitsAllocated = dataSet.uint16("x00280100") ?? 16;
+    if (bitsAllocated <= 8) {
+      const out = Buffer.allocUnsafe(valueCount);
+      for (let i = 0; i < valueCount; i += 1) {
+        const value = values[i] ?? 0;
+        out[i] = value & 0xff;
+      }
+      return out;
+    }
+
+    const out = Buffer.allocUnsafe(valueCount * 2);
+    for (let i = 0; i < valueCount; i += 1) {
+      const value = values[i] ?? 0;
+      out.writeUInt16LE(value & 0xffff, i * 2);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 
 export async function validateStudyAvailability({
   studyInstanceUID,
@@ -931,10 +1322,10 @@ export async function validateStudyAvailability({
             responseStatus,
           };
         } else {
-          const seriesWithInstances = matchedStudy.series.find((series) => series.images.length > 0) ?? null;
+          const seriesWithInstances = matchedStudy.series.filter((series) => series.images.length > 0);
 
           endpointUrls.qidoInstances = `${baseUrl}/studies/${studyInstanceUID}/series/${
-            seriesWithInstances?.serieInstanceUID ?? matchedStudy.series[0].serieInstanceUID
+            seriesWithInstances[0]?.serieInstanceUID ?? matchedStudy.series[0].serieInstanceUID
           }/instances`;
           responseStatus.qidoInstances = 200;
           logger.info({
@@ -943,11 +1334,11 @@ export async function validateStudyAvailability({
             tenantId: tenantId ?? null,
             endpointUrl: endpointUrls.qidoInstances,
             responseStatus: 200,
-            resultCount: seriesWithInstances?.images.length ?? 0,
+            resultCount: seriesWithInstances.reduce((sum, series) => sum + series.images.length, 0),
             attempt,
           });
 
-          if (!seriesWithInstances) {
+          if (seriesWithInstances.length === 0) {
             lastFailure = {
               studyInstanceUID,
               isValid: false,
@@ -958,24 +1349,56 @@ export async function validateStudyAvailability({
               responseStatus,
             };
           } else {
-            const firstInstance = seriesWithInstances.images[0];
-            endpointUrls.wadoFrame =
-              `${baseUrl}/studies/${studyInstanceUID}/series/${seriesWithInstances.serieInstanceUID}` +
-              `/instances/${firstInstance.sopInstanceUID}/frames/1`;
-            const filePath = resolveFilePath(firstInstance.sopInstanceUID);
-            const frameReadable = !!(filePath && hasReadableFirstFrame(filePath));
-            responseStatus.wadoFrame = frameReadable ? 200 : 404;
+            let readableSeries: DicoogleDIMSeries | null = null;
+            let readableInstance: DicoogleDIMImage | null = null;
+            let attemptedFrameChecks = 0;
+            let lastCheckedSeriesUID: string | undefined;
+            let lastCheckedSopUID: string | undefined;
 
-            logger.info({
-              message: "DICOMWeb validation WADO frame check",
-              studyInstanceUID,
-              tenantId: tenantId ?? null,
-              endpointUrl: endpointUrls.wadoFrame,
-              responseStatus: responseStatus.wadoFrame,
-              attempt,
-            });
+            outer:
+            for (const series of seriesWithInstances) {
+              for (const instance of series.images) {
+                attemptedFrameChecks += 1;
+                lastCheckedSeriesUID = series.serieInstanceUID;
+                lastCheckedSopUID = instance.sopInstanceUID;
 
-            if (!frameReadable) {
+                const filePath =
+                  resolveFilePath(instance.sopInstanceUID) || resolveAndCacheImagePath(instance);
+                if (!filePath) {
+                  continue;
+                }
+                if (!hasReadableFirstFrameCached(filePath)) {
+                  continue;
+                }
+
+                readableSeries = series;
+                readableInstance = instance;
+                break outer;
+              }
+            }
+
+            const fallbackSeriesUID =
+              lastCheckedSeriesUID ?? seriesWithInstances[0]?.serieInstanceUID ?? matchedStudy.series[0]?.serieInstanceUID;
+            const fallbackSopUID =
+              lastCheckedSopUID ?? seriesWithInstances[0]?.images[0]?.sopInstanceUID;
+
+            if (!readableSeries || !readableInstance) {
+              endpointUrls.wadoFrame =
+                fallbackSeriesUID && fallbackSopUID
+                  ? `${baseUrl}/studies/${studyInstanceUID}/series/${fallbackSeriesUID}/instances/${fallbackSopUID}/frames/1`
+                  : undefined;
+              responseStatus.wadoFrame = 404;
+
+              logger.info({
+                message: "DICOMWeb validation WADO frame check",
+                studyInstanceUID,
+                tenantId: tenantId ?? null,
+                endpointUrl: endpointUrls.wadoFrame,
+                responseStatus: responseStatus.wadoFrame,
+                attemptedFrameChecks,
+                attempt,
+              });
+
               lastFailure = {
                 studyInstanceUID,
                 isValid: false,
@@ -984,10 +1407,25 @@ export async function validateStudyAvailability({
                 attempts: attempt,
                 endpointUrls,
                 responseStatus,
-                seriesInstanceUID: seriesWithInstances.serieInstanceUID,
-                sopInstanceUID: firstInstance.sopInstanceUID,
+                seriesInstanceUID: fallbackSeriesUID,
+                sopInstanceUID: fallbackSopUID,
               };
             } else {
+              endpointUrls.wadoFrame =
+                `${baseUrl}/studies/${studyInstanceUID}/series/${readableSeries.serieInstanceUID}` +
+                `/instances/${readableInstance.sopInstanceUID}/frames/1`;
+              responseStatus.wadoFrame = 200;
+
+              logger.info({
+                message: "DICOMWeb validation WADO frame check",
+                studyInstanceUID,
+                tenantId: tenantId ?? null,
+                endpointUrl: endpointUrls.wadoFrame,
+                responseStatus: responseStatus.wadoFrame,
+                attemptedFrameChecks,
+                attempt,
+              });
+
               return {
                 studyInstanceUID,
                 isValid: true,
@@ -995,8 +1433,8 @@ export async function validateStudyAvailability({
                 attempts: attempt,
                 endpointUrls,
                 responseStatus,
-                seriesInstanceUID: seriesWithInstances.serieInstanceUID,
-                sopInstanceUID: firstInstance.sopInstanceUID,
+                seriesInstanceUID: readableSeries.serieInstanceUID,
+                sopInstanceUID: readableInstance.sopInstanceUID,
               };
             }
           }
@@ -1088,7 +1526,7 @@ function ensureDicomwebAccess(req: Request, res: Response, next: NextFunction): 
       const gwReq = req as GatewayRequest;
       gwReq.tenantSlug = tokenResult.tenantSlug;
     }
-    (req as Record<string, unknown>).weasisStudyUID = tokenResult.studyUID;
+    (req as unknown as Record<string, unknown>).weasisStudyUID = tokenResult.studyUID;
     next();
     return;
   }
@@ -1112,6 +1550,9 @@ function ensureDicomwebAccess(req: Request, res: Response, next: NextFunction): 
     return;
   }
 
+  // #region agent log
+  fetch("http://127.0.0.1:7406/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"5ecab0"},body:JSON.stringify({sessionId:"5ecab0",runId:"pre-fix",hypothesisId:"H2",location:"dicomweb.ts:ensureDicomwebAccess:deny",message:"DICOMweb request denied by auth gate",data:{path:req.path,origin:requestOrigin||null,referer:requestReferer||null,hasSessionUser:Boolean(req.session?.user),enableAuth:env.ENABLE_AUTH},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   res.status(401).json({ error: "Unauthorized" });
 }
 
@@ -1137,6 +1578,18 @@ function parseDicomTags(filePath: string): Record<string, unknown> {
       const el = dataSet.elements[tag];
       return el ? dataSet.uint16(tag) : undefined;
     };
+    const getFloat = (tag: string): number | undefined => {
+      const el = dataSet.elements[tag];
+      if (!el) return undefined;
+      const v = dataSet.floatString(tag);
+      return v !== undefined && !isNaN(v) ? v : undefined;
+    };
+    const getFloatArray = (tag: string): number[] | undefined => {
+      const raw = getString(tag);
+      if (!raw) return undefined;
+      const parts = raw.split("\\").map(Number);
+      return parts.every((n) => !isNaN(n)) ? parts : undefined;
+    };
 
     const tags: Record<string, unknown> = {
       sopClassUID: getString("x00080016"),
@@ -1154,6 +1607,14 @@ function parseDicomTags(filePath: string): Record<string, unknown> {
       numberOfFrames: getString("x00280008"),
       instanceNumber: getString("x00200013"),
       seriesDescription: getString("x0008103e"),
+      imagePositionPatient: getFloatArray("x00200032"),
+      imageOrientationPatient: getFloatArray("x00200037"),
+      pixelSpacing: getFloatArray("x00280030"),
+      sliceThickness: getFloat("x00180050"),
+      rescaleIntercept: getFloat("x00281052"),
+      rescaleSlope: getFloat("x00281053"),
+      studyDescription: getString("x00081030"),
+      seriesNumber: getString("x00200011"),
     };
 
     dicomTagCache.set(filePath, tags);
@@ -1163,9 +1624,360 @@ function parseDicomTags(filePath: string): Record<string, unknown> {
   }
 }
 
+const STRING_VRS = new Set([
+  "AE", "AS", "CS", "DA", "DT", "LO", "LT", "SH", "ST", "TM", "UC", "UI", "UR", "UT",
+]);
+const BINARY_VRS = new Set(["OB", "OD", "OF", "OL", "OW", "UN"]);
+
+function parserTagToDicomTag(tag: string): string {
+  return tag.replace(/^x/i, "").toUpperCase();
+}
+
+function splitDicomValues(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split("\\")
+    .map((part) => part.replace(/\0/g, "").trim())
+    .filter((part) => part.length > 0);
+}
+
+function readElementValues(
+  dataSet: dicomParser.DataSet,
+  parserTag: string,
+  vr: string,
+): unknown[] | undefined {
+  if (BINARY_VRS.has(vr)) return undefined;
+  const element = dataSet.elements[parserTag];
+  if (!element || element.length <= 0) {
+    return undefined;
+  }
+
+  if (vr === "PN") {
+    const values = splitDicomValues(dataSet.string(parserTag));
+    if (values.length === 0) return undefined;
+    return values.map((v) => ({ Alphabetic: v }));
+  }
+  if (vr === "US") {
+    const count = Math.floor(element.length / 2);
+    const values: number[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const value = dataSet.uint16(parserTag, i);
+      if (value !== undefined) values.push(value);
+    }
+    return values.length > 0 ? values : undefined;
+  }
+  if (vr === "SS") {
+    const count = Math.floor(element.length / 2);
+    const values: number[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const value = dataSet.int16(parserTag, i);
+      if (value !== undefined) values.push(value);
+    }
+    return values.length > 0 ? values : undefined;
+  }
+  if (vr === "UL") {
+    const count = Math.floor(element.length / 4);
+    const values: number[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const value = dataSet.uint32(parserTag, i);
+      if (value !== undefined) values.push(value);
+    }
+    return values.length > 0 ? values : undefined;
+  }
+  if (vr === "SL") {
+    const count = Math.floor(element.length / 4);
+    const values: number[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const value = dataSet.int32(parserTag, i);
+      if (value !== undefined) values.push(value);
+    }
+    return values.length > 0 ? values : undefined;
+  }
+  if (vr === "FL") {
+    const count = Math.floor(element.length / 4);
+    const values: number[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const value = dataSet.float(parserTag, i);
+      if (value !== undefined && Number.isFinite(value)) values.push(value);
+    }
+    return values.length > 0 ? values : undefined;
+  }
+  if (vr === "FD") {
+    const count = Math.floor(element.length / 8);
+    const values: number[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const value = dataSet.double(parserTag, i);
+      if (value !== undefined && Number.isFinite(value)) values.push(value);
+    }
+    return values.length > 0 ? values : undefined;
+  }
+  if (vr === "IS") {
+    const values = splitDicomValues(dataSet.string(parserTag));
+    if (values.length === 0) return undefined;
+    return values.map((v) => {
+      const parsed = Number.parseInt(v, 10);
+      return Number.isFinite(parsed) ? parsed : v;
+    });
+  }
+  if (vr === "DS") {
+    const values = splitDicomValues(dataSet.string(parserTag));
+    if (values.length === 0) return undefined;
+    return values.map((v) => {
+      const parsed = Number.parseFloat(v);
+      return Number.isFinite(parsed) ? parsed : v;
+    });
+  }
+  if (STRING_VRS.has(vr) || vr === "AT") {
+    const values = splitDicomValues(dataSet.string(parserTag));
+    if (values.length === 0) return undefined;
+    return values;
+  }
+  return undefined;
+}
+
+function convertDataSetToDicomJson(
+  dataSet: dicomParser.DataSet,
+  bulkDataURI?: string,
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {};
+  const elements = dataSet.elements as Record<string, dicomParser.Element>;
+
+  for (const parserTag of Object.keys(elements).sort()) {
+    const element = elements[parserTag];
+    if (!element) continue;
+
+    const tag = parserTagToDicomTag(parserTag);
+    const vr = String(element.vr || "").toUpperCase();
+    if (!vr) continue;
+
+    if (vr === "SQ") {
+      const items: Record<string, unknown>[] = [];
+      for (const item of element.items ?? []) {
+        const itemDataSet = (item as unknown as { dataSet?: dicomParser.DataSet }).dataSet;
+        if (!itemDataSet) continue;
+        const converted = convertDataSetToDicomJson(itemDataSet);
+        if (Object.keys(converted).length > 0) {
+          items.push(converted);
+        }
+      }
+      metadata[tag] = { vr, Value: items };
+      continue;
+    }
+
+    if (tag === "7FE00010" && bulkDataURI) {
+      metadata[tag] = { vr, BulkDataURI: bulkDataURI };
+      continue;
+    }
+
+    const values = readElementValues(dataSet, parserTag, vr);
+    if (values && values.length > 0) {
+      metadata[tag] = { vr, Value: values };
+    } else {
+      metadata[tag] = { vr };
+    }
+  }
+
+  return metadata;
+}
+
+function parseRichDicomMetadata(
+  filePath: string,
+  bulkDataURI: string,
+): Record<string, unknown> | null {
+  try {
+    const buffer = fs.readFileSync(filePath);
+    const byteArray = new Uint8Array(
+      buffer.buffer,
+      buffer.byteOffset,
+      buffer.byteLength,
+    );
+    const dataSet = dicomParser.parseDicom(byteArray, { untilTag: "x7FE00010" });
+    const metadata = convertDataSetToDicomJson(dataSet, bulkDataURI);
+    return Object.keys(metadata).length > 0 ? metadata : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyMetadataOverrides(
+  metadata: Record<string, unknown>,
+  patient: DicoogleDIMPatient,
+  studyUID: string,
+  seriesUID: string,
+  sopUID: string,
+  modality: string,
+  bulkDataURI: string,
+): Record<string, unknown> {
+  const result = { ...metadata };
+
+  result["00080018"] = { vr: "UI", Value: [sopUID] };
+  result["0020000D"] = { vr: "UI", Value: [studyUID] };
+  result["0020000E"] = { vr: "UI", Value: [seriesUID] };
+  result["00080060"] = { vr: "CS", Value: [modality || "OT"] };
+  result["00100010"] = { vr: "PN", Value: [{ Alphabetic: patient.name || "" }] };
+  result["00100020"] = { vr: "LO", Value: [patient.id || ""] };
+  const transferSyntaxTag = result["00020010"] as { Value?: unknown[] } | undefined;
+  const transferSyntaxValue =
+    transferSyntaxTag && Array.isArray(transferSyntaxTag.Value)
+      ? normalizeDicomUid(String(transferSyntaxTag.Value[0] ?? ""))
+      : null;
+  result["00020010"] = {
+    vr: "UI",
+    Value: [getEffectiveFrameTransferSyntaxUID(transferSyntaxValue ?? undefined)],
+  };
+
+  const pixelDataAttr = result["7FE00010"] as Record<string, unknown> | undefined;
+  if (pixelDataAttr) {
+    result["7FE00010"] = {
+      vr: String(pixelDataAttr.vr || "OW"),
+      BulkDataURI: bulkDataURI,
+    };
+  } else {
+    result["7FE00010"] = { vr: "OW", BulkDataURI: bulkDataURI };
+  }
+
+  return result;
+}
+
+const OHIF_REQUIRED_IMAGE_METADATA_TAGS = [
+  "00080016",
+  "00280002",
+  "00280004",
+  "00280008",
+  "00280010",
+  "00280011",
+  "00280100",
+  "00280101",
+  "00280102",
+  "00280103",
+  "7FE00010",
+] as const;
+
+function getMissingImageMetadataTags(metadata: Record<string, unknown>): string[] {
+  const missing: string[] = [];
+  for (const tag of OHIF_REQUIRED_IMAGE_METADATA_TAGS) {
+    if (!(tag in metadata)) {
+      missing.push(tag);
+    }
+  }
+  return missing;
+}
+
+function fillMissingMetadataTags(
+  primary: Record<string, unknown>,
+  fallback: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = { ...primary };
+  for (const [tag, value] of Object.entries(fallback)) {
+    if (!(tag in merged)) {
+      merged[tag] = value;
+    }
+  }
+  return merged;
+}
+
 /** Resolve a SOP Instance UID to a DICOM file path via Dicoogle DIM data */
 function resolveFilePathFromDIM(image: DicoogleDIMImage): string | null {
   return resolveExistingImagePath(image);
+}
+
+const NON_IMAGE_SOP_CLASSES = new Set([
+  "1.2.840.10008.5.1.4.1.1.88.11",  // Basic Text SR
+  "1.2.840.10008.5.1.4.1.1.88.22",  // Enhanced SR
+  "1.2.840.10008.5.1.4.1.1.88.33",  // Comprehensive SR
+  "1.2.840.10008.5.1.4.1.1.88.34",  // Comprehensive 3D SR
+  "1.2.840.10008.5.1.4.1.1.88.35",  // Extensible SR
+  "1.2.840.10008.5.1.4.1.1.88.40",  // Procedure Log
+  "1.2.840.10008.5.1.4.1.1.88.50",  // Mammography CAD SR
+  "1.2.840.10008.5.1.4.1.1.88.65",  // Chest CAD SR
+  "1.2.840.10008.5.1.4.1.1.88.67",  // X-Ray Radiation Dose SR
+  "1.2.840.10008.5.1.4.1.1.88.69",  // Simplified Adult Echo SR
+  "1.2.840.10008.5.1.4.1.1.88.71",  // Radiopharmaceutical Radiation Dose SR
+  "1.2.840.10008.5.1.4.1.1.88.74",  // Acquisition Context SR
+  "1.2.840.10008.5.1.4.1.1.11.1",   // Grayscale Softcopy Presentation State
+  "1.2.840.10008.5.1.4.1.1.11.2",   // Color Softcopy Presentation State
+  "1.2.840.10008.5.1.4.1.1.104.1",  // Encapsulated PDF
+  "1.2.840.10008.5.1.4.1.1.104.2",  // Encapsulated CDA
+  "1.2.840.10008.5.1.4.1.1.88.59",  // Key Object Selection Document
+]);
+
+function buildFallbackInstanceMetadata(
+  patient: DicoogleDIMPatient,
+  studyUID: string,
+  seriesUID: string,
+  sopUID: string,
+  modality: string,
+  bulkDataURI: string,
+  image?: DicoogleDIMImage,
+): Record<string, unknown> {
+  let tags: Record<string, unknown> = {};
+  if (image) {
+    const filePath = resolveFilePathFromDIM(image);
+    if (filePath) tags = parseDicomTags(filePath);
+  }
+
+  const sopClassUID = (tags.sopClassUID as string) || "1.2.840.10008.5.1.4.1.1.4";
+  const isNonImage = NON_IMAGE_SOP_CLASSES.has(sopClassUID);
+
+  const meta: Record<string, unknown> = {
+    "00080016": { vr: "UI", Value: [sopClassUID] },
+    "00080018": { vr: "UI", Value: [sopUID] },
+    "00080060": { vr: "CS", Value: [modality || "OT"] },
+    "00200013": { vr: "IS", Value: [tags.instanceNumber || "1"] },
+    "0008103E": { vr: "LO", Value: [tags.seriesDescription || ""] },
+    "0020000D": { vr: "UI", Value: [studyUID] },
+    "0020000E": { vr: "UI", Value: [seriesUID] },
+    "00100010": { vr: "PN", Value: [{ Alphabetic: patient.name || "" }] },
+    "00100020": { vr: "LO", Value: [patient.id || ""] },
+    "00020010": {
+      vr: "UI",
+      Value: [getEffectiveFrameTransferSyntaxUID(tags.transferSyntaxUID as string | undefined)],
+    },
+  };
+
+  if (tags.studyDescription) {
+    meta["00081030"] = { vr: "LO", Value: [tags.studyDescription] };
+  }
+  if (tags.seriesNumber) {
+    meta["00200011"] = { vr: "IS", Value: [tags.seriesNumber] };
+  }
+
+  if (!isNonImage) {
+    meta["00280002"] = { vr: "US", Value: [tags.samplesPerPixel ?? 1] };
+    meta["00280004"] = { vr: "CS", Value: [tags.photometricInterpretation || "MONOCHROME2"] };
+    meta["00280008"] = { vr: "IS", Value: [tags.numberOfFrames || "1"] };
+    meta["00280010"] = { vr: "US", Value: [tags.rows ?? 256] };
+    meta["00280011"] = { vr: "US", Value: [tags.columns ?? 256] };
+    meta["00280100"] = { vr: "US", Value: [tags.bitsAllocated ?? 16] };
+    meta["00280101"] = { vr: "US", Value: [tags.bitsStored ?? 16] };
+    meta["00280102"] = { vr: "US", Value: [tags.highBit ?? 15] };
+    meta["00280103"] = { vr: "US", Value: [tags.pixelRepresentation ?? 0] };
+    meta["00281050"] = { vr: "DS", Value: [tags.windowCenter || "2048"] };
+    meta["00281051"] = { vr: "DS", Value: [tags.windowWidth || "4096"] };
+
+    const ipp = tags.imagePositionPatient as number[] | undefined;
+    meta["00200032"] = { vr: "DS", Value: ipp && ipp.length === 3 ? ipp : [0, 0, 0] };
+
+    const iop = tags.imageOrientationPatient as number[] | undefined;
+    meta["00200037"] = { vr: "DS", Value: iop && iop.length === 6 ? iop : [1, 0, 0, 0, 1, 0] };
+
+    const ps = tags.pixelSpacing as number[] | undefined;
+    meta["00280030"] = { vr: "DS", Value: ps && ps.length === 2 ? ps : [1, 1] };
+
+    if (tags.sliceThickness != null) {
+      meta["00180050"] = { vr: "DS", Value: [tags.sliceThickness] };
+    }
+
+    const rescaleIntercept = tags.rescaleIntercept as number | undefined;
+    meta["00281052"] = { vr: "DS", Value: [rescaleIntercept ?? 0] };
+
+    const rescaleSlope = tags.rescaleSlope as number | undefined;
+    meta["00281053"] = { vr: "DS", Value: [rescaleSlope ?? 1] };
+
+    meta["7FE00010"] = { vr: "OW", BulkDataURI: bulkDataURI };
+  }
+
+  return meta;
 }
 
 /** Build DICOM JSON metadata for a single instance with all tags cornerstone needs */
@@ -1178,59 +1990,201 @@ function buildInstanceMetadata(
   bulkDataURI: string,
   image?: DicoogleDIMImage,
 ): Record<string, unknown> {
-  // Try to read actual tags from the DICOM file
-  let tags: Record<string, unknown> = {};
   if (image) {
     const filePath = resolveFilePathFromDIM(image);
-    if (filePath) tags = parseDicomTags(filePath);
+    if (filePath) {
+      const richMetadata = parseRichDicomMetadata(filePath, bulkDataURI);
+      if (richMetadata) {
+        const metadataWithOverrides = applyMetadataOverrides(
+          richMetadata,
+          patient,
+          studyUID,
+          seriesUID,
+          sopUID,
+          modality,
+          bulkDataURI,
+        );
+        const missingTags = getMissingImageMetadataTags(metadataWithOverrides);
+        if (missingTags.length === 0) {
+          return metadataWithOverrides;
+        }
+        const fallbackMetadata = buildFallbackInstanceMetadata(
+          patient,
+          studyUID,
+          seriesUID,
+          sopUID,
+          modality,
+          bulkDataURI,
+          image,
+        );
+        logger.debug({
+          message: "Rich DICOM metadata missing required image tags — filling from fallback parser",
+          sopUID,
+          missingTags,
+        });
+        return fillMissingMetadataTags(metadataWithOverrides, fallbackMetadata);
+      }
+    }
   }
 
-  return {
-    // SOP Class UID
-    "00080016": { vr: "UI", Value: [tags.sopClassUID || "1.2.840.10008.5.1.4.1.1.4"] },
-    // SOP Instance UID
-    "00080018": { vr: "UI", Value: [sopUID] },
-    // Modality
-    "00080060": { vr: "CS", Value: [modality || "OT"] },
-    // Instance Number
-    "00200013": { vr: "IS", Value: [tags.instanceNumber || "1"] },
-    // Series Description
-    "0008103E": { vr: "LO", Value: [tags.seriesDescription || ""] },
-    // Study Instance UID
-    "0020000D": { vr: "UI", Value: [studyUID] },
-    // Series Instance UID
-    "0020000E": { vr: "UI", Value: [seriesUID] },
-    // Patient Name
-    "00100010": { vr: "PN", Value: [{ Alphabetic: patient.name || "" }] },
-    // Patient ID
-    "00100020": { vr: "LO", Value: [patient.id || ""] },
-    // Transfer Syntax UID
-    "00020010": { vr: "UI", Value: [tags.transferSyntaxUID || "1.2.840.10008.1.2.1"] },
-    // SamplesPerPixel
-    "00280002": { vr: "US", Value: [tags.samplesPerPixel ?? 1] },
-    // PhotometricInterpretation
-    "00280004": { vr: "CS", Value: [tags.photometricInterpretation || "MONOCHROME2"] },
-    // NumberOfFrames
-    "00280008": { vr: "IS", Value: [tags.numberOfFrames || "1"] },
-    // Rows
-    "00280010": { vr: "US", Value: [tags.rows ?? 256] },
-    // Columns
-    "00280011": { vr: "US", Value: [tags.columns ?? 256] },
-    // BitsAllocated
-    "00280100": { vr: "US", Value: [tags.bitsAllocated ?? 16] },
-    // BitsStored
-    "00280101": { vr: "US", Value: [tags.bitsStored ?? 16] },
-    // HighBit
-    "00280102": { vr: "US", Value: [tags.highBit ?? 15] },
-    // PixelRepresentation (unsigned)
-    "00280103": { vr: "US", Value: [tags.pixelRepresentation ?? 0] },
-    // WindowCenter
-    "00281050": { vr: "DS", Value: [tags.windowCenter || "2048"] },
-    // WindowWidth
-    "00281051": { vr: "DS", Value: [tags.windowWidth || "4096"] },
-    // Pixel Data
-    "7FE00010": { vr: "OW", BulkDataURI: bulkDataURI },
-  };
+  return buildFallbackInstanceMetadata(
+    patient,
+    studyUID,
+    seriesUID,
+    sopUID,
+    modality,
+    bulkDataURI,
+    image,
+  );
+}
+
+/**
+ * Given a StudyInstanceUID, return ALL StudyInstanceUIDs that belong to the
+ * same patient according to DIM data. When DIM returns the same StudyInstanceUID
+ * under multiple patient buckets, use patient hints (PatientID/PatientName)
+ * to avoid cross-patient contamination.
+ */
+type StudyGroupCandidate = {
+  patientId: string;
+  patientName: string;
+  identityKey: string;
+  uids: string[];
+};
+
+const PLACEHOLDER_PATIENT_IDENTIFIERS = new Set(["", "unknown", "anon", "anonymous", "none", "n/a", "na", "unspecified"]);
+
+function normalizeIdentityValue(value: string | undefined): string {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\^+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function isUsableIdentityValue(value: string | undefined): boolean {
+  const normalized = normalizeIdentityValue(value);
+  if (!normalized) return false;
+  return !PLACEHOLDER_PATIENT_IDENTIFIERS.has(normalized);
+}
+
+function normalizePatientNameIdentity(value: string | undefined): string {
+  const normalized = normalizeIdentityValue(value);
+  if (!normalized) return "";
+  // Match "Last^First" and "First Last" equally.
+  return normalized
+    .split(" ")
+    .filter(Boolean)
+    .sort()
+    .join(" ");
+}
+
+function buildStudyGroupCandidatesByUid(
+  patients: DicoogleDIMPatient[],
+): Map<string, StudyGroupCandidate[]> {
+  const candidateMap = new Map<string, StudyGroupCandidate[]>();
+  for (let patientIndex = 0; patientIndex < patients.length; patientIndex += 1) {
+    const patient = patients[patientIndex]!;
+    const uids = Array.from(new Set(patient.studies.map((s) => s.studyInstanceUID).filter(Boolean)));
+    if (uids.length === 0) continue;
+    const patientId = patient.id || "";
+    const patientName = patient.name || "";
+    const normalizedPatientId = normalizeIdentityValue(patientId);
+    const normalizedPatientName = normalizePatientNameIdentity(patientName);
+    const hasUsablePatientId = isUsableIdentityValue(patientId);
+    const hasUsablePatientName = normalizedPatientName.length > 0 && isUsableIdentityValue(patientName);
+    const identityKey =
+      hasUsablePatientId || hasUsablePatientName
+        ? `${hasUsablePatientId ? normalizedPatientId : ""}|${hasUsablePatientName ? normalizedPatientName : ""}`
+        : `__unknown__:${patientIndex}:${uids.join(",")}`;
+    const candidate: StudyGroupCandidate = { patientId, patientName, identityKey, uids };
+    for (const uid of uids) {
+      const list = candidateMap.get(uid);
+      if (list) {
+        list.push(candidate);
+      } else {
+        candidateMap.set(uid, [candidate]);
+      }
+    }
+  }
+  return candidateMap;
+}
+
+function finalizeResolvedUids(studyInstanceUid: string, uids: string[]): string[] {
+  const ordered = [studyInstanceUid, ...uids.filter((uid) => uid !== studyInstanceUid)];
+  return Array.from(new Set(ordered.filter(Boolean)));
+}
+
+export async function getStudyUidsForSamePatient(
+  studyInstanceUid: string,
+  options?: { patientIdHint?: string; patientNameHint?: string },
+): Promise<string[]> {
+  const patients = await queryDicoogleDIM();
+  const candidateMap = buildStudyGroupCandidatesByUid(patients);
+  const candidates = candidateMap.get(studyInstanceUid) ?? [];
+
+  const patientIdHint = isUsableIdentityValue(options?.patientIdHint)
+    ? normalizeIdentityValue(options?.patientIdHint)
+    : "";
+  const patientNameHint = isUsableIdentityValue(options?.patientNameHint)
+    ? normalizePatientNameIdentity(options?.patientNameHint)
+    : "";
+
+  let selectedUids: string[] = [studyInstanceUid];
+
+  if (candidates.length === 1) {
+    selectedUids = candidates[0]!.uids;
+  } else if (candidates.length > 1) {
+    const scored = candidates.map((candidate) => {
+      let score = 0;
+      if (patientIdHint && normalizeIdentityValue(candidate.patientId) === patientIdHint) {
+        score += 4;
+      }
+      if (patientNameHint && normalizePatientNameIdentity(candidate.patientName) === patientNameHint) {
+        score += 2;
+      }
+      return { candidate, score };
+    });
+
+    const bestScore = Math.max(...scored.map((entry) => entry.score));
+    if (bestScore > 0) {
+      const top = scored.filter((entry) => entry.score === bestScore);
+      const topIdentityCount = new Set(top.map((entry) => entry.candidate.identityKey)).size;
+      if (topIdentityCount === 1) {
+        selectedUids = top[0]!.candidate.uids;
+      }
+    } else {
+      // Ambiguous UID (same study under multiple patients) with no usable hint:
+      // prefer safety and keep only the requested study.
+      selectedUids = [studyInstanceUid];
+    }
+  }
+
+  const resolved = finalizeResolvedUids(studyInstanceUid, selectedUids);
+  return resolved;
+}
+
+/**
+ * Build a Map<studyUID, studyUID[]> from DIM data so callers can look up
+ * all sibling study UIDs for any study in O(1) after the initial build.
+ */
+export async function buildPatientStudyGroupMap(): Promise<Map<string, string[]>> {
+  const patients = await queryDicoogleDIM();
+  const candidateMap = buildStudyGroupCandidatesByUid(patients);
+  const out = new Map<string, string[]>();
+  for (const [studyUid, candidates] of candidateMap) {
+    if (candidates.length === 1) {
+      out.set(studyUid, finalizeResolvedUids(studyUid, candidates[0]!.uids));
+      continue;
+    }
+    const identityCount = new Set(candidates.map((candidate) => candidate.identityKey)).size;
+    if (identityCount === 1) {
+      out.set(studyUid, finalizeResolvedUids(studyUid, candidates[0]!.uids));
+    } else {
+      // Do not cross-link study groups across conflicting patient identities.
+      out.set(studyUid, [studyUid]);
+    }
+  }
+  return out;
 }
 
 export function dicomwebRouter(): Router {
@@ -1273,10 +2227,10 @@ export function dicomwebRouter(): Router {
         res.status(404).json({ error: "DICOM file not found" });
         return;
       }
+      const dicomBuffer = rewriteSopUidInDicomBuffer(fs.readFileSync(filePath), objectUID);
       res.setHeader("Content-Type", "application/dicom");
       res.setHeader("Cache-Control", "public, max-age=3600");
-      const stream = fs.createReadStream(filePath);
-      stream.pipe(res);
+      res.end(dicomBuffer);
     } catch (err) {
       console.error("WADO-URI error:", err);
       res.status(500).json({ error: "Failed to retrieve DICOM object" });
@@ -1297,7 +2251,7 @@ export function dicomwebRouter(): Router {
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
       const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
 
-      const weasisStudyUID = (req as Record<string, unknown>).weasisStudyUID as string | undefined;
+      const weasisStudyUID = (req as unknown as Record<string, unknown>).weasisStudyUID as string | undefined;
       if (weasisStudyUID && filterStudyUIDs.length === 0) {
         filterStudyUIDs.push(weasisStudyUID);
       }
@@ -1320,6 +2274,13 @@ export function dicomwebRouter(): Router {
       const patients = await queryDIMForRequest(req);
       const studies: Record<string, unknown>[] = [];
 
+      // Aggregate study data across all patients sharing the same StudyInstanceUID
+      const studyAgg = new Map<string, {
+        patient: DicoogleDIMPatient;
+        study: DicoogleDIMStudy;
+        seriesMap: Map<string, { series: DicoogleDIMSeries; instanceCount: number }>;
+      }>();
+
       for (const patient of patients) {
         if (filterPatientID && patient.id !== filterPatientID) continue;
         if (filterPatientName) {
@@ -1330,32 +2291,70 @@ export function dicomwebRouter(): Router {
         for (const study of patient.studies) {
           if (filterStudyUIDs.length > 0 && !filterStudyUIDs.includes(study.studyInstanceUID)) continue;
           if (filterStudyDate && study.studyDate !== filterStudyDate) continue;
-          const modalities = study.series.map((s) => s.serieModality).filter(Boolean);
-          if (filterModality && !modalities.includes(filterModality)) continue;
 
-          const instanceCount = study.series.reduce((sum, s) => sum + s.images.length, 0);
+          let agg = studyAgg.get(study.studyInstanceUID);
+          if (!agg) {
+            agg = { patient, study, seriesMap: new Map() };
+            studyAgg.set(study.studyInstanceUID, agg);
+          }
 
-          studies.push({
-            "00080005": { vr: "CS", Value: ["ISO_IR 100"] },
-            "00080020": { vr: "DA", Value: [study.studyDate || ""] },
-            "00080030": { vr: "TM", Value: [""] },
-            "00080050": { vr: "SH", Value: [""] },
-            "00080061": { vr: "CS", Value: modalities },
-            "00080090": { vr: "PN", Value: [{ Alphabetic: "" }] },
-            "00081030": { vr: "LO", Value: [study.studyDescription || ""] },
-            "00100010": { vr: "PN", Value: [{ Alphabetic: patient.name || "" }] },
-            "00100020": { vr: "LO", Value: [patient.id || ""] },
-            "00100030": { vr: "DA", Value: [patient.birthdate || ""] },
-            "00100040": { vr: "CS", Value: [patient.gender || ""] },
-            "0020000D": { vr: "UI", Value: [study.studyInstanceUID] },
-            "00200010": { vr: "SH", Value: [""] },
-            "00201206": { vr: "IS", Value: [study.series.length] },
-            "00201208": { vr: "IS", Value: [instanceCount] },
-          });
+          for (const series of study.series) {
+            const instanceCount = series.images.reduce((count, image) => {
+              return resolveUsableImagePath(image) ? count + 1 : count;
+            }, 0);
+            const existing = agg.seriesMap.get(series.serieInstanceUID);
+            if (existing) {
+              existing.instanceCount += instanceCount;
+            } else {
+              agg.seriesMap.set(series.serieInstanceUID, { series, instanceCount });
+            }
+          }
         }
       }
 
+      for (const [studyUID_agg, agg] of studyAgg) {
+        const seriesWithInstances = [...agg.seriesMap.values()].filter(({ instanceCount }) => instanceCount > 0);
+
+        if (seriesWithInstances.length === 0) {
+          continue;
+        }
+
+        const modalities = seriesWithInstances
+          .map(({ series }) => series.serieModality)
+          .filter(Boolean);
+        if (filterModality && !modalities.includes(filterModality)) continue;
+
+        const instanceCount = seriesWithInstances.reduce(
+          (sum, { instanceCount: seriesCount }) => sum + seriesCount,
+          0,
+        );
+
+        const { patient, study } = agg;
+        studies.push({
+          "00080005": { vr: "CS", Value: ["ISO_IR 100"] },
+          "00080020": { vr: "DA", Value: [study.studyDate || ""] },
+          "00080030": { vr: "TM", Value: [""] },
+          "00080050": { vr: "SH", Value: [""] },
+          "00080061": { vr: "CS", Value: modalities },
+          "00080090": { vr: "PN", Value: [{ Alphabetic: "" }] },
+          "00081030": { vr: "LO", Value: [study.studyDescription || ""] },
+          "00100010": { vr: "PN", Value: [{ Alphabetic: patient.name || "" }] },
+          "00100020": { vr: "LO", Value: [patient.id || ""] },
+          "00100030": { vr: "DA", Value: [patient.birthdate || ""] },
+          "00100040": { vr: "CS", Value: [patient.gender || ""] },
+          "0020000D": { vr: "UI", Value: [studyUID_agg] },
+          "00200010": { vr: "SH", Value: [""] },
+          "00201206": { vr: "IS", Value: [seriesWithInstances.length] },
+          "00201208": { vr: "IS", Value: [instanceCount] },
+        });
+      }
+
       const paged = limit ? studies.slice(offset, offset + limit) : studies.slice(offset);
+      logger.info({
+        message: "QIDO /studies response",
+        studyCount: paged.length,
+        totalStudyCount: studies.length,
+      });
       res.json(paged);
     } catch (err) {
       console.error("QIDO-RS /studies error:", err);
@@ -1390,24 +2389,47 @@ export function dicomwebRouter(): Router {
       const seen = new Set<string>();
       const seriesList: Record<string, unknown>[] = [];
 
+      const seriesAggregated = new Map<string, { modality: string; description: string; number: number; instanceCount: number }>();
       for (const patient of patients) {
         for (const study of patient.studies) {
           if (study.studyInstanceUID !== studyUID) continue;
           for (const series of study.series) {
-            if (seen.has(series.serieInstanceUID)) continue;
-            seen.add(series.serieInstanceUID);
-            seriesList.push({
-              "00080060": { vr: "CS", Value: [series.serieModality || ""] },
-              "0008103E": { vr: "LO", Value: [series.serieDescription || ""] },
-              "00200011": { vr: "IS", Value: [series.serieNumber] },
-              "0020000D": { vr: "UI", Value: [studyUID] },
-              "0020000E": { vr: "UI", Value: [series.serieInstanceUID] },
-              "00201209": { vr: "IS", Value: [series.images.length] },
-            });
+            const instanceCount = series.images.reduce((count, image) => {
+              return resolveUsableImagePath(image) ? count + 1 : count;
+            }, 0);
+            const existing = seriesAggregated.get(series.serieInstanceUID);
+            if (existing) {
+              existing.instanceCount += instanceCount;
+            } else {
+              seriesAggregated.set(series.serieInstanceUID, {
+                modality: series.serieModality || "",
+                description: series.serieDescription || "",
+                number: series.serieNumber,
+                instanceCount,
+              });
+            }
           }
         }
       }
-
+      for (const [seriesUID, info] of seriesAggregated) {
+        if (info.instanceCount === 0) {
+          continue;
+        }
+        seen.add(seriesUID);
+        seriesList.push({
+          "00080060": { vr: "CS", Value: [info.modality] },
+          "0008103E": { vr: "LO", Value: [info.description] },
+          "00200011": { vr: "IS", Value: [info.number] },
+          "0020000D": { vr: "UI", Value: [studyUID] },
+          "0020000E": { vr: "UI", Value: [seriesUID] },
+          "00201209": { vr: "IS", Value: [info.instanceCount] },
+        });
+      }
+      logger.info({
+        message: "QIDO /studies/{studyUID}/series response",
+        studyUID,
+        seriesCount: seriesList.length,
+      });
       res.json(seriesList);
     } catch (err) {
       console.error("QIDO-RS /studies/:studyUID/series error:", err);
@@ -1421,6 +2443,7 @@ export function dicomwebRouter(): Router {
       const { studyUID, seriesUID } = req.params;
       const patients = await queryDIMForRequest(req);
       const instances: Record<string, unknown>[] = [];
+      const seenInstanceKeys = new Set<string>();
 
       for (const patient of patients) {
         for (const study of patient.studies) {
@@ -1428,26 +2451,85 @@ export function dicomwebRouter(): Router {
           for (const series of study.series) {
             if (series.serieInstanceUID !== seriesUID) continue;
             for (const image of series.images) {
-              const imgFilePath = resolveFilePathFast(image.sopInstanceUID) || resolveFilePathFromDIM(image);
-              const imgTags = imgFilePath ? parseDicomTags(imgFilePath) : {};
-              instances.push({
-                "00080016": { vr: "UI", Value: [(imgTags.sopClassUID as string) || "1.2.840.10008.5.1.4.1.1.7"] },
-                "00080018": { vr: "UI", Value: [image.sopInstanceUID] },
-                "0020000D": { vr: "UI", Value: [studyUID] },
-                "0020000E": { vr: "UI", Value: [seriesUID] },
-                "00200013": { vr: "IS", Value: [(imgTags.instanceNumber as string) || "1"] },
-                "00280010": { vr: "US", Value: [(imgTags.rows as number) ?? 512] },
-                "00280011": { vr: "US", Value: [(imgTags.columns as number) ?? 512] },
-              });
+              const imgFilePath = resolveUsableImagePath(image);
+              if (!imgFilePath) {
+                continue;
+              }
+              const instanceKey = `${image.sopInstanceUID}|${imgFilePath}`;
+              if (seenInstanceKeys.has(instanceKey)) {
+                continue;
+              }
+              seenInstanceKeys.add(instanceKey);
+              const bulkUri =
+                `${getDicomwebBaseUrl(req)}/studies/${studyUID}/series/${seriesUID}` +
+                `/instances/${image.sopInstanceUID}/frames/1`;
+              instances.push(
+                buildInstanceMetadata(
+                  patient,
+                  studyUID,
+                  seriesUID,
+                  image.sopInstanceUID,
+                  series.serieModality,
+                  bulkUri,
+                  image,
+                ),
+              );
             }
           }
         }
       }
 
+      logger.info({
+        message: "QIDO /studies/{studyUID}/series/{seriesUID}/instances response",
+        studyUID,
+        seriesUID,
+        instanceCount: instances.length,
+      });
       res.json(instances);
     } catch (err) {
       console.error("QIDO-RS instances error:", err);
       res.json([]);
+    }
+  });
+
+  // WADO-RS: Retrieve series (all instances in one series)
+  router.get("/studies/:studyUID/series/:seriesUID", async (req: Request, res: Response) => {
+    try {
+      const { studyUID, seriesUID } = req.params;
+      const patients = await queryDIMForRequest(req);
+      const filePathSet = new Set<string>();
+
+      for (const patient of patients) {
+        for (const study of patient.studies) {
+          if (study.studyInstanceUID !== studyUID) continue;
+          for (const series of study.series) {
+            if (series.serieInstanceUID !== seriesUID) continue;
+            for (const image of series.images) {
+              const filePath = resolveUsableImagePath(image);
+              if (filePath) {
+                filePathSet.add(filePath);
+              }
+            }
+          }
+        }
+      }
+
+      const filePaths = Array.from(filePathSet).filter((filePath) => isNonEmptyDicomFile(filePath));
+      if (filePaths.length === 0) {
+        res.status(404).json({ error: "No DICOM files found for this series" });
+        return;
+      }
+
+      logger.info({
+        message: "WADO series retrieve response",
+        studyUID,
+        seriesUID,
+        instanceCount: filePaths.length,
+      });
+      streamMultipartDicomFiles(res, filePaths);
+    } catch (err) {
+      console.error("WADO-RS series retrieve error:", err);
+      res.status(500).json({ error: "Failed to retrieve series" });
     }
   });
 
@@ -1458,13 +2540,16 @@ export function dicomwebRouter(): Router {
       try {
         const sopUID = req.params.sopUID as string;
         const filePath = await resolveWadoFilePath(req, sopUID);
+        // #region agent log
+        fetch("http://127.0.0.1:7406/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"5ecab0"},body:JSON.stringify({sessionId:"5ecab0",runId:"pre-fix",hypothesisId:"H3",location:"dicomweb.ts:frames:resolvePath",message:"WADO-RS frame request resolved path",data:{studyUID:req.params.studyUID,seriesUID:req.params.seriesUID,sopUID,frameNumbers:req.params.frameNumbers,fileResolved:Boolean(filePath),filePath:filePath??null},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
 
         if (!filePath) {
           res.status(404).json({ error: "DICOM file not found" });
           return;
         }
 
-        const dicomBuffer = fs.readFileSync(filePath);
+        const dicomBuffer = rewriteSopUidInDicomBuffer(fs.readFileSync(filePath), sopUID);
         const boundary = "dicoogle-boundary";
 
         res.setHeader(
@@ -1503,31 +2588,51 @@ export function dicomwebRouter(): Router {
         const byteArray = new Uint8Array(fileBuffer.buffer, fileBuffer.byteOffset, fileBuffer.byteLength);
         const dataSet = dicomParser.parseDicom(byteArray);
 
-        // Extract pixel data from the DICOM file
         const pixelDataElement = dataSet.elements["x7fe00010"];
         if (!pixelDataElement) {
           res.status(404).json({ error: "No pixel data in DICOM file" });
           return;
         }
 
+        const transferSyntaxUID = normalizeDicomUid(dataSet.string("x00020010"));
         let pixelData: Buffer;
+        const frameIndex = getRequestedFrameIndex(req.params.frameNumbers as string);
 
         if (pixelDataElement.encapsulatedPixelData) {
-          // Compressed (encapsulated) pixel data — extract the requested frame fragment
-          const frameIndex = Math.max(0, parseInt(req.params.frameNumbers as string, 10) - 1);
-          const fragments = pixelDataElement.fragments;
-          if (!fragments || frameIndex >= fragments.length) {
+          const frameData = extractEncapsulatedFrame(dataSet, pixelDataElement, frameIndex, byteArray);
+          if (!frameData) {
             res.status(404).json({ error: `Frame ${frameIndex + 1} not found` });
             return;
           }
-          const fragment = fragments[frameIndex];
-          // Use fragment.position (absolute byte offset in file), not fragment.offset
-          pixelData = Buffer.from(byteArray.buffer, byteArray.byteOffset + fragment.position, fragment.length);
+          if (transferSyntaxUID && JPEG_LOSSLESS_TRANSFER_SYNTAX_UIDS.has(transferSyntaxUID)) {
+            const decodedFrame = decodeJpegLosslessFrame(frameData, dataSet);
+            if (decodedFrame) {
+              pixelData = decodedFrame;
+            } else {
+              logger.warn({
+                message: "JPEG Lossless frame decode failed — returning original encapsulated bytes",
+                sopUID,
+                transferSyntaxUID,
+                frameIndex,
+              });
+              pixelData = frameData;
+            }
+          } else {
+            pixelData = frameData;
+          }
         } else {
-          // Uncompressed pixel data — return raw bytes
-          pixelData = Buffer.from(byteArray.buffer, byteArray.byteOffset + pixelDataElement.dataOffset, pixelDataElement.length);
+          const nativeFrame = extractNativeFrame(dataSet, pixelDataElement, frameIndex, byteArray);
+          if (!nativeFrame) {
+            res.status(404).json({ error: `Frame ${frameIndex + 1} not found` });
+            return;
+          }
+          pixelData = nativeFrame;
         }
+        // #region agent log
+        fetch("http://127.0.0.1:7406/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"5ecab0"},body:JSON.stringify({sessionId:"5ecab0",runId:"pre-fix",hypothesisId:"H3",location:"dicomweb.ts:frames:payloadReady",message:"WADO-RS frame payload prepared",data:{sopUID,frameIndex,transferSyntaxUID:transferSyntaxUID??null,encapsulated:Boolean(pixelDataElement.encapsulatedPixelData),pixelBytes:pixelData.length,acceptHeader:(req.headers.accept||"").toString().slice(0,120)},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
 
+        const mediaType = "application/octet-stream";
         const acceptHeader = (req.headers.accept || "").toLowerCase();
         res.setHeader("Cache-Control", "public, max-age=3600");
 
@@ -1535,16 +2640,15 @@ export function dicomwebRouter(): Router {
           const boundary = "dicoogle-boundary";
           res.setHeader(
             "Content-Type",
-            `multipart/related; type=application/octet-stream; boundary=${boundary}`,
+            `multipart/related; type="${mediaType}"; boundary=${boundary}`,
           );
-          const header = Buffer.from(`--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n`);
+          const header = Buffer.from(`--${boundary}\r\nContent-Type: ${mediaType}\r\n\r\n`);
           const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
           res.write(header);
           res.write(pixelData);
           res.end(footer);
         } else {
-          // Singlepart — return raw pixel data directly
-          res.setHeader("Content-Type", "application/octet-stream");
+          res.setHeader("Content-Type", mediaType);
           res.end(pixelData);
         }
       } catch (err) {
@@ -1567,6 +2671,10 @@ export function dicomwebRouter(): Router {
           for (const series of study.series) {
             if (series.serieInstanceUID !== seriesUID) continue;
             for (const image of series.images) {
+              const imgFilePath = resolveUsableImagePath(image);
+              if (!imgFilePath) {
+                continue;
+              }
               const bulkUri = `${getDicomwebBaseUrl(req)}/studies/${studyUID}/series/${seriesUID}/instances/${image.sopInstanceUID}/frames/1`;
               metadata.push(
                 buildInstanceMetadata(patient, studyUID, seriesUID, image.sopInstanceUID, series.serieModality, bulkUri, image),
@@ -1588,46 +2696,34 @@ export function dicomwebRouter(): Router {
     try {
       const { studyUID } = req.params;
       const patients = await queryDIMForRequest(req);
-      const boundary = "dicoogle-boundary";
-      const parts: Buffer[] = [];
+      const filePathSet = new Set<string>();
 
       for (const patient of patients) {
         for (const study of patient.studies) {
           if (study.studyInstanceUID !== studyUID) continue;
           for (const series of study.series) {
             for (const image of series.images) {
-              let filePath = fileUriToPath(image.uri);
-              if (!fs.existsSync(filePath)) {
-                filePath = path.join(DICOOGLE_STORAGE_DIR, image.filename);
-              }
-              if (fs.existsSync(filePath)) {
-                const dicomBuffer = fs.readFileSync(filePath);
-                parts.push(
-                  Buffer.from(`--${boundary}\r\nContent-Type: application/dicom\r\n\r\n`),
-                );
-                parts.push(dicomBuffer);
-                parts.push(Buffer.from("\r\n"));
+              const filePath = resolveUsableImagePath(image);
+              if (filePath) {
+                filePathSet.add(filePath);
               }
             }
           }
         }
       }
 
-      if (parts.length === 0) {
+      const filePaths = Array.from(filePathSet).filter((filePath) => isNonEmptyDicomFile(filePath));
+      if (filePaths.length === 0) {
         res.status(404).json({ error: "No DICOM files found for this study" });
         return;
       }
 
-      parts.push(Buffer.from(`--${boundary}--\r\n`));
-
-      res.setHeader(
-        "Content-Type",
-        `multipart/related; type="application/dicom"; boundary=${boundary}`,
-      );
-      for (const part of parts) {
-        res.write(part);
-      }
-      res.end();
+      logger.info({
+        message: "WADO study retrieve response",
+        studyUID,
+        instanceCount: filePaths.length,
+      });
+      streamMultipartDicomFiles(res, filePaths);
     } catch (err) {
       console.error("WADO-RS study retrieve error:", err);
       res.status(500).json({ error: "Failed to retrieve study" });
@@ -1647,6 +2743,10 @@ export function dicomwebRouter(): Router {
             if (series.serieInstanceUID !== seriesUID) continue;
             for (const image of series.images) {
               if (image.sopInstanceUID !== sopUID) continue;
+              const imgFilePath = resolveUsableImagePath(image);
+              if (!imgFilePath) {
+                continue;
+              }
 
               const bulkUri = `${getDicomwebBaseUrl(req)}/studies/${studyUID}/series/${seriesUID}/instances/${sopUID}/frames/1`;
 
@@ -1678,6 +2778,10 @@ export function dicomwebRouter(): Router {
           if (study.studyInstanceUID !== studyUID) continue;
           for (const series of study.series) {
             for (const image of series.images) {
+              const imgFilePath = resolveUsableImagePath(image);
+              if (!imgFilePath) {
+                continue;
+              }
               const bulkUri = `${getDicomwebBaseUrl(req)}/studies/${studyUID}/series/${series.serieInstanceUID}/instances/${image.sopInstanceUID}/frames/1`;
               metadata.push(
                 buildInstanceMetadata(patient, studyUID, series.serieInstanceUID, image.sopInstanceUID, series.serieModality, bulkUri, image),

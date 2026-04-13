@@ -1,7 +1,41 @@
 import { Link } from "react-router-dom";
+import { useEffect } from "react";
 import { BrandLogo } from "../components/BrandLogo";
 
+function debugPendingLog(
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown> = {},
+  runId = "run-1",
+) {
+  fetch("http://127.0.0.1:7829/ingest/0823df88-6411-4f3d-9920-ebf0779efd31", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": "b161f5",
+    },
+    body: JSON.stringify({
+      sessionId: "b161f5",
+      runId,
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+}
+
 export function PendingApprovalPage() {
+  useEffect(() => {
+    // #region agent log
+    debugPendingLog("H7", "PendingApprovalPage.tsx:mount", "pending approval page mounted", {
+      path: typeof window !== "undefined" ? window.location.pathname : "unknown",
+    });
+    // #endregion
+  }, []);
+
   return (
     <div className="flex min-h-screen items-center justify-center px-6 py-12 bg-white dark:bg-tdai-gray-900">
       <div className="fixed inset-0 overflow-hidden pointer-events-none">

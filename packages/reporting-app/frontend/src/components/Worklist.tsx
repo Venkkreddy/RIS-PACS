@@ -76,41 +76,6 @@ export function Worklist({
         viewerUrl: string | null;
         message?: string;
       }>(`/worklist/${encodeURIComponent(studyId)}/viewer-access`);
-      const apiViewerUrl = validationResponse.data.viewerUrl;
-      let apiViewerHasLaunchParams = false;
-      let apiViewerLooksMicroscopy = false;
-      if (apiViewerUrl) {
-        try {
-          const parsed = new URL(apiViewerUrl);
-          apiViewerHasLaunchParams =
-            parsed.searchParams.getAll("StudyInstanceUIDs").length > 0 ||
-            Boolean(parsed.searchParams.get("studyInstanceUIDs"));
-          apiViewerLooksMicroscopy = /\/dicom-microscopy-viewer(?:\/|$)/i.test(parsed.pathname);
-        } catch {
-          apiViewerHasLaunchParams = false;
-        }
-      }
-      // #region agent log
-      void fetch("http://127.0.0.1:7526/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6646bc" },
-        body: JSON.stringify({
-          sessionId: "6646bc",
-          runId: "initial",
-          hypothesisId: "H6",
-          location: "frontend/components/Worklist.tsx:handleOhifClick:api",
-          message: "Worklist viewer-access API response received",
-          data: {
-            allowed: validationResponse.data.allowed,
-            hasViewerUrl: Boolean(apiViewerUrl),
-            apiViewerHasLaunchParams,
-            apiViewerLooksMicroscopy,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-
       if (!validationResponse.data.allowed || !validationResponse.data.viewerUrl) {
         const message = validationResponse.data.message || "Study exists but images not yet available";
         setOhifWarning(message);
@@ -122,25 +87,6 @@ export function Worklist({
         validationResponse.data.viewerUrl,
         fallbackViewerUrl,
       );
-      // #region agent log
-      void fetch("http://127.0.0.1:7526/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6646bc" },
-        body: JSON.stringify({
-          sessionId: "6646bc",
-          runId: "initial",
-          hypothesisId: "H6",
-          location: "frontend/components/Worklist.tsx:handleOhifClick:resolve",
-          message: "Worklist launch URL candidate resolved",
-          data: {
-            hasLaunchUrl: Boolean(viewerUrl),
-            usedBackendViewerUrl: viewerUrl === validationResponse.data.viewerUrl,
-            usedFallbackViewerUrl: viewerUrl === fallbackViewerUrl,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       if (!viewerUrl) {
         setOhifWarning("OHIF launch URL is invalid (missing study parameters). Please refresh and try again.");
         setTimeout(() => setOhifWarning(null), 6000);
@@ -164,7 +110,7 @@ export function Worklist({
     }
   }, []);
 
-  const handleWeasisClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>, weasisUrl: string) => {
+  const handleWeasisClick = useCallback(() => {
     setWeasisWarning(null);
     const timeout = setTimeout(() => {
       setWeasisWarning(
@@ -333,7 +279,7 @@ export function Worklist({
                 className="btn-secondary !px-2.5 !py-1 text-[11px] !rounded-md"
                 href={row.original.weasisUrl}
                 title="Open in Weasis (desktop)"
-                onClick={(e) => handleWeasisClick(e, row.original.weasisUrl!)}
+                onClick={handleWeasisClick}
               >
                 Weasis
               </a>

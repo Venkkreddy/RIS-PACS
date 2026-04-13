@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { formatIsoDateDisplay } from "../lib/dateDisplay";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import type { Patient, Gender, RadiologyOrder } from "@medical-report-system/shared";
 
@@ -244,7 +245,7 @@ export function ReceptionistDashboard() {
                     <div key={p.id} className="flex items-center justify-between border-b border-tdai-border-light px-4 py-2.5 last:border-b-0 hover:bg-tdai-surface-alt transition-colors">
                       <div>
                         <p className="text-sm font-medium text-tdai-text">{p.firstName} {p.lastName}</p>
-                        <p className="text-xs text-tdai-muted">MRN: {p.patientId} &middot; DOB: {p.dateOfBirth} &middot; {p.gender === "M" ? "Male" : p.gender === "F" ? "Female" : "Other"}</p>
+                        <p className="text-xs text-tdai-muted">MRN: {p.patientId} &middot; DOB: {formatIsoDateDisplay(p.dateOfBirth)} &middot; {p.gender === "M" ? "Male" : p.gender === "F" ? "Female" : "Other"}</p>
                       </div>
                       <button
                         className="btn-primary !rounded-lg !px-3 !py-1.5 text-xs"
@@ -288,7 +289,7 @@ export function ReceptionistDashboard() {
                         <tr key={entry.patient.id} className="table-row-hover">
                           <td className="table-cell font-mono text-xs text-tdai-accent">{entry.patient.patientId}</td>
                           <td className="table-cell font-medium">{entry.patient.firstName} {entry.patient.lastName}</td>
-                          <td className="table-cell text-tdai-secondary">{entry.patient.dateOfBirth}</td>
+                          <td className="table-cell text-tdai-secondary">{formatIsoDateDisplay(entry.patient.dateOfBirth)}</td>
                           <td className="table-cell">
                             <span className="badge bg-slate-100 text-slate-600">{entry.patient.gender === "M" ? "Male" : entry.patient.gender === "F" ? "Female" : "Other"}</span>
                           </td>
@@ -382,7 +383,7 @@ export function ReceptionistDashboard() {
                     </div>
                     <div>
                       <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Date of Birth *</label>
-                      <input className="input-field" type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} required />
+                      <input className="input-field input-date" type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} required />
                     </div>
                     <div>
                       <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Phone</label>
@@ -433,7 +434,7 @@ export function ReceptionistDashboard() {
                       <tr key={p.id} className="table-row-hover">
                         <td className="table-cell font-mono text-xs text-tdai-accent">{p.patientId}</td>
                         <td className="table-cell font-medium">{p.firstName} {p.lastName}</td>
-                        <td className="table-cell text-tdai-secondary">{p.dateOfBirth}</td>
+                        <td className="table-cell text-tdai-secondary">{formatIsoDateDisplay(p.dateOfBirth)}</td>
                         <td className="table-cell">
                           <span className="badge bg-slate-100 text-slate-600">{p.gender === "M" ? "Male" : p.gender === "F" ? "Female" : "Other"}</span>
                         </td>

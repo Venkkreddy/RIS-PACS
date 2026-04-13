@@ -172,6 +172,23 @@ export class InMemoryStoreService {
     return updated;
   }
 
+  async updateUserProfile(
+    userId: string,
+    patch: { displayName?: string; phone?: string; department?: string },
+  ): Promise<UserRecord> {
+    const existing = this.users.get(userId);
+    if (!existing) throw new Error("User not found");
+    const updated: UserRecord = {
+      ...existing,
+      ...(patch.displayName !== undefined && { displayName: patch.displayName }),
+      ...(patch.phone !== undefined && { phone: patch.phone }),
+      ...(patch.department !== undefined && { department: patch.department }),
+      updatedAt: this.now(),
+    };
+    this.users.set(userId, updated);
+    return updated;
+  }
+
   async getUserById(userId: string): Promise<UserRecord | null> {
     return this.users.get(userId) ?? null;
   }
@@ -201,17 +218,29 @@ export class InMemoryStoreService {
 
   // ── Patients ───────────────────────────────────────────
   async getPatientByMrn(mrn: string): Promise<Patient | null> {
-    const needle = mrn.trim().toLowerCase();
-    return [...this.patients.values()].find((p) => p.patientId.toLowerCase() === needle) ?? null;
+    const needle = mrn.trim().toUpperCase();
+    return [...this.patients.values()].find((p) => p.patientId.trim().toUpperCase() === needle) ?? null;
   }
 
   async createPatient(payload: Omit<Patient, "id" | "createdAt" | "updatedAt">): Promise<Patient> {
-    const existing = await this.getPatientByMrn(payload.patientId);
+    const patientId = payload.patientId.trim().toUpperCase();
+    const existing = await this.getPatientByMrn(patientId);
     if (existing) {
-      throw Object.assign(new Error(`Patient with MRN "${payload.patientId}" already exists`), { code: "DUPLICATE_MRN", existingPatient: existing });
+      throw Object.assign(new Error(`Patient with MRN "${patientId}" already exists`), { code: "DUPLICATE_MRN", existingPatient: existing });
     }
     const n = this.now();
-    const p: Patient = { id: this.id(), ...payload, createdAt: n, updatedAt: n };
+    const p: Patient = {
+      id: this.id(),
+      ...payload,
+      patientId,
+      firstName: payload.firstName.trim(),
+      lastName: payload.lastName.trim(),
+      phone: payload.phone?.trim() || undefined,
+      email: payload.email?.trim() || undefined,
+      address: payload.address?.trim() || undefined,
+      createdAt: n,
+      updatedAt: n,
+    };
     this.patients.set(p.id, p);
     return p;
   }
@@ -223,7 +252,24 @@ export class InMemoryStoreService {
   async updatePatient(patientId: string, patch: Partial<Omit<Patient, "id" | "createdAt">>): Promise<Patient> {
     const existing = this.patients.get(patientId);
     if (!existing) throw new Error("Patient not found");
-    const updated: Patient = { ...existing, ...patch, updatedAt: this.now() };
+    const nextPatientId = patch.patientId ? patch.patientId.trim().toUpperCase() : existing.patientId;
+    if (nextPatientId !== existing.patientId.trim().toUpperCase()) {
+      const duplicate = await this.getPatientByMrn(nextPatientId);
+      if (duplicate && duplicate.id !== existing.id) {
+        throw Object.assign(new Error(`Patient with MRN "${nextPatientId}" already exists`), { code: "DUPLICATE_MRN", existingPatient: duplicate });
+      }
+    }
+    const updated: Patient = {
+      ...existing,
+      ...patch,
+      patientId: nextPatientId,
+      firstName: patch.firstName?.trim() ?? existing.firstName,
+      lastName: patch.lastName?.trim() ?? existing.lastName,
+      phone: patch.phone !== undefined ? patch.phone.trim() || undefined : existing.phone,
+      email: patch.email !== undefined ? patch.email.trim() || undefined : existing.email,
+      address: patch.address !== undefined ? patch.address.trim() || undefined : existing.address,
+      updatedAt: this.now(),
+    };
     this.patients.set(patientId, updated);
     return updated;
   }

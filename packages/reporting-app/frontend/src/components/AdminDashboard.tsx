@@ -26,6 +26,7 @@ type UserRole = (typeof ALL_ROLES)[number];
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Admin",
+  super_admin: "Super Admin",
   developer: "Developer",
   radiologist: "Dr. Portal (Radiologist)",
   radiographer: "Radiographer",
@@ -51,6 +52,7 @@ const PERMISSION_MODULE_LABELS: Record<string, string> = {
   voice: "Voice / Dictation",
   admin: "Admin",
   developer: "Developer Tools",
+  platform: "Platform",
 };
 
 const PERMISSION_ACTION_LABELS: Record<string, string> = {
@@ -75,6 +77,11 @@ const PERMISSION_ACTION_LABELS: Record<string, string> = {
   manage_invites: "Manage Invites",
   toggle_services: "Toggle Services",
   view_health: "View Health",
+  view_overview: "View Overview",
+  manage_hospitals: "Manage Hospitals",
+  assign_pacs: "Assign PACS",
+  manage_hospital_admins: "Manage Hospital Admins",
+  view_monitoring: "View Monitoring",
 };
 
 interface RolePermissionData {
@@ -261,7 +268,7 @@ export function AdminDashboard() {
 
   const filteredUsers = roleFilter ? users.filter((u) => u.role === roleFilter) : users;
 
-  const showServices = role === "developer" || role === "admin";
+  const showServices = role === "developer" || role === "admin" || role === "super_admin";
 
   const TABS: Array<{ key: AdminTab; label: string; icon: string; badge?: number }> = [
     { key: "overview", label: "Overview", icon: "M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" },
@@ -287,7 +294,9 @@ export function AdminDashboard() {
           <div className="flex h-6 w-6 items-center justify-center rounded-lg" style={{ backgroundColor: "#EEF1F6" }}>
             <svg className="h-3.5 w-3.5" style={{ color: "#1A2B56" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
           </div>
-          <span style={{ color: "#111D3B" }} className="text-sm font-bold tracking-wider">{role === "developer" ? "DEVELOPER CONSOLE" : "ADMIN CONSOLE"}</span>
+          <span style={{ color: "#111D3B" }} className="text-sm font-bold tracking-wider">
+            {role === "super_admin" ? "SUPER ADMIN PORTAL" : role === "developer" ? "DEVELOPER CONSOLE" : "ADMIN CONSOLE"}
+          </span>
         </div>
       </div>
 
@@ -695,6 +704,8 @@ export function AdminDashboard() {
                               className={`badge ${
                                 u.role === "admin"
                                   ? "bg-tdai-navy-50 text-tdai-navy-700 ring-1 ring-tdai-navy-200 dark:bg-tdai-navy-900/30 dark:text-tdai-navy-200 dark:ring-tdai-navy-600"
+                                  : u.role === "super_admin"
+                                    ? "bg-purple-50 text-purple-700 ring-1 ring-purple-200 dark:bg-purple-900/20 dark:text-purple-300 dark:ring-purple-700"
                                   : u.role === "radiologist"
                                     ? "bg-tdai-teal-50 text-tdai-teal-700 ring-1 ring-tdai-teal-200 dark:bg-tdai-teal-900/20 dark:text-tdai-teal-300 dark:ring-tdai-teal-700"
                                     : u.role === "developer"
@@ -736,6 +747,10 @@ export function AdminDashboard() {
                                 <X className="h-3.5 w-3.5" strokeWidth={2.5} />
                               </button>
                             </div>
+                          ) : u.role === "super_admin" ? (
+                            <span className="badge bg-purple-50 text-purple-700 ring-1 ring-purple-200">
+                              Locked
+                            </span>
                           ) : (
                             <button
                               className="flex h-7 items-center gap-1.5 rounded-lg bg-tdai-navy-50 px-2.5 text-[11px] font-medium text-tdai-navy-600 transition-colors hover:bg-tdai-navy-100 dark:bg-tdai-navy-900/30 dark:text-tdai-navy-200"

@@ -10,13 +10,23 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
+    "dev:local": "node ./scripts/dev-local.mjs",
+    "dev:local:parity": "node ./scripts/dev-local-parity.mjs",
+    "docker:up": "docker compose --env-file .env.docker up --build -d",
+    "docker:dev": "docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.dev.yml up --build",
+    "docker:down": "docker compose --env-file .env.docker down",
+    "docker:down:clean": "docker compose --env-file .env.docker down -v --rmi local",
+    "docker:logs": "docker compose --env-file .env.docker logs -f",
+    "docker:ps": "docker compose --env-file .env.docker ps",
+    "docker:restart": "docker compose --env-file .env.docker restart",
+    "dev:docker": "docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.dev.yml up --build",
     "test": "turbo run test",
     "lint": "turbo run lint"
   },
   "devDependencies": {
     "turbo": "^2.5.2"
   },
-  "dependencies": {
+  "optionalDependencies": {
     "@rollup/rollup-win32-x64-msvc": "^4.59.0"
   }
 }

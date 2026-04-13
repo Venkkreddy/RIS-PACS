@@ -1,19 +1,58 @@
-version: "3.9"
+###############################################################################
+# TDAI – Complete Docker Environment
+#
+# Production:   docker compose --env-file .env.docker up --build -d
+# Development:  docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.dev.yml up --build
+# Teardown:     docker compose down -v
+#
+# Dev mode auto-reloads code changes via bind-mounts + dev servers.
+# See docker-compose.dev.yml for details.
+###############################################################################
 
 services:
+  # ── PACS / Imaging ─────────────────────────────────────────────────────────
+
+  orthanc:
+    image: orthancteam/orthanc:latest
+    container_name: orthanc
+    restart: unless-stopped
+    ports:
+      - "${ORTHANC_HTTP_PORT:-8042}:8042"
+      - "${ORTHANC_DICOM_PORT:-4242}:4242"
+    volumes:
+      - orthanc-storage:/var/lib/orthanc/db
+      - ./pacs-stack/orthanc/orthanc.json:/etc/orthanc/orthanc.json:ro
+    environment:
+      VERBOSE_ENABLED: "false"
+      DICOM_WEB_PLUGIN_ENABLED: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8042/system')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - imaging-net
+
   dicoogle:
     build:
       context: ./packages/dicoogle-server
     container_name: dicoogle
     restart: unless-stopped
     ports:
-      - "8080:8080"
-      - "11112:104"
+      - "${DICOOGLE_HTTP_PORT:-8080}:8080"
+      - "${DICOOGLE_DICOM_PORT:-11112}:104"
     environment:
-      REPORTING_WEBHOOK_URL: http://reporting-app-backend:8080/webhook/study
+      REPORTING_WEBHOOK_URL: "${REPORTING_WEBHOOK_URL:-http://reporting-app-backend:8080/webhook/study}"
     volumes:
-      - ./storage:/var/dicoogle/storage
-      - ./dicoogle-index:/var/dicoogle/index
+      - dicoogle-storage:/var/dicoogle/storage
+      - dicoogle-index:/var/dicoogle/index
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 5
     networks:
       - imaging-net
 
@@ -23,23 +62,40 @@ services:
     container_name: ohif-viewer
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "${OHIF_PORT:-3000}:80"
     depends_on:
-      - dicoogle
+      orthanc:
+        condition: service_healthy
+      dicoogle:
+        condition: service_healthy
+      reporting-app-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
     networks:
       - imaging-net
+
+  # ── AI / ML Services ───────────────────────────────────────────────────────
 
   monai-server:
     build:
       context: ./packages/monai-server
     container_name: monai-server
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
-      - "5000:5000"
+      - "${MONAI_PORT:-5000}:5000"
     volumes:
-      - ./monai-models:/opt/monai/models
+      - monai-models:/opt/monai/models
     environment:
+      MONAI_MODELS_DIR: /opt/monai/models
       MONAI_SERVER_PORT: 5000
+      ORTHANC_URL: "${ORTHANC_URL:-http://orthanc:8042}"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
       GEMINI_MODEL: "${GEMINI_MODEL:-gemini-2.0-flash}"
       GCP_PROJECT_ID: "${GCP_PROJECT_ID:-}"
@@ -52,7 +108,21 @@ services:
       OLLAMA_URL: "http://host.docker.internal:11434"
       OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3}"
       INTERNAL_SERVICE_SECRET: "${INTERNAL_SERVICE_SECRET:-}"
-      CORS_ORIGINS: "http://reporting-app-backend:8080,http://localhost:8081"
+      CORS_ORIGINS: "${MONAI_CORS_ORIGINS:-http://localhost:3000,http://localhost:8081}"
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./packages/monai-server
+          target: /app
+          ignore:
+            - __pycache__/
+            - "*.pyc"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/health')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 300s
+      retries: 10
     networks:
       - imaging-net
 
@@ -61,50 +131,73 @@ services:
       context: ./packages/medasr-server
     container_name: medasr-server
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
-      - "5001:5001"
+      - "${MEDASR_PORT:-5001}:5001"
     environment:
       MEDASR_PORT: 5001
       MEDASR_MODEL: "${MEDASR_MODEL:-google/medasr}"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
       GEMINI_MODEL: "${GEMINI_MODEL:-gemini-2.0-flash}"
-      CORS_ORIGINS: "http://reporting-app-backend:8080,http://localhost:8081"
+      CORS_ORIGINS: "${MEDASR_CORS_ORIGINS:-https://localhost:5173}"
       GCP_PROJECT_ID: "${GCP_PROJECT_ID:-}"
       GCP_LOCATION: "${GCP_LOCATION:-us-central1}"
       MEDGEMMA_MODEL: "${MEDGEMMA_MODEL:-medgemma-4b}"
       MEDGEMMA_ENDPOINT: "${MEDGEMMA_ENDPOINT:-}"
       VERTEX_AI_ENABLED: "${VERTEX_AI_ENABLED:-false}"
       GOOGLE_APPLICATION_CREDENTIALS: "${GOOGLE_APPLICATION_CREDENTIALS:-}"
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./packages/medasr-server
+          target: /app
+          ignore:
+            - __pycache__/
+            - "*.pyc"
     networks:
       - imaging-net
 
+  # ── Reporting Application ──────────────────────────────────────────────────
+
   reporting-app-backend:
-    image: node:20-alpine
+    build:
+      context: .
+      dockerfile: packages/reporting-app/backend/Dockerfile
     container_name: reporting-app-backend
     restart: unless-stopped
-    working_dir: /app
-    command: sh -c "npm install && npm run dev -w backend"
-    volumes:
-      - ./packages/reporting-app:/app
-      - /app/node_modules
-      - /app/backend/node_modules
-      - /app/frontend/node_modules
-      - /app/shared/node_modules
-      # Same host folder as dicoogle:/var/dicoogle/storage — required so uploads
-      # land where Dicoogle indexes (see DICOOGLE_INDEX_URI).
-      - ./storage:/storage
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${BACKEND_PORT:-8081}:8080"
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./packages/reporting-app/backend/src
+          target: /app/packages/reporting-app/backend/src
+        - action: sync+restart
+          path: ./packages/reporting-app/shared/src
+          target: /app/packages/reporting-app/shared/src
+        - action: rebuild
+          path: ./packages/reporting-app/backend/package.json
     environment:
       PORT: 8080
-      FRONTEND_URL: "${FRONTEND_URL:-http://localhost:5173}"
-      OHIF_BASE_URL: http://ohif-viewer
-      OHIF_PUBLIC_BASE_URL: "${OHIF_URL:-http://localhost:3000}"
-      DICOOGLE_BASE_URL: http://dicoogle:8080
-      DICOOGLE_STORAGE_DIR: /storage
-      DICOOGLE_INDEX_URI: file:///var/dicoogle/storage
+      NODE_ENV: "${NODE_ENV:-production}"
+      APP_ENV_MODE: "${APP_ENV_MODE:-docker}"
+      USE_INMEMORY_STORE: "${USE_INMEMORY_STORE:-true}"
+      HIPAA_REQUIRE_HTTPS: "${HIPAA_REQUIRE_HTTPS:-false}"
+      ENABLE_DEV_LOGIN: "${ENABLE_DEV_LOGIN:-true}"
+      FRONTEND_URL: "${FRONTEND_URL:-https://localhost:5173}"
+      BACKEND_URL: "${BACKEND_URL:-http://reporting-app-backend:8080}"
+      OHIF_BASE_URL: "${OHIF_BASE_URL:-http://ohif-viewer}"
+      OHIF_PUBLIC_BASE_URL: "${OHIF_PUBLIC_BASE_URL:-http://localhost:3000}"
+      DICOOGLE_BASE_URL: "${DICOOGLE_BASE_URL:-http://dicoogle:8080}"
+      DICOOGLE_STORAGE_DIR: "${DICOOGLE_STORAGE_DIR:-/storage}"
+      DICOOGLE_INDEX_URI: "${DICOOGLE_INDEX_URI:-file:///var/dicoogle/storage}"
       MONAI_SERVER_URL: http://monai-server:5000
-      MONAI_ENABLED: "true"
+      MONAI_ENABLED: "${MONAI_ENABLED:-true}"
       MEDASR_SERVER_URL: http://medasr-server:5001
-      MEDASR_ENABLED: "true"
+      MEDASR_ENABLED: "${MEDASR_ENABLED:-true}"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
       GEMINI_MODEL: "${GEMINI_MODEL:-gemini-2.0-flash}"
       OLLAMA_URL: "http://host.docker.internal:11434"
@@ -117,48 +210,61 @@ services:
       MULTI_TENANT_ENABLED: "${MULTI_TENANT_ENABLED:-true}"
       PLATFORM_ADMIN_KEY: "${PLATFORM_ADMIN_KEY:-tdai-platform-admin-key-dev}"
       TENANT_STORAGE_ROOT: "/storage"
-      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}"
+      WEASIS_BASE_URL: "${WEASIS_BASE_URL:-http://localhost:8081/dicom-web}"
+      CORS_ALLOW_ALL: "${CORS_ALLOW_ALL:-true}"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-https://localhost:5173,http://localhost:3000}"
       MASTER_ADMIN_EMAILS: "${MASTER_ADMIN_EMAILS:-}"
-    ports:
-      - "8081:8080"
+      GCP_PROJECT_ID: "${GCP_PROJECT_ID:-}"
+      GCS_BUCKET: "${GCS_BUCKET:-}"
+      SENDGRID_API_KEY: "${SENDGRID_API_KEY:-}"
+      SENDGRID_FROM_EMAIL: "${SENDGRID_FROM_EMAIL:-}"
+    volumes:
+      - dicoogle-storage:/storage
     depends_on:
       postgres:
         condition: service_healthy
       monai-server:
-        condition: service_started
+        condition: service_healthy
       medasr-server:
-        condition: service_started
+        condition: service_healthy
     networks:
       - imaging-net
 
   reporting-app-frontend:
-    image: node:20-alpine
+    build:
+      context: .
+      dockerfile: packages/reporting-app/frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: "${VITE_API_BASE_URL:-https://localhost:5173/api}"
+        VITE_FIREBASE_API_KEY: "${VITE_FIREBASE_API_KEY:-}"
+        VITE_FIREBASE_AUTH_DOMAIN: "${VITE_FIREBASE_AUTH_DOMAIN:-}"
+        VITE_FIREBASE_PROJECT_ID: "${VITE_FIREBASE_PROJECT_ID:-}"
+        VITE_FIREBASE_STORAGE_BUCKET: "${VITE_FIREBASE_STORAGE_BUCKET:-}"
+        VITE_FIREBASE_MESSAGING_SENDER_ID: "${VITE_FIREBASE_MESSAGING_SENDER_ID:-}"
+        VITE_FIREBASE_APP_ID: "${VITE_FIREBASE_APP_ID:-}"
     container_name: reporting-app-frontend
     restart: unless-stopped
-    working_dir: /app
-    command: sh -c "npm install && npm run dev -w frontend -- --host 0.0.0.0 --port 5173"
-    volumes:
-      - ./packages/reporting-app:/app
-      - /app/node_modules
-      - /app/backend/node_modules
-      - /app/frontend/node_modules
-      - /app/shared/node_modules
-    environment:
-      VITE_API_BASE_URL: "${VITE_API_BASE_URL:-http://localhost:8081}"
-      VITE_BACKEND_PROXY_TARGET: http://reporting-app-backend:8080
-      VITE_FIREBASE_API_KEY: "${VITE_FIREBASE_API_KEY:-}"
-      VITE_FIREBASE_AUTH_DOMAIN: "${VITE_FIREBASE_AUTH_DOMAIN:-}"
-      VITE_FIREBASE_PROJECT_ID: "${VITE_FIREBASE_PROJECT_ID:-}"
-      VITE_FIREBASE_APP_ID: "${VITE_FIREBASE_APP_ID:-}"
-      CHOKIDAR_USEPOLLING: "true"
     ports:
-      - "5173:5173"
+      - "${FRONTEND_PORT:-5173}:443"
+    develop:
+      watch:
+        - action: rebuild
+          path: ./packages/reporting-app/frontend/src
+        - action: rebuild
+          path: ./packages/reporting-app/frontend/package.json
     depends_on:
-      - reporting-app-backend
+      reporting-app-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate -qO- https://127.0.0.1:443/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     networks:
       - imaging-net
 
-  # ── Multi-tenant infrastructure ──
+  # ── Infrastructure ─────────────────────────────────────────────────────────
 
   postgres:
     image: postgres:16-alpine
@@ -169,7 +275,7 @@ services:
       POSTGRES_USER: tdai
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-tdai_dev_password}"
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./packages/reporting-app/backend/migrations:/docker-entrypoint-initdb.d:ro
@@ -177,6 +283,7 @@ services:
       test: ["CMD-SHELL", "pg_isready -U tdai -d tdai_multitenant"]
       interval: 10s
       timeout: 5s
+      start_period: 15s
       retries: 5
     networks:
       - imaging-net
@@ -187,3 +294,12 @@ networks:
 
 volumes:
   pgdata:
+    driver: local
+  orthanc-storage:
+    driver: local
+  dicoogle-storage:
+    driver: local
+  dicoogle-index:
+    driver: local
+  monai-models:
+    driver: local

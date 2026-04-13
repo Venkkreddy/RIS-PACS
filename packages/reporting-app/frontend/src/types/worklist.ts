@@ -75,7 +75,7 @@ export interface WorklistStudy {
 export interface WorklistUser {
   id: string;
   email: string;
-  role: "admin" | "developer" | "radiographer" | "radiologist" | "referring" | "billing" | "receptionist" | "viewer";
+  role: "admin" | "super_admin" | "developer" | "radiographer" | "radiologist" | "referring" | "billing" | "receptionist" | "viewer";
   approved?: boolean;
   requestStatus?: "pending" | "approved" | "rejected";
   displayName?: string;

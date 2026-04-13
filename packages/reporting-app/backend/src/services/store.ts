@@ -41,11 +41,13 @@ export interface StudyRecord {
 export interface UserRecord {
   id: string;
   email: string;
-  role: "admin" | "developer" | "radiographer" | "radiologist" | "referring" | "billing" | "receptionist" | "viewer";
+  role: "super_admin" | "admin" | "developer" | "radiographer" | "radiologist" | "referring" | "billing" | "receptionist" | "viewer";
   approved: boolean;
   requestStatus: "pending" | "approved" | "rejected";
   authProvider?: string;
   displayName?: string;
+  phone?: string;
+  department?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -53,7 +55,7 @@ export interface UserRecord {
 export interface InviteRecord {
   id: string;
   email: string;
-  role: "admin" | "developer" | "radiographer" | "radiologist" | "referring" | "billing" | "receptionist" | "viewer";
+  role: "super_admin" | "admin" | "developer" | "radiographer" | "radiologist" | "referring" | "billing" | "receptionist" | "viewer";
   token: string;
   invitedBy: string;
   createdAt: string;
@@ -84,6 +86,15 @@ function containsAllSearchTokens(source: string | undefined, rawSearch: string):
   const tokens = normalizeSearchValue(rawSearch).split(" ").filter(Boolean);
   if (tokens.length === 0) return true;
   return tokens.every((token) => normalizedSource.includes(token));
+}
+
+function normalizeMrn(value: string | undefined): string {
+  return (value ?? "").trim().toUpperCase();
+}
+
+function normalizeOptionalText(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 export class StoreService {
@@ -354,6 +365,25 @@ export class StoreService {
     return doc.exists ? (doc.data() as UserRecord) : null;
   }
 
+  async updateUserProfile(
+    userId: string,
+    patch: { displayName?: string; phone?: string; department?: string },
+  ): Promise<UserRecord> {
+    const existing = await this.getUserById(userId);
+    if (!existing) throw new Error("User not found");
+
+    const updated: UserRecord = {
+      ...existing,
+      ...(patch.displayName !== undefined && { displayName: patch.displayName }),
+      ...(patch.phone !== undefined && { phone: patch.phone }),
+      ...(patch.department !== undefined && { department: patch.department }),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await this.firestore.collection("users").doc(userId).set(updated);
+    return updated;
+  }
+
   async getUserByEmail(email: string): Promise<UserRecord | null> {
     const snapshot = await this.firestore.collection("users").where("email", "==", email.toLowerCase()).limit(1).get();
     if (!snapshot.docs.length) return null;
@@ -399,19 +429,42 @@ export class StoreService {
   // --------------- RIS: Patients ---------------
 
   async getPatientByMrn(mrn: string): Promise<Patient | null> {
-    const snapshot = await this.firestore.collection("patients").where("patientId", "==", mrn.trim()).limit(1).get();
-    if (!snapshot.docs.length) return null;
-    return snapshot.docs[0].data() as Patient;
+    const trimmed = mrn.trim();
+    if (!trimmed) return null;
+    const normalized = normalizeMrn(trimmed);
+    const snapshot = await this.firestore.collection("patients").where("patientId", "==", trimmed).limit(1).get();
+    if (snapshot.docs.length > 0) {
+      return snapshot.docs[0].data() as Patient;
+    }
+    const fallback = await this.firestore.collection("patients").get();
+    const match = fallback.docs
+      .map((doc) => doc.data() as Patient)
+      .find((patient) => normalizeMrn(patient.patientId) === normalized);
+    return match ?? null;
   }
 
   async createPatient(payload: Omit<Patient, "id" | "createdAt" | "updatedAt">): Promise<Patient> {
-    const existing = await this.getPatientByMrn(payload.patientId);
+    const patientId = normalizeMrn(payload.patientId);
+    const firstName = payload.firstName.trim();
+    const lastName = payload.lastName.trim();
+    const existing = await this.getPatientByMrn(patientId);
     if (existing) {
-      throw Object.assign(new Error(`Patient with MRN "${payload.patientId}" already exists`), { code: "DUPLICATE_MRN", existingPatient: existing });
+      throw Object.assign(new Error(`Patient with MRN "${patientId}" already exists`), { code: "DUPLICATE_MRN", existingPatient: existing });
     }
     const now = new Date().toISOString();
     const docRef = this.firestore.collection("patients").doc();
-    const patient: Patient = { id: docRef.id, ...payload, createdAt: now, updatedAt: now };
+    const patient: Patient = {
+      id: docRef.id,
+      ...payload,
+      patientId,
+      firstName,
+      lastName,
+      phone: normalizeOptionalText(payload.phone),
+      email: normalizeOptionalText(payload.email),
+      address: normalizeOptionalText(payload.address),
+      createdAt: now,
+      updatedAt: now,
+    };
     await docRef.set(patient);
     return patient;
   }
@@ -424,7 +477,24 @@ export class StoreService {
   async updatePatient(patientId: string, patch: Partial<Omit<Patient, "id" | "createdAt">>): Promise<Patient> {
     const existing = await this.getPatient(patientId);
     if (!existing) throw new Error("Patient not found");
-    const updated: Patient = { ...existing, ...patch, updatedAt: new Date().toISOString() };
+    const nextPatientId = patch.patientId ? normalizeMrn(patch.patientId) : existing.patientId;
+    if (normalizeMrn(existing.patientId) !== nextPatientId) {
+      const duplicate = await this.getPatientByMrn(nextPatientId);
+      if (duplicate && duplicate.id !== existing.id) {
+        throw Object.assign(new Error(`Patient with MRN "${nextPatientId}" already exists`), { code: "DUPLICATE_MRN", existingPatient: duplicate });
+      }
+    }
+    const updated: Patient = {
+      ...existing,
+      ...patch,
+      patientId: nextPatientId,
+      firstName: patch.firstName?.trim() ?? existing.firstName,
+      lastName: patch.lastName?.trim() ?? existing.lastName,
+      phone: patch.phone !== undefined ? normalizeOptionalText(patch.phone) : existing.phone,
+      email: patch.email !== undefined ? normalizeOptionalText(patch.email) : existing.email,
+      address: patch.address !== undefined ? normalizeOptionalText(patch.address) : existing.address,
+      updatedAt: new Date().toISOString(),
+    };
     await this.firestore.collection("patients").doc(patientId).set(updated);
     return updated;
   }

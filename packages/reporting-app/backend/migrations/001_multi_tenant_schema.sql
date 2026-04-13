@@ -42,7 +42,7 @@ CREATE TABLE users (
     password_hash   VARCHAR(255),
     display_name    VARCHAR(255),
     role            VARCHAR(50)  NOT NULL DEFAULT 'viewer'
-                      CHECK (role IN ('admin','developer','radiologist','radiographer',
+                      CHECK (role IN ('super_admin','admin','developer','radiologist','radiographer',
                                       'referring','billing','receptionist','viewer')),
     is_approved     BOOLEAN DEFAULT false,
     request_status  VARCHAR(20) DEFAULT 'pending'

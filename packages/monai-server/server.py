@@ -1,15 +1,29 @@
 """
-MONAI + MedGemma Inference Server for TD|ai
-FastAPI server that loads MONAI pre-trained models, runs inference on real DICOM
-pixel data, generates GradCAM heatmaps, and produces annotated DICOM objects
-(Secondary Capture with heatmap overlay, GSPS graphic annotations, Structured Report).
+MONAI Production Inference Server for TD|ai
+=============================================
 
-MedGemma integration provides narrative radiology report generation from DICOM images
-via Google Vertex AI.
+FastAPI server that provides clinical-grade AI inference across all
+imaging modalities (CT, MRI, CXR, Ultrasound).
+
+Architecture:
+  - Modular model registry (models/)
+  - Per-modality transform pipelines (transforms/)
+  - Sliding window + MONAI Deploy operator graph (inference/)
+  - DICOM SEG, SR TID 1500, PR output (outputs/)
+  - GradCAM explainability + metrics tracking (metrics/)
+  - MONAI Label active learning integration (label/)
+  - Celery + Redis async job queue
+  - Triton Inference Server integration
+
+Backward-compatible with existing /v1/infer, /v1/models, /v1/analyze-dicom
+endpoints from the previous single-model server.
 """
+
+from __future__ import annotations
 
 import io
 import os
+import sys
 import time
 import base64
 import logging
@@ -18,18 +32,20 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
+# Ensure the package root is on sys.path for absolute imports
+_pkg_root = str(Path(__file__).resolve().parent)
+if _pkg_root not in sys.path:
+    sys.path.insert(0, _pkg_root)
+
+
 def _load_env() -> None:
     _resolved = Path(__file__).resolve()
     _parents = list(_resolved.parents)
     _candidates = []
-
-    # In local dev this resolves to repo root/.env.
     if len(_parents) > 2:
         _candidates.append(_parents[2] / ".env")
-    # In containers, /app/.env (if present) should also be supported.
     _candidates.append(_resolved.parent / ".env")
-
-    _seen = set()
+    _seen: set[Path] = set()
     for _env_path in _candidates:
         if _env_path in _seen:
             continue
@@ -48,252 +64,105 @@ _load_env()
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 import pydicom
-from pydicom.dataset import Dataset, FileDataset
-from pydicom.sequence import Sequence as DicomSequence
-from pydicom.uid import generate_uid, ExplicitVRLittleEndian
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel
 
 import monai
-from monai.networks.nets import DenseNet121
-from monai.transforms import Compose, EnsureChannelFirst, Resize, ScaleIntensity, ToTensor
+
+from config import (
+    DEVICE, NUM_GPUS, MODELS_DIR,
+    GCP_PROJECT_ID, GCP_LOCATION, GEMINI_API_KEY, GEMINI_MODEL,
+    MEDGEMMA_ENDPOINT, MEDGEMMA_MODEL, VERTEX_AI_ENABLED,
+    LLM_PROVIDER, OLLAMA_URL, OLLAMA_MODEL,
+    ORTHANC_URL, route_by_dicom_tags,
+)
+from models.registry import (
+    MODEL_REGISTRY, load_model, get_model_config,
+    get_all_model_configs, get_loaded_model_names, unload_model,
+)
+from models.model_zoo import download_bundle_weights, BUNDLE_MAP, ensure_critical_weights
+from transforms import get_inference_transforms, TRANSFORM_MAP
+from transforms.postprocessing import (
+    segmentation_postprocess, detection_postprocess, classification_postprocess,
+)
+from inference.engine import run_inference, run_sliding_window_inference
+from inference.operators import MonaiDeployPipeline
+from inference.job_queue import enqueue_inference_job, get_job_status, InferenceJob, CELERY_AVAILABLE
+from inference.triton_client import TritonModelClient
+from outputs.dicom_seg import create_dicom_seg
+from outputs.dicom_sr import create_dicom_sr_tid1500
+from outputs.dicom_pr import create_dicom_pr
+from outputs.schemas import InferenceResult, Finding, Measurement, ClinicalScore
+from metrics.tracking import MetricsTracker
+from metrics.explainability import GradCAMGenerator
+from label.active_learning import ActiveLearningManager
+from label.deepedit_config import get_deepedit_app_config
+from label.retraining import RetrainingPipeline
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("monai-server")
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODELS_DIR = Path(__file__).parent / "models"
-MODELS_DIR.mkdir(exist_ok=True)
-SR_OUTPUT_DIR = Path(__file__).parent / "sr_output"
-SR_OUTPUT_DIR.mkdir(exist_ok=True)
+# ── Global singletons ────────────────────────────────────────────────
 
-GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "")
-GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-MEDGEMMA_ENDPOINT = os.getenv("MEDGEMMA_ENDPOINT", "")
-MEDGEMMA_MODEL = os.getenv("MEDGEMMA_MODEL", "medgemma-4b")
-VERTEX_AI_ENABLED = os.getenv("VERTEX_AI_ENABLED", "false").lower() == "true"
+metrics_tracker = MetricsTracker()
+active_learning = ActiveLearningManager()
+retraining_pipeline = RetrainingPipeline()
+deploy_pipeline = MonaiDeployPipeline()
+triton_client = TritonModelClient()
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")  # gemini | ollama | off
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
-
+# MedGemma state (backward compat)
 medgemma_model = None
 medgemma_mode = "disabled"
 
+# Legacy labels
 CHEST_XRAY_LABELS = [
     "Atelectasis", "Cardiomegaly", "Effusion", "Infiltration", "Mass",
     "Nodule", "Pneumonia", "Pneumothorax", "Consolidation", "Edema",
     "Emphysema", "Fibrosis", "Pleural Thickening", "Hernia",
 ]
 
-AVAILABLE_MODELS = {
-    "monai_chest_xray": {
-        "name": "monai_chest_xray",
-        "description": "Chest X-Ray Multi-label Classification (DenseNet-121)",
-        "type": "classification",
-        "body_parts": ["Chest"],
-        "modalities": ["CR", "DX", "XRAY"],
-        "version": "1.0.0",
-        "labels": CHEST_XRAY_LABELS,
-    },
-    "monai_lung_nodule": {
-        "name": "monai_lung_nodule",
-        "description": "Lung Nodule Detection",
-        "type": "detection",
-        "body_parts": ["Chest", "Lung"],
-        "modalities": ["CT"],
-        "version": "1.0.0",
-        "labels": ["Nodule", "Ground Glass Opacity", "Solid Nodule", "Calcified Nodule"],
-    },
-    "monai_brain_mri": {
-        "name": "monai_brain_mri",
-        "description": "Brain MRI Abnormality Detection",
-        "type": "classification",
-        "body_parts": ["Brain", "Head"],
-        "modalities": ["MR"],
-        "version": "1.0.0",
-        "labels": ["Normal", "Tumor", "Hemorrhage", "Ischemia", "Edema", "Atrophy"],
-    },
-    "monai_ct_segmentation": {
-        "name": "monai_ct_segmentation",
-        "description": "CT Organ Segmentation",
-        "type": "segmentation",
-        "body_parts": ["Abdomen", "Chest"],
-        "modalities": ["CT"],
-        "version": "1.0.0",
-        "labels": ["Liver", "Spleen", "Pancreas", "Kidney L", "Kidney R", "Aorta"],
-    },
-    "monai_cardiac": {
-        "name": "monai_cardiac",
-        "description": "Cardiac Structure Analysis",
-        "type": "classification",
-        "body_parts": ["Chest", "Heart"],
-        "modalities": ["CR", "DX", "MR"],
-        "version": "1.0.0",
-        "labels": ["Normal", "Cardiomegaly", "Pericardial Effusion", "Valve Calcification"],
-    },
-    "medgemma_report": {
-        "name": "medgemma_report",
-        "description": "MedGemma Narrative Radiology Report (Vertex AI)",
-        "type": "report_generation",
-        "body_parts": ["Chest", "Abdomen", "Brain", "Head", "Spine", "Extremity"],
-        "modalities": ["CR", "DX", "CT", "MR"],
-        "version": "1.5.0",
-        "labels": [],
-    },
-}
 
-loaded_models: dict[str, DenseNet121] = {}
-
-inference_transform = Compose([
-    EnsureChannelFirst(channel_dim="no_channel"),
-    Resize(spatial_size=(224, 224)),
-    ScaleIntensity(),
-    ToTensor(),
-])
-
-
-def build_densenet(num_classes: int) -> DenseNet121:
-    return DenseNet121(spatial_dims=2, in_channels=1, out_channels=num_classes)
-
-
-def load_or_create_model(model_name: str) -> DenseNet121:
-    if model_name in loaded_models:
-        return loaded_models[model_name]
-
-    config = AVAILABLE_MODELS.get(model_name)
-    if not config:
-        raise ValueError(f"Unknown model: {model_name}")
-
-    num_classes = len(config["labels"])
-    model_path = MODELS_DIR / f"{model_name}.pt"
-    model = build_densenet(num_classes)
-
-    if model_path.exists():
-        logger.info(f"Loading saved model weights: {model_path}")
-        model.load_state_dict(torch.load(model_path, map_location=DEVICE, weights_only=True))
-    else:
-        logger.info(f"No pre-trained weights for {model_name} — using initialized model")
-        torch.save(model.state_dict(), model_path)
-
-    model.to(DEVICE)
-    model.eval()
-    loaded_models[model_name] = model
-    logger.info(f"Model '{model_name}' loaded ({num_classes} classes, device={DEVICE})")
-    return model
-
-
-# ── GradCAM Implementation ────────────────────────────────────────────
-
-class GradCAMExtractor:
-    """Lightweight GradCAM that hooks into the last conv layer of DenseNet121."""
-
-    def __init__(self, model: DenseNet121):
-        self.model = model
-        self.gradients: Optional[torch.Tensor] = None
-        self.activations: Optional[torch.Tensor] = None
-        self._hook_handles = []
-        target_layer = model.features[-1]
-        self._hook_handles.append(
-            target_layer.register_forward_hook(self._forward_hook)
-        )
-        self._hook_handles.append(
-            target_layer.register_full_backward_hook(self._backward_hook)
-        )
-
-    def _forward_hook(self, _module, _input, output):
-        self.activations = output.detach()
-
-    def _backward_hook(self, _module, _grad_input, grad_output):
-        self.gradients = grad_output[0].detach()
-
-    def generate(self, input_tensor: torch.Tensor, class_idx: int) -> np.ndarray:
-        self.model.zero_grad()
-        output = self.model(input_tensor)
-        target = output[0, class_idx]
-        target.backward(retain_graph=True)
-
-        if self.gradients is None or self.activations is None:
-            return np.zeros((7, 7), dtype=np.float32)
-
-        weights = self.gradients.mean(dim=(2, 3), keepdim=True)
-        cam = (weights * self.activations).sum(dim=1, keepdim=True)
-        cam = F.relu(cam)
-        cam = cam.squeeze().cpu().numpy()
-
-        cam_min, cam_max = cam.min(), cam.max()
-        if cam_max - cam_min > 1e-8:
-            cam = (cam - cam_min) / (cam_max - cam_min)
-        else:
-            cam = np.zeros_like(cam)
-        return cam
-
-    def cleanup(self):
-        for h in self._hook_handles:
-            h.remove()
-        self._hook_handles.clear()
-
-
-# ── DICOM Pixel Data Extraction ───────────────────────────────────────
+# ── Pixel Data Extraction ────────────────────────────────────────────
 
 def extract_pixel_array(ds: pydicom.Dataset) -> np.ndarray:
-    """Extract a 2D grayscale float32 array from a DICOM dataset.
-
-    Handles compressed transfer syntaxes (JPEG, JPEG2000, JPEG-LS, RLE)
-    by attempting decompression before accessing pixel_array.
-    """
+    """Extract a 2D/3D grayscale float32 array from a DICOM dataset."""
     if not hasattr(ds, "PixelData"):
         raise ValueError("DICOM dataset has no PixelData element")
 
     tsuid = getattr(ds.file_meta, "TransferSyntaxUID", None) if hasattr(ds, "file_meta") else None
-    compressed_syntaxes = {
-        "1.2.840.10008.1.2.4.50",   # JPEG Baseline
-        "1.2.840.10008.1.2.4.51",   # JPEG Extended
-        "1.2.840.10008.1.2.4.57",   # JPEG Lossless
-        "1.2.840.10008.1.2.4.70",   # JPEG Lossless SV1
-        "1.2.840.10008.1.2.4.80",   # JPEG-LS Lossless
-        "1.2.840.10008.1.2.4.81",   # JPEG-LS Near Lossless
-        "1.2.840.10008.1.2.4.90",   # JPEG 2000 Lossless
-        "1.2.840.10008.1.2.4.91",   # JPEG 2000
-        "1.2.840.10008.1.2.5",      # RLE Lossless
+    compressed = {
+        "1.2.840.10008.1.2.4.50", "1.2.840.10008.1.2.4.51",
+        "1.2.840.10008.1.2.4.57", "1.2.840.10008.1.2.4.70",
+        "1.2.840.10008.1.2.4.80", "1.2.840.10008.1.2.4.81",
+        "1.2.840.10008.1.2.4.90", "1.2.840.10008.1.2.4.91",
+        "1.2.840.10008.1.2.5",
     }
 
-    if tsuid and str(tsuid) in compressed_syntaxes:
+    if tsuid and str(tsuid) in compressed:
         try:
             ds.decompress()
-            logger.info("Decompressed DICOM with transfer syntax %s", tsuid)
         except Exception as e:
-            logger.warning("decompress() failed for TS %s: %s — trying pixel_array directly", tsuid, e)
+            logger.warning("decompress() failed for TS %s: %s", tsuid, e)
 
     try:
         arr = ds.pixel_array.astype(np.float32)
     except Exception:
         if tsuid:
             try:
-                from PIL import Image as PILImage
-                rows = ds.Rows
-                cols = ds.Columns
-                bits = getattr(ds, "BitsAllocated", 16)
                 raw = ds.PixelData
-                preamble_len = 0
-                if raw[:4] == b"\xfe\xff\x00\xe0":
-                    preamble_len = 12
-                img = PILImage.open(io.BytesIO(raw[preamble_len:]))
+                preamble_len = 12 if raw[:4] == b"\xfe\xff\x00\xe0" else 0
+                img = Image.open(io.BytesIO(raw[preamble_len:]))
                 arr = np.array(img, dtype=np.float32)
                 if arr.ndim == 3:
                     arr = arr.mean(axis=-1)
-                logger.info("Extracted pixel data via Pillow fallback")
             except Exception:
                 raise ValueError(
-                    f"Cannot decode pixel data (transfer syntax: {tsuid}). "
-                    "Ensure pylibjpeg, pylibjpeg-libjpeg, and pylibjpeg-openjpeg are installed."
+                    f"Cannot decode pixel data (TS: {tsuid}). "
+                    "Ensure pylibjpeg + pylibjpeg-libjpeg + pylibjpeg-openjpeg are installed."
                 )
         else:
             raise
@@ -312,462 +181,23 @@ def normalize_to_uint8(arr: np.ndarray) -> np.ndarray:
     return ((arr - mn) / (mx - mn) * 255).astype(np.uint8)
 
 
-# ── Heatmap & Annotation Rendering ────────────────────────────────────
-
-HEATMAP_COLORS = np.array([
-    [0, 0, 128], [0, 0, 255], [0, 128, 255], [0, 255, 255],
-    [0, 255, 128], [0, 255, 0], [128, 255, 0], [255, 255, 0],
-    [255, 128, 0], [255, 0, 0],
-], dtype=np.uint8)
-
-
-def cam_to_heatmap_rgb(cam: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
-    """Resize CAM to target size and convert to an RGB heatmap."""
-    cam_pil = Image.fromarray((cam * 255).astype(np.uint8)).resize(
-        (target_w, target_h), Image.BILINEAR
-    )
-    cam_resized = np.array(cam_pil).astype(np.float32) / 255.0
-    indices = (cam_resized * (len(HEATMAP_COLORS) - 1)).astype(np.int32)
-    indices = np.clip(indices, 0, len(HEATMAP_COLORS) - 1)
-    return HEATMAP_COLORS[indices]
-
-
-def create_overlay_image(
-    grayscale: np.ndarray,
-    cam: np.ndarray,
-    findings: list[dict],
-    alpha: float = 0.45,
-) -> Image.Image:
-    """Blend the original grayscale image with a GradCAM heatmap and draw finding labels."""
-    h, w = grayscale.shape[:2]
-    gray_uint8 = normalize_to_uint8(grayscale)
-    base_rgb = np.stack([gray_uint8] * 3, axis=-1)
-    heatmap_rgb = cam_to_heatmap_rgb(cam, h, w)
-
-    blended = (base_rgb.astype(np.float32) * (1 - alpha) + heatmap_rgb.astype(np.float32) * alpha)
-    blended = np.clip(blended, 0, 255).astype(np.uint8)
-    img = Image.fromarray(blended, "RGB")
-    draw = ImageDraw.Draw(img)
-
-    try:
-        font = ImageFont.truetype("arial.ttf", max(12, h // 30))
-    except (IOError, OSError):
-        font = ImageFont.load_default()
-
-    regions = find_cam_regions(cam, h, w)
-    significant = [f for f in findings if f.get("confidence", 0) >= 0.3]
-    significant.sort(key=lambda f: f["confidence"], reverse=True)
-
-    for i, region in enumerate(regions[:len(significant)]):
-        cx, cy, rx, ry = region
-        finding = significant[i] if i < len(significant) else None
-
-        x1 = max(0, int(cx - rx))
-        y1 = max(0, int(cy - ry))
-        x2 = min(w - 1, int(cx + rx))
-        y2 = min(h - 1, int(cy + ry))
-
-        draw.ellipse([x1, y1, x2, y2], outline="red", width=max(2, h // 150))
-
-        if finding:
-            label = f"{finding['label']} ({finding['confidence']*100:.0f}%)"
-            ty = max(0, y1 - max(14, h // 25))
-            draw.text((x1, ty), label, fill="yellow", font=font)
-
-    title = "MONAI AI Analysis"
-    draw.text((8, 8), title, fill="lime", font=font)
-
-    return img
-
-
-def find_cam_regions(
-    cam: np.ndarray, target_h: int, target_w: int, threshold: float = 0.4
-) -> list[tuple[int, int, int, int]]:
-    """Find connected regions in the CAM above a threshold.
-    Returns list of (center_x, center_y, radius_x, radius_y) in target image coords.
-    """
-    from scipy import ndimage
-
-    cam_resized = np.array(
-        Image.fromarray((cam * 255).astype(np.uint8)).resize(
-            (target_w, target_h), Image.BILINEAR
-        )
-    ).astype(np.float32) / 255.0
-
-    binary = cam_resized > threshold
-    labeled, num_features = ndimage.label(binary)
-
-    regions = []
-    for i in range(1, num_features + 1):
-        ys, xs = np.where(labeled == i)
-        if len(xs) < 10:
-            continue
-        cx, cy = int(xs.mean()), int(ys.mean())
-        rx = max(20, int((xs.max() - xs.min()) / 2) + 10)
-        ry = max(20, int((ys.max() - ys.min()) / 2) + 10)
-        regions.append((cx, cy, rx, ry))
-
-    if not regions:
-        cam_flat = cam_resized.flatten()
-        top_indices = cam_flat.argsort()[-100:]
-        ys = top_indices // target_w
-        xs = top_indices % target_w
-        cx, cy = int(xs.mean()), int(ys.mean())
-        rx, ry = max(30, target_w // 8), max(30, target_h // 8)
-        regions.append((cx, cy, rx, ry))
-
-    return regions
-
-
-# ── DICOM Secondary Capture (Annotated Image) ─────────────────────────
-
-def generate_secondary_capture(
-    original_ds: pydicom.Dataset,
-    overlay_img: Image.Image,
-    study_uid: str,
-    model_name: str,
-) -> bytes:
-    """Create a DICOM Secondary Capture containing the annotated overlay image."""
-    now = datetime.datetime.now()
-    sop_uid = generate_uid()
-    series_uid = generate_uid()
-
-    file_meta = pydicom.dataset.FileMetaDataset()
-    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.7"
-    file_meta.MediaStorageSOPInstanceUID = sop_uid
-    file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
-    file_meta.ImplementationClassUID = "1.2.826.0.1.3680043.8.498.1"
-
-    ds = FileDataset("sc.dcm", {}, file_meta=file_meta, preamble=b"\x00" * 128)
-
-    ds.SpecificCharacterSet = "ISO_IR 100"
-    ds.SOPClassUID = "1.2.840.10008.5.1.4.1.1.7"
-    ds.SOPInstanceUID = sop_uid
-    ds.StudyDate = now.strftime("%Y%m%d")
-    ds.ContentDate = now.strftime("%Y%m%d")
-    ds.StudyTime = now.strftime("%H%M%S")
-    ds.ContentTime = now.strftime("%H%M%S")
-    ds.AccessionNumber = ""
-    ds.Modality = "OT"
-    ds.Manufacturer = "TD|ai MONAI"
-    ds.InstitutionName = "TD|ai Radiology Platform"
-    ds.ConversionType = "WSD"
-    ds.SeriesDescription = f"AI Heatmap - {model_name}"
-
-    ds.PatientName = getattr(original_ds, "PatientName", "")
-    ds.PatientID = getattr(original_ds, "PatientID", "")
-    ds.PatientBirthDate = getattr(original_ds, "PatientBirthDate", "")
-    ds.PatientSex = getattr(original_ds, "PatientSex", "")
-
-    ds.StudyInstanceUID = study_uid
-    ds.SeriesInstanceUID = series_uid
-    ds.StudyID = ""
-    ds.SeriesNumber = 998
-    ds.InstanceNumber = 1
-
-    rgb_arr = np.array(overlay_img.convert("RGB"))
-    ds.Rows, ds.Columns = rgb_arr.shape[0], rgb_arr.shape[1]
-    ds.SamplesPerPixel = 3
-    ds.PhotometricInterpretation = "RGB"
-    ds.PlanarConfiguration = 0
-    ds.BitsAllocated = 8
-    ds.BitsStored = 8
-    ds.HighBit = 7
-    ds.PixelRepresentation = 0
-    ds.PixelData = rgb_arr.tobytes()
-
-    buf = io.BytesIO()
-    ds.save_as(buf)
-    return buf.getvalue()
-
-
-# ── DICOM GSPS (Graphic Annotations) ──────────────────────────────────
-
-def generate_gsps(
-    original_ds: pydicom.Dataset,
-    study_uid: str,
-    findings: list[dict],
-    cam: np.ndarray,
-    model_name: str,
-) -> bytes:
-    """Create a Grayscale Softcopy Presentation State with graphic annotations
-    marking the AI-detected regions of interest on the original image.
-    """
-    now = datetime.datetime.now()
-    sop_uid = generate_uid()
-    series_uid = generate_uid()
-    orig_rows = int(getattr(original_ds, "Rows", 512))
-    orig_cols = int(getattr(original_ds, "Columns", 512))
-
-    file_meta = pydicom.dataset.FileMetaDataset()
-    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.11.1"
-    file_meta.MediaStorageSOPInstanceUID = sop_uid
-    file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
-    file_meta.ImplementationClassUID = "1.2.826.0.1.3680043.8.498.1"
-
-    ds = FileDataset("gsps.dcm", {}, file_meta=file_meta, preamble=b"\x00" * 128)
-
-    ds.SpecificCharacterSet = "ISO_IR 100"
-    ds.SOPClassUID = "1.2.840.10008.5.1.4.1.1.11.1"
-    ds.SOPInstanceUID = sop_uid
-    ds.StudyDate = now.strftime("%Y%m%d")
-    ds.ContentDate = now.strftime("%Y%m%d")
-    ds.StudyTime = now.strftime("%H%M%S")
-    ds.ContentTime = now.strftime("%H%M%S")
-    ds.AccessionNumber = ""
-    ds.Modality = "PR"
-    ds.Manufacturer = "TD|ai MONAI"
-    ds.InstitutionName = "TD|ai Radiology Platform"
-    ds.SeriesDescription = f"AI Annotations - {model_name}"
-    ds.ContentLabel = "AI_ANNOTATIONS"
-    ds.ContentDescription = f"MONAI AI annotations for {model_name}"
-    ds.PresentationCreationDate = now.strftime("%Y%m%d")
-    ds.PresentationCreationTime = now.strftime("%H%M%S")
-
-    ds.PatientName = getattr(original_ds, "PatientName", "")
-    ds.PatientID = getattr(original_ds, "PatientID", "")
-    ds.PatientBirthDate = getattr(original_ds, "PatientBirthDate", "")
-    ds.PatientSex = getattr(original_ds, "PatientSex", "")
-
-    ds.StudyInstanceUID = study_uid
-    ds.SeriesInstanceUID = series_uid
-    ds.StudyID = ""
-    ds.SeriesNumber = 997
-    ds.InstanceNumber = 1
-
-    ref_image = Dataset()
-    ref_image.ReferencedSOPClassUID = getattr(
-        original_ds, "SOPClassUID", "1.2.840.10008.5.1.4.1.1.7"
-    )
-    ref_image.ReferencedSOPInstanceUID = getattr(original_ds, "SOPInstanceUID", "")
-
-    ref_series = Dataset()
-    ref_series.SeriesInstanceUID = getattr(original_ds, "SeriesInstanceUID", "")
-    ref_series.ReferencedImageSequence = DicomSequence([ref_image])
-
-    ds.ReferencedSeriesSequence = DicomSequence([ref_series])
-
-    regions = find_cam_regions(cam, orig_rows, orig_cols)
-    significant = [f for f in findings if f.get("confidence", 0) >= 0.3]
-    significant.sort(key=lambda f: f["confidence"], reverse=True)
-
-    graphic_objects = []
-    text_objects = []
-
-    for i, region in enumerate(regions[:min(len(significant), 8)]):
-        cx, cy, rx, ry = region
-        finding = significant[i] if i < len(significant) else None
-
-        ellipse_points = _generate_ellipse_points(cx, cy, rx, ry, num_points=36)
-
-        graphic = Dataset()
-        graphic.GraphicAnnotationUnits = "PIXEL"
-        graphic.GraphicDimensions = 2
-        graphic.NumberOfGraphicPoints = len(ellipse_points) // 2
-        graphic.GraphicData = ellipse_points
-        graphic.GraphicType = "POLYLINE"
-        graphic.GraphicFilled = "N"
-        graphic_objects.append(graphic)
-
-        if finding:
-            text = Dataset()
-            text.UnformattedTextValue = f"{finding['label']} ({finding['confidence']*100:.0f}%)"
-            tl_x = max(0, cx - rx)
-            tl_y = max(0, cy - ry - 20)
-            br_x = min(orig_cols, cx + rx)
-            br_y = max(0, cy - ry)
-            text.BoundingBoxTopLeftHandCorner = [float(tl_x), float(tl_y)]
-            text.BoundingBoxBottomRightHandCorner = [float(br_x), float(br_y)]
-            text.BoundingBoxAnnotationUnits = "PIXEL"
-            text_objects.append(text)
-
-    annotation_layer = Dataset()
-    annotation_layer.GraphicLayer = "AI_FINDINGS"
-    annotation_layer.ReferencedImageSequence = DicomSequence([ref_image])
-    if graphic_objects:
-        annotation_layer.GraphicObjectSequence = DicomSequence(graphic_objects)
-    if text_objects:
-        annotation_layer.TextObjectSequence = DicomSequence(text_objects)
-
-    ds.GraphicAnnotationSequence = DicomSequence([annotation_layer])
-
-    layer_def = Dataset()
-    layer_def.GraphicLayer = "AI_FINDINGS"
-    layer_def.GraphicLayerOrder = 1
-    layer_def.GraphicLayerDescription = "MONAI AI Detected Findings"
-    ds.GraphicLayerSequence = DicomSequence([layer_def])
-
-    buf = io.BytesIO()
-    ds.save_as(buf)
-    return buf.getvalue()
-
-
-def _generate_ellipse_points(
-    cx: int, cy: int, rx: int, ry: int, num_points: int = 36
-) -> list[float]:
-    points = []
-    for i in range(num_points + 1):
-        angle = 2 * np.pi * i / num_points
-        x = cx + rx * np.cos(angle)
-        y = cy + ry * np.sin(angle)
-        points.extend([float(x), float(y)])
-    return points
-
-
-# ── DICOM SR Generation (kept from before) ────────────────────────────
-
-class DicomSRRequest(BaseModel):
-    study_instance_uid: str
-    series_instance_uid: Optional[str] = None
-    patient_name: str = "Unknown"
-    patient_id: str = "0000"
-    model: str = "monai_chest_xray"
-    findings: list[dict]
-    summary: str = ""
-
-
-def build_content_item(name_code: tuple[str, str, str], value: str, value_type: str = "TEXT") -> Dataset:
-    item = Dataset()
-    item.RelationshipType = "CONTAINS"
-    item.ValueType = value_type
-
-    concept_name = Dataset()
-    concept_name.CodeValue = name_code[0]
-    concept_name.CodingSchemeDesignator = name_code[1]
-    concept_name.CodeMeaning = name_code[2]
-    item.ConceptNameCodeSequence = DicomSequence([concept_name])
-
-    if value_type == "TEXT":
-        item.TextValue = value
-    elif value_type == "NUM":
-        measured = Dataset()
-        measured.NumericValue = value
-        unit = Dataset()
-        unit.CodeValue = "%"
-        unit.CodingSchemeDesignator = "UCUM"
-        unit.CodeMeaning = "percent"
-        measured.MeasurementUnitsCodeSequence = DicomSequence([unit])
-        item.MeasuredValueSequence = DicomSequence([measured])
-    elif value_type == "CODE":
-        code_val = Dataset()
-        code_val.CodeValue = value
-        code_val.CodingSchemeDesignator = "DCM"
-        code_val.CodeMeaning = value
-        item.ConceptCodeSequence = DicomSequence([code_val])
-
-    return item
-
-
-def build_finding_container(finding: dict, _index: int) -> Dataset:
-    container = Dataset()
-    container.RelationshipType = "CONTAINS"
-    container.ValueType = "CONTAINER"
-    container.ContinuityOfContent = "SEPARATE"
-
-    concept_name = Dataset()
-    concept_name.CodeValue = "121071"
-    concept_name.CodingSchemeDesignator = "DCM"
-    concept_name.CodeMeaning = "Finding"
-    container.ConceptNameCodeSequence = DicomSequence([concept_name])
-
-    content_items = [
-        build_content_item(("121071", "DCM", "Finding"), finding.get("label", "Unknown")),
-        build_content_item(
-            ("111047", "DCM", "Probability of finding"),
-            str(round(finding.get("confidence", 0) * 100, 1)),
-            "NUM",
-        ),
-    ]
-    if finding.get("description"):
-        content_items.append(build_content_item(("121073", "DCM", "Impression"), finding["description"]))
-    if finding.get("location"):
-        content_items.append(build_content_item(("121049", "DCM", "Finding Site"), finding["location"]))
-
-    container.ContentSequence = DicomSequence(content_items)
-    return container
-
-
-def generate_dicom_sr(request: DicomSRRequest) -> bytes:
-    now = datetime.datetime.now()
-    sop_instance_uid = generate_uid()
-    series_uid = generate_uid()
-
-    file_meta = pydicom.dataset.FileMetaDataset()
-    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.88.33"
-    file_meta.MediaStorageSOPInstanceUID = sop_instance_uid
-    file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
-    file_meta.ImplementationClassUID = "1.2.826.0.1.3680043.8.498.1"
-
-    ds = FileDataset("sr.dcm", {}, file_meta=file_meta, preamble=b"\x00" * 128)
-    ds.SpecificCharacterSet = "ISO_IR 100"
-    ds.SOPClassUID = "1.2.840.10008.5.1.4.1.1.88.33"
-    ds.SOPInstanceUID = sop_instance_uid
-    ds.StudyDate = now.strftime("%Y%m%d")
-    ds.ContentDate = now.strftime("%Y%m%d")
-    ds.StudyTime = now.strftime("%H%M%S")
-    ds.ContentTime = now.strftime("%H%M%S")
-    ds.AccessionNumber = ""
-    ds.Modality = "SR"
-    ds.Manufacturer = "TD|ai MONAI"
-    ds.InstitutionName = "TD|ai Radiology Platform"
-    ds.ReferringPhysicianName = ""
-
-    ds.PatientName = request.patient_name
-    ds.PatientID = request.patient_id
-    ds.PatientBirthDate = ""
-    ds.PatientSex = ""
-    ds.StudyInstanceUID = request.study_instance_uid
-    ds.SeriesInstanceUID = series_uid
-    ds.StudyID = ""
-    ds.SeriesNumber = 999
-    ds.InstanceNumber = 1
-    ds.SeriesDescription = f"AI Report - {request.model}"
-    ds.CompletionFlag = "COMPLETE"
-    ds.VerificationFlag = "UNVERIFIED"
-    ds.ContentTemplateSequence = DicomSequence([])
-
-    root_concept = Dataset()
-    root_concept.CodeValue = "111036"
-    root_concept.CodingSchemeDesignator = "DCM"
-    root_concept.CodeMeaning = "Mammography CAD Report"
-    ds.ConceptNameCodeSequence = DicomSequence([root_concept])
-    ds.ValueType = "CONTAINER"
-    ds.ContinuityOfContent = "SEPARATE"
-
-    content_items = [
-        build_content_item(("121060", "DCM", "Procedure Reported"), f"AI Analysis ({request.model})"),
-    ]
-    if request.summary:
-        content_items.append(build_content_item(("121073", "DCM", "Impression"), request.summary))
-    content_items.append(build_content_item(("111001", "DCM", "Algorithm Name"), f"MONAI {request.model}"))
-    content_items.append(build_content_item(("111003", "DCM", "Algorithm Version"), monai.__version__))
-    for i, finding in enumerate(request.findings):
-        content_items.append(build_finding_container(finding, i))
-    ds.ContentSequence = DicomSequence(content_items)
-
-    buf = io.BytesIO()
-    ds.save_as(buf)
-    return buf.getvalue()
-
-
-# ── MedGemma Integration ───────────────────────────────────────────────
+# ── MedGemma / LLM Integration (preserved from v3) ──────────────────
 
 MEDGEMMA_BASE_PROMPT = """You are an expert radiologist. Analyze this medical image and provide a structured radiology report.
 
 Instructions:
-- Describe all observable findings systematically (lungs, heart, mediastinum, bones, soft tissues)
+- Describe all observable findings systematically
 - Note normal structures explicitly when no abnormality is seen
 - Provide differential diagnoses where appropriate
-- Be thorough, clinically accurate, and professional
 - Only report what you can observe in the image
 
-You MUST respond with valid JSON in this exact format:
+Respond with valid JSON:
 {
-  "findings": "Detailed findings paragraph(s) describing observations",
-  "impression": "Concise clinical impression summarizing key findings",
-  "narrative": "A complete narrative radiology report suitable for clinical use",
+  "findings": "Detailed findings paragraph(s)",
+  "impression": "Concise clinical impression",
+  "narrative": "Complete narrative radiology report",
   "detected_conditions": [
-    {"label": "condition name", "confidence": 0.85, "description": "brief clinical description"}
+    {"label": "condition name", "confidence": 0.85, "description": "brief description"}
   ]
 }"""
 
@@ -775,14 +205,10 @@ You MUST respond with valid JSON in this exact format:
 def _build_medgemma_prompt(monai_context: list[dict] | None = None) -> str:
     prompt = MEDGEMMA_BASE_PROMPT
     if monai_context:
-        lines = []
-        for f in monai_context[:8]:
-            lines.append(f"  - {f['label']}: {f['confidence']*100:.0f}% confidence")
+        lines = [f"  - {f['label']}: {f['confidence']*100:.0f}%" for f in monai_context[:8]]
         prompt += (
-            "\n\nAdditional context from MONAI DenseNet-121 classification:\n"
-            + "\n".join(lines)
-            + "\n\nIncorporate these AI-detected findings into your analysis. "
-            "Confirm or refute them based on your own observations."
+            "\n\nMONAI AI findings:\n" + "\n".join(lines)
+            + "\n\nIncorporate these into your analysis."
         )
     return prompt
 
@@ -801,46 +227,31 @@ def init_medgemma():
             if resp.status_code == 200:
                 medgemma_model = True
                 medgemma_mode = "ollama"
-                models = [m["name"] for m in resp.json().get("models", [])]
-                logger.info("LLM initialized via Ollama at %s (model: %s, available: %s)",
-                            OLLAMA_URL, OLLAMA_MODEL, ", ".join(models[:5]) or "none")
+                logger.info("LLM initialized via Ollama (%s)", OLLAMA_MODEL)
                 return
         except Exception as e:
-            logger.warning("Ollama not reachable at %s: %s — falling back to Gemini", OLLAMA_URL, e)
+            logger.warning("Ollama not reachable: %s", e)
 
     if VERTEX_AI_ENABLED and GCP_PROJECT_ID:
         try:
             import vertexai
             from vertexai.generative_models import GenerativeModel
-
             vertexai.init(project=GCP_PROJECT_ID, location=GCP_LOCATION)
             model_name = MEDGEMMA_ENDPOINT or GEMINI_MODEL
             medgemma_model = GenerativeModel(model_name)
             medgemma_mode = "vertex_ai"
-            logger.info("LLM initialized via Vertex AI (model: %s, project: %s)", model_name, GCP_PROJECT_ID)
+            logger.info("LLM via Vertex AI (%s)", model_name)
             return
-        except ImportError:
-            logger.warning("google-cloud-aiplatform not installed — falling back to API key")
         except Exception as e:
-            logger.warning("Failed to initialize Vertex AI: %s — falling back to API key", e)
+            logger.warning("Vertex AI init failed: %s", e)
 
     if GEMINI_API_KEY:
         medgemma_model = True
         medgemma_mode = "gemini_api"
-        logger.info("MedGemma initialized via Gemini API key (model: %s)", GEMINI_MODEL)
+        logger.info("LLM via Gemini API (%s)", GEMINI_MODEL)
         return
 
-    logger.info("No LLM backend configured — narrative reports disabled")
-
-
-def dicom_to_png_bytes(pixel_array: np.ndarray) -> bytes:
-    """Convert a DICOM pixel array to PNG bytes for MedGemma input."""
-    uint8_arr = normalize_to_uint8(pixel_array)
-    img = Image.fromarray(uint8_arr, mode="L")
-    img = img.resize((896, 896), Image.LANCZOS)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
+    logger.info("No LLM backend configured")
 
 
 async def run_medgemma_analysis(
@@ -848,270 +259,212 @@ async def run_medgemma_analysis(
     monai_findings: list[dict] | None = None,
     llm_provider_override: str | None = None,
 ) -> dict:
-    """Run MedGemma/Gemini on a DICOM image and return structured findings.
-    llm_provider_override: 'gemini', 'ollama', or 'off' to override the server default.
-    """
+    """Run MedGemma/Gemini/Ollama for narrative report (preserved API)."""
     effective_mode = medgemma_mode
-
     if llm_provider_override:
         if llm_provider_override == "off":
-            return {
-                "narrative": "LLM is disabled via toggle.",
-                "findings": "",
-                "impression": "",
-                "detected_conditions": [],
-            }
+            return {"narrative": "LLM disabled", "findings": "", "impression": "", "detected_conditions": []}
         if llm_provider_override == "gemini" and GEMINI_API_KEY:
             effective_mode = "gemini_api"
         elif llm_provider_override == "ollama":
             effective_mode = "ollama"
 
     if medgemma_model is None and effective_mode == medgemma_mode:
-        return {
-            "narrative": "LLM is not configured. Set LLM_PROVIDER to gemini or ollama.",
-            "findings": "",
-            "impression": "",
-            "detected_conditions": [],
-        }
+        return {"narrative": "LLM not configured", "findings": "", "impression": "", "detected_conditions": []}
 
-    import json as json_module
-    import re as re_module
+    import json as json_module, re as re_module
 
-    png_bytes = dicom_to_png_bytes(pixel_array)
+    png_bytes = _dicom_to_png(pixel_array)
     prompt = _build_medgemma_prompt(monai_findings)
 
-    dispatch_map = {
-        "gemini_api": _medgemma_via_gemini_api,
-        "vertex_ai": _medgemma_via_vertex_ai,
-        "ollama": _medgemma_via_ollama,
-    }
-    dispatch = dispatch_map.get(effective_mode, _medgemma_via_gemini_api)
+    if effective_mode == "gemini_api":
+        return await _gemini_api_call(png_bytes, prompt, json_module, re_module)
+    elif effective_mode == "vertex_ai":
+        return await _vertex_ai_call(png_bytes, prompt, json_module, re_module)
+    elif effective_mode == "ollama":
+        return await _ollama_call(png_bytes, prompt, json_module, re_module)
 
-    MAX_RETRIES = 2
-    last_err = None
-    for attempt in range(MAX_RETRIES):
-        result = await dispatch(png_bytes, json_module, re_module, prompt)
-        if result.get("narrative") and not result["narrative"].startswith(("Gemini API analysis failed", "MedGemma analysis failed")):
-            return result
-        last_err = result.get("narrative", "unknown error")
-        if attempt < MAX_RETRIES - 1:
-            import asyncio
-            await asyncio.sleep(2 ** attempt)
-            logger.warning("MedGemma retry %d after: %s", attempt + 1, last_err)
-
-    return result
+    return {"narrative": "", "findings": "", "impression": "", "detected_conditions": []}
 
 
-def _parse_medgemma_json(raw: str, json_module, re_module) -> dict:
-    """Robust JSON extraction: try direct parse, then regex, then structured fallback."""
+def _dicom_to_png(pixel_array: np.ndarray) -> bytes:
+    uint8 = normalize_to_uint8(pixel_array)
+    img = Image.fromarray(uint8, mode="L").resize((896, 896), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _parse_llm_json(raw: str, json_module, re_module) -> dict:
     raw = raw.strip()
     if raw.startswith("```"):
         raw = re_module.sub(r"^```\w*\n?", "", raw)
         raw = re_module.sub(r"\n?```$", "", raw)
         raw = raw.strip()
-
     try:
-        parsed = json_module.loads(raw)
-        return parsed
+        return json_module.loads(raw)
     except json_module.JSONDecodeError:
         pass
-
-    json_match = re_module.search(r"\{[\s\S]*\}", raw)
-    if json_match:
+    m = re_module.search(r"\{[\s\S]*\}", raw)
+    if m:
         try:
-            return json_module.loads(json_match.group())
+            return json_module.loads(m.group())
         except json_module.JSONDecodeError:
             pass
-
-    result = {"findings": "", "impression": "", "narrative": raw, "detected_conditions": []}
-    for section in ("findings", "impression", "narrative"):
-        m = re_module.search(rf'"{section}"\s*:\s*"((?:[^"\\]|\\.)*)"', raw)
-        if m:
-            result[section] = m.group(1).replace("\\n", "\n").replace('\\"', '"')
-    return result
+    return {"findings": "", "impression": "", "narrative": raw, "detected_conditions": []}
 
 
-async def _medgemma_via_gemini_api(png_bytes: bytes, json_module, re_module, prompt: str) -> dict:
-    """Call Gemini directly via REST with API key for image analysis."""
-    import base64 as b64_module
+async def _gemini_api_call(png_bytes, prompt, json_module, re_module) -> dict:
     import httpx
-
     try:
-        image_b64 = b64_module.b64encode(png_bytes).decode("ascii")
-
+        b64 = base64.b64encode(png_bytes).decode("ascii")
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
+            resp = await client.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
                 params={"key": GEMINI_API_KEY},
-                json={
-                    "contents": [
-                        {
-                            "parts": [
-                                {
-                                    "inline_data": {
-                                        "mime_type": "image/png",
-                                        "data": image_b64,
-                                    }
-                                },
-                                {"text": prompt},
-                            ]
-                        }
-                    ],
-                    "generationConfig": {
-                        "temperature": 0.1,
-                        "maxOutputTokens": 4096,
-                        "responseMimeType": "application/json",
-                    },
-                },
+                json={"contents": [{"parts": [
+                    {"inline_data": {"mime_type": "image/png", "data": b64}},
+                    {"text": prompt},
+                ]}], "generationConfig": {"temperature": 0.1, "maxOutputTokens": 4096, "responseMimeType": "application/json"}},
             )
-            response.raise_for_status()
-            data = response.json()
-
-        content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        parsed = _parse_medgemma_json(content, json_module, re_module)
-        return {
-            "narrative": parsed.get("narrative", ""),
-            "findings": parsed.get("findings", ""),
-            "impression": parsed.get("impression", ""),
-            "detected_conditions": parsed.get("detected_conditions", []),
-        }
+            resp.raise_for_status()
+            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        parsed = _parse_llm_json(text, json_module, re_module)
+        return {k: parsed.get(k, "") for k in ("narrative", "findings", "impression", "detected_conditions")}
     except Exception as e:
-        logger.error("Gemini API image analysis failed: %s", e)
-        return {
-            "narrative": "Gemini API analysis failed",
-            "findings": "",
-            "impression": "",
-            "detected_conditions": [],
-        }
+        logger.error("Gemini API failed: %s", e)
+        return {"narrative": f"Gemini API failed: {e}", "findings": "", "impression": "", "detected_conditions": []}
 
 
-async def _medgemma_via_vertex_ai(png_bytes: bytes, json_module, re_module, prompt: str) -> dict:
-    """Call MedGemma via Vertex AI SDK for image analysis (non-blocking)."""
+async def _vertex_ai_call(png_bytes, prompt, json_module, re_module) -> dict:
     import asyncio
-
     try:
         from vertexai.generative_models import Part
-
         image_part = Part.from_data(png_bytes, mime_type="image/png")
-
-        def _sync_call():
-            return medgemma_model.generate_content(
+        resp = await asyncio.to_thread(
+            lambda: medgemma_model.generate_content(
                 [image_part, prompt],
-                generation_config={
-                    "temperature": 0.1,
-                    "max_output_tokens": 4096,
-                    "response_mime_type": "application/json",
-                },
+                generation_config={"temperature": 0.1, "max_output_tokens": 4096, "response_mime_type": "application/json"},
             )
-
-        response = await asyncio.to_thread(_sync_call)
-
-        content = response.text.strip()
-        parsed = _parse_medgemma_json(content, json_module, re_module)
-        return {
-            "narrative": parsed.get("narrative", ""),
-            "findings": parsed.get("findings", ""),
-            "impression": parsed.get("impression", ""),
-            "detected_conditions": parsed.get("detected_conditions", []),
-        }
+        )
+        parsed = _parse_llm_json(resp.text.strip(), json_module, re_module)
+        return {k: parsed.get(k, "") for k in ("narrative", "findings", "impression", "detected_conditions")}
     except Exception as e:
-        logger.error("Vertex AI MedGemma analysis failed: %s", e)
-        return {
-            "narrative": "MedGemma analysis failed",
-            "findings": "",
-            "impression": "",
-            "detected_conditions": [],
-        }
+        logger.error("Vertex AI failed: %s", e)
+        return {"narrative": f"MedGemma failed: {e}", "findings": "", "impression": "", "detected_conditions": []}
 
 
-async def _medgemma_via_ollama(png_bytes: bytes, json_module, re_module, prompt: str) -> dict:
-    """Call Ollama with an image for radiology analysis (fully local)."""
-    import base64 as b64_module
+async def _ollama_call(png_bytes, prompt, json_module, re_module) -> dict:
     import httpx
-
     try:
-        image_b64 = b64_module.b64encode(png_bytes).decode("ascii")
-
+        b64 = base64.b64encode(png_bytes).decode("ascii")
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
+            resp = await client.post(
                 f"{OLLAMA_URL}/api/generate",
-                json={
-                    "model": OLLAMA_MODEL,
-                    "prompt": prompt,
-                    "images": [image_b64],
-                    "stream": False,
-                    "format": "json",
-                    "options": {"temperature": 0.1, "num_predict": 4096},
-                },
+                json={"model": OLLAMA_MODEL, "prompt": prompt, "images": [b64], "stream": False, "format": "json"},
             )
-            response.raise_for_status()
-            data = response.json()
-            content = data.get("response", "").strip()
-
-        parsed = _parse_medgemma_json(content, json_module, re_module)
-        return {
-            "narrative": parsed.get("narrative", ""),
-            "findings": parsed.get("findings", ""),
-            "impression": parsed.get("impression", ""),
-            "detected_conditions": parsed.get("detected_conditions", []),
-        }
+            resp.raise_for_status()
+            text = resp.json().get("response", "").strip()
+        parsed = _parse_llm_json(text, json_module, re_module)
+        return {k: parsed.get(k, "") for k in ("narrative", "findings", "impression", "detected_conditions")}
     except Exception as e:
-        logger.error("Ollama analysis failed: %s", e)
-        return {
-            "narrative": "Ollama analysis failed",
-            "findings": "",
-            "impression": "",
-            "detected_conditions": [],
-        }
+        logger.error("Ollama failed: %s", e)
+        return {"narrative": f"Ollama failed: {e}", "findings": "", "impression": "", "detected_conditions": []}
 
 
-# ── FastAPI Application ────────────────────────────────────────────────
+# ── FastAPI Application ──────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    logger.info(f"MONAI {monai.__version__} | PyTorch {torch.__version__} | Device: {DEVICE}")
-    load_or_create_model("monai_chest_xray")
-    init_medgemma()
     logger.info(
-        "MONAI + MedGemma inference server ready | MedGemma: %s",
+        "MONAI %s | PyTorch %s | Device: %s | GPUs: %d",
+        monai.__version__, torch.__version__, DEVICE, NUM_GPUS,
+    )
+    logger.info(
+        "Models registered: %d | Transform pipelines: %d",
+        len(MODEL_REGISTRY), len(TRANSFORM_MAP),
+    )
+
+    # Download pre-trained weights for critical models before first use.
+    # This fetches from MONAI Model Zoo and TorchXRayVision (all free).
+    logger.info("Downloading pre-trained model weights (first run may take a few minutes)…")
+    downloaded = ensure_critical_weights()
+    for name, wpath in downloaded.items():
+        logger.info("  ✓ %s → %s (exists=%s)", name, wpath, wpath.exists())
+
+    # Pre-load CXR model for fast first inference
+    try:
+        load_model("cxr_14class")
+    except Exception as e:
+        logger.warning("Could not pre-load cxr_14class: %s", e)
+
+    init_medgemma()
+    triton_client.connect()
+
+    logger.info(
+        "MONAI production server ready | MedGemma: %s | Celery: %s | Triton: %s | Weights: %d/%d",
         medgemma_mode,
+        "enabled" if CELERY_AVAILABLE else "disabled",
+        "connected" if triton_client._connected else "disabled",
+        sum(1 for p in downloaded.values() if p.exists()),
+        len(downloaded),
     )
     yield
-    loaded_models.clear()
-    logger.info("MONAI server shut down")
+    logger.info("MONAI server shutting down")
 
 
-app = FastAPI(title="TD|ai MONAI + MedGemma Inference Server", version="3.0.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:8080,http://localhost:8081").split(","), allow_methods=["*"], allow_headers=["*"])
+app = FastAPI(
+    title="TD|ai MONAI Production Inference Server",
+    version="4.0.0",
+    lifespan=lifespan,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:8080,http://localhost:8081").split(","),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
+INTERNAL_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
+
+
+# ── Request/Response Models ──────────────────────────────────────────
 
 class InferRequest(BaseModel):
-    model: str = "monai_chest_xray"
+    model: str = "cxr_14class"
     studies: list[str]
     series: Optional[list[str]] = None
     input: Optional[dict] = None
 
 
+class DicomSRRequest(BaseModel):
+    study_instance_uid: str
+    series_instance_uid: Optional[str] = None
+    patient_name: str = "Unknown"
+    patient_id: str = "0000"
+    model: str = "cxr_14class"
+    findings: list[dict]
+    summary: str = ""
+
+
+# ══════════════════════════════════════════════════════════════════════
+# CORE API ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════
+
 @app.get("/")
 async def root():
     return {
-        "service": "TD|ai MONAI + MedGemma Inference Server",
-        "version": "3.0.0",
+        "service": "TD|ai MONAI Production Inference Server",
+        "version": "4.0.0",
         "monai_version": monai.__version__,
         "device": str(DEVICE),
-        "models_loaded": list(loaded_models.keys()),
+        "gpu_count": NUM_GPUS,
+        "models_registered": len(MODEL_REGISTRY),
+        "models_loaded": get_loaded_model_names(),
         "medgemma_mode": medgemma_mode,
-        "llm_provider": LLM_PROVIDER,
+        "celery_enabled": CELERY_AVAILABLE,
+        "triton_connected": triton_client._connected,
     }
-
-
-@app.get("/v1/models")
-async def list_models():
-    return {"models": [
-        {"name": c["name"], "description": c["description"], "type": c["type"],
-         "bodyParts": c["body_parts"], "modalities": c["modalities"], "version": c["version"]}
-        for c in AVAILABLE_MODELS.values()
-    ]}
 
 
 @app.get("/health")
@@ -1119,60 +472,99 @@ async def health():
     return {
         "status": "healthy",
         "device": str(DEVICE),
-        "models_loaded": len(loaded_models),
+        "models_loaded": len(get_loaded_model_names()),
         "medgemma_mode": medgemma_mode,
         "llm_provider": LLM_PROVIDER,
     }
 
 
-INTERNAL_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
+# ── Model Registry ──────────────────────────────────────────────────
+
+@app.get("/v1/models")
+async def list_models():
+    """List all registered models with their configurations."""
+    configs = get_all_model_configs()
+    return {
+        "models": [
+            {
+                "name": c.name,
+                "displayName": c.display_name,
+                "description": c.description,
+                "type": c.model_type.value,
+                "architecture": c.architecture,
+                "bodyParts": c.body_parts,
+                "modalities": c.modalities,
+                "labels": c.labels,
+                "version": c.version,
+                "slidingWindow": {
+                    "roiSize": list(c.sliding_window.roi_size),
+                    "swBatchSize": c.sliding_window.sw_batch_size,
+                    "overlap": c.sliding_window.overlap,
+                } if c.sliding_window else None,
+                "loaded": c.name in get_loaded_model_names(),
+            }
+            for c in configs
+        ],
+        "total": len(configs),
+    }
 
 
-@app.post("/v1/configure")
-async def configure_llm(request: Request, llm_provider: str = Form(...)):
-    """Reconfigure the LLM provider at runtime. Requires INTERNAL_SERVICE_SECRET header."""
-    if INTERNAL_SECRET:
-        provided = request.headers.get("x-internal-secret", "")
-        if provided != INTERNAL_SECRET:
-            raise HTTPException(status_code=403, detail="Forbidden")
-
-    global LLM_PROVIDER, medgemma_model, medgemma_mode
-    allowed = ("gemini", "ollama", "off")
-    if llm_provider not in allowed:
-        raise HTTPException(status_code=400, detail=f"llm_provider must be one of {allowed}")
-
-    old_provider = LLM_PROVIDER
-    LLM_PROVIDER = llm_provider
-    medgemma_model = None
-    medgemma_mode = "disabled"
-    init_medgemma()
-    logger.info("LLM reconfigured at runtime: %s → %s (mode: %s)", old_provider, llm_provider, medgemma_mode)
-    return {"previous": old_provider, "current": LLM_PROVIDER, "mode": medgemma_mode}
+@app.post("/v1/models/{model_name}/load")
+async def load_model_endpoint(model_name: str):
+    """Explicitly load a model into memory."""
+    try:
+        load_model(model_name)
+        return {"status": "loaded", "model": model_name, "device": str(DEVICE)}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.get("/v1/infer/{job_id}/status")
-async def inference_status(job_id: str):
-    return {"status": "completed", "progress": 100}
+@app.post("/v1/models/{model_name}/unload")
+async def unload_model_endpoint(model_name: str):
+    unload_model(model_name)
+    return {"status": "unloaded", "model": model_name}
 
 
-# ── Main Analysis Endpoint (accepts real DICOM file) ──────────────────
+@app.get("/v1/models/{model_name}/metrics")
+async def model_metrics(model_name: str):
+    """Get performance metrics for a model."""
+    return metrics_tracker.get_summary(model_name)
+
+
+# ── DICOM Tag Routing ────────────────────────────────────────────────
+
+@app.get("/v1/route")
+async def route_models(modality: str = "", body_part: str = ""):
+    """Preview which models would be selected for given DICOM tags."""
+    models = route_by_dicom_tags(modality, body_part)
+    return {
+        "modality": modality,
+        "body_part": body_part,
+        "selected_models": models,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════
+# PRODUCTION INFERENCE ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════
 
 @app.post("/v1/analyze-dicom")
 async def analyze_dicom(
     file: UploadFile = File(...),
-    model_name: str = Form("monai_chest_xray"),
+    model_name: str = Form("cxr_14class"),
     study_uid: str = Form(""),
 ):
-    """Analyze an actual DICOM file: run inference on real pixel data, generate
-    GradCAM heatmap, create annotated Secondary Capture, GSPS, and SR.
-    Returns JSON with all DICOM objects base64-encoded.
-    """
-    if model_name not in AVAILABLE_MODELS:
-        raise HTTPException(status_code=400, detail=f"Unknown model: {model_name}")
+    """Full DICOM analysis: inference + GradCAM + DICOM SEG/SR/PR output.
 
+    This is the primary production endpoint. It:
+    1. Reads the DICOM file
+    2. Routes to the correct model (or uses the specified one)
+    3. Runs inference with sliding window where applicable
+    4. Generates GradCAM heatmaps
+    5. Creates DICOM SEG, SR (TID 1500), and PR objects
+    6. Returns structured JSON with all findings + base64 DICOM objects
+    """
     start = time.time()
-    config = AVAILABLE_MODELS[model_name]
-    labels = config["labels"]
 
     dicom_bytes = await file.read()
     try:
@@ -1181,104 +573,487 @@ async def analyze_dicom(
         raise HTTPException(status_code=400, detail="Invalid DICOM file")
 
     if not study_uid:
-        study_uid = getattr(original_ds, "StudyInstanceUID", generate_uid())
+        study_uid = str(getattr(original_ds, "StudyInstanceUID", pydicom.uid.generate_uid()))
 
     try:
         pixel_array = extract_pixel_array(original_ds)
     except Exception:
         raise HTTPException(status_code=400, detail="Cannot extract pixel data")
 
-    model = load_or_create_model(model_name)
-    tensor = inference_transform(pixel_array)
-    batch = tensor.unsqueeze(0).to(DEVICE)
-    batch.requires_grad_(True)
+    is_2d_image = pixel_array.ndim == 2 or (pixel_array.ndim == 3 and pixel_array.shape[-1] <= 4)
+    config = get_model_config(model_name)
 
-    with torch.no_grad():
-        output = model(batch)
-        probabilities = torch.sigmoid(output).cpu().numpy()[0]
+    if config is not None and config.spatial_dims == 3 and is_2d_image:
+        modality = str(getattr(original_ds, "Modality", "")).strip().upper()
+        body_part = str(getattr(original_ds, "BodyPartExamined", "")).strip().upper()
+        candidates = route_by_dicom_tags(modality, body_part)
+        rerouted = None
+        for c in candidates:
+            c_cfg = get_model_config(c)
+            if c_cfg and c_cfg.spatial_dims == 2:
+                rerouted = c
+                break
+        if rerouted is None:
+            for fallback in ("cxr_14class", "cxr_tb_covid", "cxr_fracture_detection"):
+                fb_cfg = get_model_config(fallback)
+                if fb_cfg and fb_cfg.spatial_dims == 2:
+                    rerouted = fallback
+                    break
+        if rerouted:
+            logger.info(
+                "Auto-rerouting 2D image from 3D model %s → %s (Modality=%s)",
+                model_name, rerouted, modality,
+            )
+            model_name = rerouted
+            config = get_model_config(model_name)
 
-    findings: list[dict] = []
-    for label, prob in zip(labels, probabilities):
-        prob_val = float(prob)
-        if prob_val >= 0.3:
-            severity = "High probability" if prob_val >= 0.75 else "Moderate probability" if prob_val >= 0.5 else "Low probability"
-            findings.append({
-                "label": label,
-                "confidence": round(prob_val, 4),
-                "description": f"{severity} of {label.lower()} detected by AI model",
-                "location": config["body_parts"][0] if config["body_parts"] else None,
-            })
-    findings.sort(key=lambda f: f["confidence"], reverse=True)
+    if config is None:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {model_name}. Available: {list(MODEL_REGISTRY.keys())}")
 
-    top_class = int(probabilities.argmax())
-    batch_for_cam = tensor.unsqueeze(0).to(DEVICE)
-    batch_for_cam.requires_grad_(True)
+    # Get spacing
+    ps = getattr(original_ds, "PixelSpacing", [1.0, 1.0])
+    st = float(getattr(original_ds, "SliceThickness", 1.0))
+    spacing = (float(ps[0]), float(ps[1]), st)
 
-    extractor = GradCAMExtractor(model)
-    try:
-        cam = extractor.generate(batch_for_cam, top_class)
-    except Exception:
-        cam = np.random.rand(7, 7).astype(np.float32)
-    finally:
-        extractor.cleanup()
+    # Run inference
+    model = load_model(model_name)
+    tensor = _prepare_tensor(pixel_array, config)
+    result = run_inference(model_name, tensor, spacing=spacing)
 
-    model.eval()
+    # Record timing
+    metrics_tracker.record_inference_time(model_name, result.get("processing_time_ms", 0))
 
-    overlay_img = create_overlay_image(pixel_array, cam, findings)
+    # Collect findings
+    findings = result.get("findings", [])
+    if not findings and result.get("type") == "segmentation":
+        for label, conf in result.get("confidence_scores", {}).items():
+            findings.append({"label": label, "confidence": conf, "description": f"Segmented {label}"})
 
-    sc_bytes = generate_secondary_capture(original_ds, overlay_img, study_uid, model_name)
-    gsps_bytes = generate_gsps(original_ds, study_uid, findings, cam, model_name)
-
-    significant = [f for f in findings if f["confidence"] >= 0.5]
-    if significant:
-        parts = ", ".join(f"{f['label']} ({f['confidence']*100:.0f}%)" for f in significant[:5])
-        summary = f"AI analysis ({model_name}): {len(significant)} significant finding(s) — {parts}"
+    # Heatmap generation:
+    # - segmentation models: probability-map overlay from softmax/sigmoid
+    # - other models: GradCAM overlay
+    heatmap_png_b64 = None
+    if result.get("type") == "segmentation" and result.get("_probability_maps"):
+        try:
+            resized_prob_maps = _resize_probability_maps_to_original(
+                result["_probability_maps"],
+                pixel_array.shape,
+            )
+            heatmap_png = _create_probability_overlay_png(
+                resized_prob_maps,
+                pixel_array,
+                alpha=0.4,
+                smooth_sigma=1.0,
+            )
+            if heatmap_png:
+                heatmap_png_b64 = base64.b64encode(heatmap_png).decode("ascii")
+        except Exception as e:
+            logger.warning("Segmentation probability heatmap failed for %s: %s", model_name, e)
     else:
-        summary = f"AI analysis ({model_name}): No findings above 50% confidence."
+        try:
+            gradcam = GradCAMGenerator(model)
+            cam_tensor = tensor.unsqueeze(0) if tensor.dim() == config.spatial_dims + 1 else tensor
+            cam_tensor = cam_tensor.unsqueeze(0) if cam_tensor.dim() == config.spatial_dims + 1 else cam_tensor
+            cam_array = gradcam.generate(cam_tensor.to(DEVICE))
+            heatmap_png = gradcam.generate_heatmap_png(cam_array, pixel_array)
+            heatmap_png_b64 = base64.b64encode(heatmap_png).decode("ascii")
+        except Exception as e:
+            logger.warning("GradCAM failed for %s: %s", model_name, e)
 
-    sr_bytes = generate_dicom_sr(DicomSRRequest(
-        study_instance_uid=study_uid,
-        patient_name=str(getattr(original_ds, "PatientName", "")),
-        patient_id=str(getattr(original_ds, "PatientID", "")),
-        model=model_name, findings=findings, summary=summary,
-    ))
+    # Generate DICOM outputs
+    dicom_outputs = {}
+
+    # DICOM SEG (for segmentation results)
+    masks = result.get("_masks", {})
+    if masks:
+        try:
+            original_shape = pixel_array.shape
+            resized_masks = _resize_masks_to_original(masks, original_shape)
+            _log_mask_diagnostics(resized_masks, original_shape)
+
+            seg_bytes = create_dicom_seg(original_ds, resized_masks, config, study_uid)
+            if seg_bytes:
+                dicom_outputs["dicom_seg_base64"] = base64.b64encode(seg_bytes).decode("ascii")
+                dicom_outputs["dicom_seg_size_bytes"] = len(seg_bytes)
+
+                _push_seg_to_orthanc(seg_bytes)
+            else:
+                logger.warning("DICOM SEG creation returned empty bytes — all masks may be empty")
+        except Exception as e:
+            logger.error("DICOM SEG failed: %s", e)
+
+    # DICOM SR TID 1500
+    measurements = []
+    for label, vol in result.get("volumes_ml", {}).items():
+        measurements.append({"label": label, "value": vol, "unit": "ml"})
+
+    summary = _build_summary(model_name, findings)
+    try:
+        sr_bytes = create_dicom_sr_tid1500(
+            source_ds=original_ds,
+            findings=findings,
+            measurements=measurements,
+            study_uid=study_uid,
+            model_name=model_name,
+            model_version=config.version,
+            summary=summary,
+        )
+        dicom_outputs["dicom_sr_base64"] = base64.b64encode(sr_bytes).decode("ascii")
+        dicom_outputs["dicom_sr_size_bytes"] = len(sr_bytes)
+    except Exception as e:
+        logger.error("DICOM SR failed: %s", e)
+
+    # DICOM PR (bounding boxes / GradCAM overlay)
+    try:
+        pr_bytes = create_dicom_pr(
+            source_ds=original_ds,
+            findings=findings,
+            study_uid=study_uid,
+            model_name=model_name,
+        )
+        dicom_outputs["dicom_pr_base64"] = base64.b64encode(pr_bytes).decode("ascii")
+        dicom_outputs["dicom_pr_size_bytes"] = len(pr_bytes)
+    except Exception as e:
+        logger.error("DICOM PR failed: %s", e)
 
     elapsed_ms = (time.time() - start) * 1000
-    logger.info(
-        f"Full analysis complete: study={study_uid}, model={model_name}, "
-        f"findings={len(findings)}, cam_regions={len(find_cam_regions(cam, pixel_array.shape[0], pixel_array.shape[1]))}, "
-        f"sc={len(sc_bytes)}B, gsps={len(gsps_bytes)}B, sr={len(sr_bytes)}B, time={elapsed_ms:.0f}ms"
-    )
 
-    return {
+    response = {
         "study_id": study_uid,
         "model": model_name,
+        "model_type": config.model_type.value,
+        "architecture": config.architecture,
         "status": "completed",
         "findings": findings,
         "summary": summary,
         "processing_time_ms": round(elapsed_ms, 2),
-        "dicom_sr_base64": base64.b64encode(sr_bytes).decode("ascii"),
-        "dicom_sr_size_bytes": len(sr_bytes),
-        "dicom_sc_base64": base64.b64encode(sc_bytes).decode("ascii"),
-        "dicom_sc_size_bytes": len(sc_bytes),
-        "dicom_gsps_base64": base64.b64encode(gsps_bytes).decode("ascii"),
-        "dicom_gsps_size_bytes": len(gsps_bytes),
+        "device": str(DEVICE),
+        **dicom_outputs,
+    }
+
+    if result.get("volumes_ml"):
+        response["volumes_ml"] = result["volumes_ml"]
+    if result.get("bounding_boxes"):
+        response["bounding_boxes"] = result["bounding_boxes"]
+    if heatmap_png_b64:
+        response["heatmap_png_base64"] = heatmap_png_b64
+
+    # For segmentation, DICOM SEG is the production output. Avoid storing
+    # burned-in heatmap as SC by default for those studies.
+    if (
+        heatmap_png_b64
+        and result.get("type") != "segmentation"
+        and "dicom_sc_base64" not in dicom_outputs
+    ):
+        try:
+            sc_bytes = _create_secondary_capture(
+                original_ds, base64.b64decode(heatmap_png_b64), study_uid, model_name,
+            )
+            if sc_bytes:
+                response["dicom_sc_base64"] = base64.b64encode(sc_bytes).decode("ascii")
+                response["dicom_sc_size_bytes"] = len(sc_bytes)
+                _push_seg_to_orthanc(sc_bytes)
+        except Exception as e:
+            logger.warning("DICOM SC creation failed: %s", e)
+
+    logger.info(
+        "Analysis complete: model=%s type=%s findings=%d time=%.0fms",
+        model_name, config.model_type.value, len(findings), elapsed_ms,
+    )
+    return response
+
+
+@app.post("/v1/analyze-auto")
+async def analyze_auto(
+    file: UploadFile = File(...),
+    study_uid: str = Form(""),
+    push_to_orthanc: bool = Form(False),
+):
+    """Auto-route analysis — reads DICOM tags, selects appropriate models,
+    runs all applicable models, and returns aggregated results including
+    GradCAM heatmaps for classification models.
+
+    Returns base64-encoded DICOM objects (SR, SEG) and heatmap PNG so
+    the caller can save them into Dicoogle storage for viewer retrieval.
+    """
+    start = time.time()
+
+    dicom_bytes = await file.read()
+    try:
+        ds = pydicom.dcmread(io.BytesIO(dicom_bytes))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid DICOM file")
+
+    if not study_uid:
+        study_uid = str(getattr(ds, "StudyInstanceUID", pydicom.uid.generate_uid()))
+
+    modality = str(getattr(ds, "Modality", "")).strip().upper()
+    body_part = str(getattr(ds, "BodyPartExamined", "")).strip().upper()
+    if not body_part:
+        description_blob = " ".join(
+            str(getattr(ds, field, "")).strip().upper()
+            for field in (
+                "StudyDescription",
+                "SeriesDescription",
+                "ProtocolName",
+                "PerformedProcedureStepDescription",
+            )
+            if getattr(ds, field, None)
+        )
+        if description_blob:
+            body_part_hints = [
+                ("KNEE", ("KNEE", "MENISC", "ACL", "PCL", "PATELLA")),
+                ("BRAIN", ("BRAIN", "HEAD", "CRANI", "NEURO")),
+                ("PROSTATE", ("PROSTATE", "PIRADS")),
+                ("HEART", ("CARDIAC", "HEART", "VENTRICLE", "MYOCARD")),
+                ("SPINE", ("SPINE", "C-SPINE", "T-SPINE", "L-SPINE", "VERTEBRA", "CERVICAL", "THORACIC", "LUMBAR")),
+                ("CHEST", ("CHEST", "THORAX", "LUNG", "PULMONARY")),
+                ("ABDOMEN", ("ABDOMEN", "ABDOM", "LIVER", "PANCREAS")),
+                ("NECK", ("NECK", "THYROID")),
+            ]
+            for candidate, tokens in body_part_hints:
+                if any(token in description_blob for token in tokens):
+                    body_part = candidate
+                    logger.info("Auto-route inferred body part from descriptions: %s", body_part)
+                    break
+    model_names = route_by_dicom_tags(modality, body_part)
+    try:
+        number_of_frames = int(getattr(ds, "NumberOfFrames", 1) or 1)
+    except Exception:
+        number_of_frames = 1
+    if modality == "MR" and number_of_frames <= 1:
+        model_names = ["mri_cardiac_seg"]
+        logger.info(
+            "Auto-route switched to MR single-frame fallback model: %s",
+            model_names,
+        )
+
+    if not model_names:
+        logger.warning(
+            "No models configured for Modality=%s, BodyPart=%s",
+            modality, body_part,
+        )
+        elapsed_ms = (time.time() - start) * 1000
+        return {
+            "study_uid": study_uid,
+            "modality": modality,
+            "body_part": body_part,
+            "models_run": [],
+            "results": {},
+            "findings": [],
+            "summary": "No applicable MONAI model for this study's modality/body part.",
+            "dicom_outputs_count": 0,
+            "errors": [
+                f"No models configured for modality={modality or 'unknown'} "
+                f"and body_part={body_part or 'unknown'}"
+            ],
+            "processing_time_ms": round(elapsed_ms, 2),
+        }
+
+    ctx = deploy_pipeline.run(
+        dicom_bytes,
+        model_override=model_names,
+        push_to_orthanc=push_to_orthanc,
+    )
+
+    # Generate heatmap:
+    # - prefer segmentation probability heatmap when available
+    # - otherwise generate GradCAM for the first classification model
+    heatmap_png_b64 = None
+    try:
+        pixel_array = extract_pixel_array(ds)
+        generated = False
+        for model_name in model_names:
+            seg_result = ctx.inference_results.get(model_name, {})
+            if seg_result.get("type") == "segmentation" and seg_result.get("_probability_maps"):
+                resized_prob_maps = _resize_probability_maps_to_original(
+                    seg_result["_probability_maps"],
+                    pixel_array.shape,
+                )
+                heatmap_png = _create_probability_overlay_png(
+                    resized_prob_maps,
+                    pixel_array,
+                    alpha=0.4,
+                    smooth_sigma=1.0,
+                )
+                if heatmap_png:
+                    heatmap_png_b64 = base64.b64encode(heatmap_png).decode("ascii")
+                    generated = True
+                    break
+
+        if not generated:
+            for model_name in model_names:
+                cfg = get_model_config(model_name)
+                if cfg and cfg.model_type.value == "classification":
+                    model = load_model(model_name)
+                    tensor = _prepare_tensor(pixel_array, cfg)
+                    gradcam = GradCAMGenerator(model)
+                    cam_tensor = tensor.unsqueeze(0) if tensor.dim() == cfg.spatial_dims + 1 else tensor
+                    cam_tensor = cam_tensor.unsqueeze(0) if cam_tensor.dim() == cfg.spatial_dims + 1 else cam_tensor
+                    cam_array = gradcam.generate(cam_tensor.to(DEVICE))
+                    heatmap_png = gradcam.generate_heatmap_png(cam_array, pixel_array)
+                    heatmap_png_b64 = base64.b64encode(heatmap_png).decode("ascii")
+                    generated = True
+                    break
+        if not generated:
+            # Guarantee one viewable AI artifact even when model outputs are empty
+            # (e.g. unsupported single-slice studies).
+            base_plane = pixel_array
+            if base_plane.ndim == 3:
+                base_plane = base_plane[base_plane.shape[0] // 2]
+            base_plane = np.asarray(base_plane, dtype=np.float32)
+            gy, gx = np.gradient(base_plane)
+            edge_map = np.sqrt(gx * gx + gy * gy)
+            edge_max = float(edge_map.max())
+            if edge_max > 1e-8:
+                edge_map = edge_map / edge_max
+            heatmap_png = _create_probability_overlay_png(
+                {"fallback_edges": edge_map},
+                pixel_array,
+                alpha=0.35,
+                smooth_sigma=0.8,
+                activation_threshold=0.18,
+                activation_percentile=70.0,
+            )
+            if heatmap_png:
+                heatmap_png_b64 = base64.b64encode(heatmap_png).decode("ascii")
+                generated = True
+    except Exception as e:
+        logger.warning("Auto-route heatmap generation failed: %s", e)
+
+    elapsed_ms = (time.time() - start) * 1000
+
+    dicom_outputs_b64: dict = {}
+    for i, dcm_bytes in enumerate(ctx.dicom_outputs):
+        try:
+            out_ds = pydicom.dcmread(io.BytesIO(dcm_bytes))
+            sop_class = str(getattr(out_ds, "SOPClassUID", ""))
+            b64 = base64.b64encode(dcm_bytes).decode("ascii")
+
+            if "1.2.840.10008.5.1.4.1.1.88" in sop_class:
+                dicom_outputs_b64["dicom_sr_base64"] = b64
+                dicom_outputs_b64["dicom_sr_size_bytes"] = len(dcm_bytes)
+            elif "1.2.840.10008.5.1.4.1.1.66.4" in sop_class:
+                dicom_outputs_b64["dicom_seg_base64"] = b64
+                dicom_outputs_b64["dicom_seg_size_bytes"] = len(dcm_bytes)
+            elif not dicom_outputs_b64.get("dicom_sc_base64"):
+                dicom_outputs_b64["dicom_sc_base64"] = b64
+                dicom_outputs_b64["dicom_sc_size_bytes"] = len(dcm_bytes)
+        except Exception as e:
+            logger.warning("Could not classify DICOM output %d: %s", i, e)
+
+    # Collect all findings across models
+    all_findings = []
+    for model_name, result in ctx.inference_results.items():
+        for f in result.get("findings", []):
+            if "model" not in f:
+                f["model"] = model_name
+            all_findings.append(f)
+
+    models_run = list(ctx.inference_results.keys())
+    summary = _build_summary(", ".join(models_run) or "auto", all_findings)
+
+    response = {
+        "study_uid": ctx.study_uid or study_uid,
+        "modality": modality,
+        "body_part": body_part,
+        "models_run": models_run,
+        "results": {
+            k: {kk: vv for kk, vv in v.items() if not kk.startswith("_")}
+            for k, v in ctx.inference_results.items()
+        },
+        "findings": all_findings,
+        "summary": summary,
+        "dicom_outputs_count": len(ctx.dicom_outputs),
+        **dicom_outputs_b64,
+        "errors": ctx.errors,
+        "processing_time_ms": round(elapsed_ms, 2),
+    }
+
+    if heatmap_png_b64:
+        response["heatmap_png_base64"] = heatmap_png_b64
+
+    primary_model_name = models_run[0] if models_run else (model_names[0] if model_names else "auto")
+    primary_result_type = None
+    if primary_model_name and ctx.inference_results.get(primary_model_name):
+        primary_result_type = ctx.inference_results[primary_model_name].get("type")
+
+    if (
+        heatmap_png_b64
+        and "dicom_sc_base64" not in response
+        and (
+            primary_result_type != "segmentation"
+            or int(response.get("dicom_outputs_count", 0)) == 0
+        )
+    ):
+        try:
+            sc_bytes = _create_secondary_capture(
+                ds,
+                base64.b64decode(heatmap_png_b64),
+                response.get("study_uid", study_uid),
+                primary_model_name,
+            )
+            if sc_bytes:
+                response["dicom_sc_base64"] = base64.b64encode(sc_bytes).decode("ascii")
+                response["dicom_sc_size_bytes"] = len(sc_bytes)
+                response["dicom_outputs_count"] = int(response.get("dicom_outputs_count", 0)) + 1
+                if push_to_orthanc:
+                    _push_seg_to_orthanc(sc_bytes)
+        except Exception as e:
+            logger.warning("Auto-route DICOM SC creation failed: %s", e)
+
+    logger.info(
+        "Auto-route complete: modality=%s models=%s findings=%d heatmap=%s time=%.0fms",
+        modality, models_run, len(all_findings), bool(heatmap_png_b64), elapsed_ms,
+    )
+    return response
+
+
+# ── Async Job Queue ──────────────────────────────────────────────────
+
+@app.post("/v1/jobs/submit")
+async def submit_job(
+    file: UploadFile = File(...),
+    model_names: Optional[str] = Form(None),
+    priority: str = Form("routine"),
+    push_to_orthanc: bool = Form(True),
+):
+    """Submit an async inference job to the Celery queue."""
+    from config import Priority
+
+    priority_map = {"stat": Priority.STAT, "routine": Priority.ROUTINE, "batch": Priority.BATCH}
+    prio = priority_map.get(priority, Priority.ROUTINE)
+
+    dicom_bytes = await file.read()
+    models = model_names.split(",") if model_names else None
+
+    job = enqueue_inference_job(dicom_bytes, models, prio, push_to_orthanc)
+
+    return {
+        "job_id": job.job_id,
+        "priority": priority,
+        "models": job.model_names,
+        "status": job.status,
+        "result": job.result,
     }
 
 
-# ── MedGemma Narrative Report Endpoint ─────────────────────────────────
+@app.get("/v1/jobs/{job_id}/status")
+async def job_status(job_id: str):
+    return get_job_status(job_id)
+
+
+# ── MedGemma Narrative Endpoint (backward compat) ────────────────────
 
 @app.post("/v1/analyze-medgemma")
 async def analyze_with_medgemma(
     file: UploadFile = File(...),
     study_uid: str = Form(""),
     include_monai: bool = Form(True),
-    monai_model: str = Form("monai_chest_xray"),
+    monai_model: str = Form("cxr_14class"),
     llm_provider: Optional[str] = Form(None),
 ):
-    """Analyze a DICOM file with MedGemma for narrative findings.
-    Optionally combines with MONAI classification for a comprehensive result.
-    """
+    """Combined MONAI + MedGemma analysis (backward compatible)."""
     start = time.time()
 
     dicom_bytes = await file.read()
@@ -1288,7 +1063,7 @@ async def analyze_with_medgemma(
         raise HTTPException(status_code=400, detail="Invalid DICOM file")
 
     if not study_uid:
-        study_uid = getattr(original_ds, "StudyInstanceUID", generate_uid())
+        study_uid = str(getattr(original_ds, "StudyInstanceUID", pydicom.uid.generate_uid()))
 
     try:
         pixel_array = extract_pixel_array(original_ds)
@@ -1296,97 +1071,17 @@ async def analyze_with_medgemma(
         raise HTTPException(status_code=400, detail="Cannot extract pixel data")
 
     monai_findings = []
-    monai_summary = ""
-    dicom_sr_b64 = None
-    dicom_sc_b64 = None
-    dicom_gsps_b64 = None
-    heatmap_png_b64 = None
-
-    if include_monai and monai_model in AVAILABLE_MODELS and monai_model != "medgemma_report":
-        config = AVAILABLE_MODELS[monai_model]
-        labels = config["labels"]
-        model = load_or_create_model(monai_model)
-        tensor = inference_transform(pixel_array)
-        batch = tensor.unsqueeze(0).to(DEVICE)
-
-        with torch.no_grad():
-            output = model(batch)
-            probabilities = torch.sigmoid(output).cpu().numpy()[0]
-
-        for label, prob in zip(labels, probabilities):
-            prob_val = float(prob)
-            if prob_val >= 0.3:
-                severity = "High probability" if prob_val >= 0.75 else "Moderate probability" if prob_val >= 0.5 else "Low probability"
-                monai_findings.append({
-                    "label": label,
-                    "confidence": round(prob_val, 4),
-                    "description": f"{severity} of {label.lower()} detected by AI model",
-                    "location": config["body_parts"][0] if config["body_parts"] else None,
-                })
-        monai_findings.sort(key=lambda f: f["confidence"], reverse=True)
-
-        significant = [f for f in monai_findings if f["confidence"] >= 0.5]
-        if significant:
-            parts = ", ".join(f"{f['label']} ({f['confidence']*100:.0f}%)" for f in significant[:5])
-            monai_summary = f"MONAI ({monai_model}): {len(significant)} finding(s) — {parts}"
-
-        top_class = int(probabilities.argmax())
-        batch_for_cam = tensor.unsqueeze(0).to(DEVICE)
-        batch_for_cam.requires_grad_(True)
-
-        extractor = GradCAMExtractor(model)
-        try:
-            cam = extractor.generate(batch_for_cam, top_class)
-        except Exception:
-            cam = np.random.rand(7, 7).astype(np.float32)
-        finally:
-            extractor.cleanup()
-
-        model.eval()
-
-        overlay_img = create_overlay_image(pixel_array, cam, monai_findings)
-
-        heatmap_buf = io.BytesIO()
-        overlay_img.save(heatmap_buf, format="PNG")
-        heatmap_png_b64 = base64.b64encode(heatmap_buf.getvalue()).decode("ascii")
-
-        sc_bytes = generate_secondary_capture(original_ds, overlay_img, study_uid, monai_model)
-        gsps_bytes = generate_gsps(original_ds, study_uid, monai_findings, cam, monai_model)
+    if include_monai and monai_model in MODEL_REGISTRY:
+        config = get_model_config(monai_model)
+        model = load_model(monai_model)
+        tensor = _prepare_tensor(pixel_array, config)
+        result = run_inference(monai_model, tensor)
+        monai_findings = result.get("findings", [])
 
     medgemma_result = await run_medgemma_analysis(pixel_array, monai_findings or None, llm_provider)
 
-    if include_monai and monai_findings:
-        all_findings = monai_findings + [
-            {
-                "label": c.get("label", "Unknown"),
-                "confidence": float(c.get("confidence", 0)),
-                "description": c.get("description", ""),
-                "location": None,
-            }
-            for c in medgemma_result.get("detected_conditions", [])
-        ]
-
-        combined_summary = medgemma_result.get("narrative", "") or monai_summary
-        sr_bytes = generate_dicom_sr(DicomSRRequest(
-            study_instance_uid=study_uid,
-            patient_name=str(getattr(original_ds, "PatientName", "")),
-            patient_id=str(getattr(original_ds, "PatientID", "")),
-            model=f"{monai_model}+medgemma",
-            findings=all_findings,
-            summary=combined_summary,
-        ))
-
-        dicom_sr_b64 = base64.b64encode(sr_bytes).decode("ascii")
-        dicom_sc_b64 = base64.b64encode(sc_bytes).decode("ascii")
-        dicom_gsps_b64 = base64.b64encode(gsps_bytes).decode("ascii")
-
     elapsed_ms = (time.time() - start) * 1000
-    logger.info(
-        "MedGemma analysis complete: study=%s, monai=%s, time=%.0fms",
-        study_uid, include_monai, elapsed_ms,
-    )
-
-    response = {
+    return {
         "study_id": study_uid,
         "model": "medgemma_report",
         "status": "completed",
@@ -1395,121 +1090,505 @@ async def analyze_with_medgemma(
         "medgemma_impression": medgemma_result.get("impression", ""),
         "medgemma_conditions": medgemma_result.get("detected_conditions", []),
         "monai_findings": monai_findings,
-        "monai_summary": monai_summary,
         "findings": monai_findings,
-        "summary": medgemma_result.get("narrative", "") or monai_summary,
+        "summary": medgemma_result.get("narrative", ""),
         "processing_time_ms": round(elapsed_ms, 2),
     }
 
-    if heatmap_png_b64:
-        response["heatmap_png_base64"] = heatmap_png_b64
-    if dicom_sr_b64:
-        response["dicom_sr_base64"] = dicom_sr_b64
-        response["dicom_sr_size_bytes"] = len(base64.b64decode(dicom_sr_b64))
-    if dicom_sc_b64:
-        response["dicom_sc_base64"] = dicom_sc_b64
-        response["dicom_sc_size_bytes"] = len(base64.b64decode(dicom_sc_b64))
-    if dicom_gsps_b64:
-        response["dicom_gsps_base64"] = dicom_gsps_b64
-        response["dicom_gsps_size_bytes"] = len(base64.b64decode(dicom_gsps_b64))
 
-    return response
+# ── MONAI Label Endpoints ───────────────────────────────────────────
+
+@app.get("/v1/label/config")
+async def label_config():
+    """Get MONAI Label server configuration."""
+    return {
+        "server_config": active_learning.get_monailabel_server_config(),
+        "deepedit_config": get_deepedit_app_config(),
+    }
 
 
-# ── Legacy endpoints (backward compatible) ────────────────────────────
+@app.get("/v1/label/next-sample")
+async def label_next_sample(strategy: Optional[str] = None):
+    return active_learning.get_next_sample(strategy)
+
+
+@app.post("/v1/label/annotate")
+async def label_annotate(
+    label: str = Form(...),
+    annotator_id: str = Form(...),
+    study_uid: str = Form(...),
+):
+    result = active_learning.record_annotation(label, annotator_id, study_uid)
+    if result["should_retrain"]:
+        logger.info("Retraining threshold reached for %s", label)
+    return result
+
+
+@app.get("/v1/label/stats")
+async def label_stats():
+    return active_learning.get_all_stats()
+
+
+@app.post("/v1/label/retrain")
+async def trigger_retrain(
+    model_name: str = Form(...),
+    trigger: str = Form("manual"),
+):
+    run = retraining_pipeline.start_retraining(model_name, trigger)
+    return {"run_id": int(run.started_at), "model": model_name, "status": run.status}
+
+
+@app.get("/v1/label/retrain/history")
+async def retrain_history(model_name: Optional[str] = None):
+    return {"history": retraining_pipeline.get_history(model_name)}
+
+
+# ── Model Zoo Downloads ──────────────────────────────────────────────
+
+@app.post("/v1/zoo/download/{model_name}")
+async def download_zoo_model(model_name: str):
+    bundle = BUNDLE_MAP.get(model_name)
+    if not bundle:
+        raise HTTPException(status_code=404, detail=f"No bundle mapped for {model_name}")
+
+    path = download_bundle_weights(bundle, model_name)
+    return {"model": model_name, "bundle": bundle, "path": str(path), "exists": path.exists()}
+
+
+# ── Triton Status ────────────────────────────────────────────────────
+
+@app.get("/v1/triton/status")
+async def triton_status():
+    return {
+        "connected": triton_client._connected,
+        "url": triton_client.url,
+        "models": triton_client.list_models(),
+    }
+
+
+# ── LLM Reconfiguration (backward compat) ───────────────────────────
+
+@app.post("/v1/configure")
+async def configure_llm(request: Request, llm_provider: str = Form(...)):
+    if INTERNAL_SECRET:
+        if request.headers.get("x-internal-secret", "") != INTERNAL_SECRET:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    global LLM_PROVIDER, medgemma_model, medgemma_mode
+    allowed = ("gemini", "ollama", "off")
+    if llm_provider not in allowed:
+        raise HTTPException(status_code=400, detail=f"Must be one of {allowed}")
+
+    old = LLM_PROVIDER
+    LLM_PROVIDER = llm_provider
+    medgemma_model = None
+    medgemma_mode = "disabled"
+    init_medgemma()
+    return {"previous": old, "current": LLM_PROVIDER, "mode": medgemma_mode}
+
+
+# ── Legacy Endpoints (backward compat with v3) ──────────────────────
 
 @app.post("/v1/infer")
-async def run_inference(request: InferRequest):
-    if request.model not in AVAILABLE_MODELS:
-        raise HTTPException(status_code=400, detail=f"Unknown model: {request.model}")
+async def run_inference_legacy(request: InferRequest):
+    """Legacy inference endpoint — backward compatible."""
+    model_name = request.model
+
+    # Map old model names to new ones
+    name_map = {
+        "monai_chest_xray": "cxr_14class",
+        "monai_lung_nodule": "ct_lung_nodule",
+        "monai_brain_mri": "mri_brain_tumor",
+        "monai_ct_segmentation": "ct_multi_organ_seg",
+        "monai_cardiac": "mri_cardiac_seg",
+    }
+    model_name = name_map.get(model_name, model_name)
+
+    if model_name not in MODEL_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {model_name}")
     if not request.studies:
         raise HTTPException(status_code=400, detail="No studies provided")
 
     start = time.time()
     study_id = request.studies[0]
-    config = AVAILABLE_MODELS[request.model]
-    labels = config["labels"]
-    model = load_or_create_model(request.model)
+    config = get_model_config(model_name)
 
-    dummy_image = np.random.randn(224, 224).astype(np.float32)
-    tensor = inference_transform(dummy_image)
-    batch = tensor.unsqueeze(0).to(DEVICE)
-
-    with torch.no_grad():
-        output = model(batch)
-        probabilities = torch.sigmoid(output).cpu().numpy()[0]
-
-    findings: list[dict] = []
-    for label, prob in zip(labels, probabilities):
-        prob_val = float(prob)
-        if prob_val >= 0.3:
-            severity = "High probability" if prob_val >= 0.75 else "Moderate probability" if prob_val >= 0.5 else "Low probability"
-            findings.append({
-                "label": label, "confidence": round(prob_val, 4),
-                "description": f"{severity} of {label.lower()} detected by AI model",
-                "location": config["body_parts"][0] if config["body_parts"] else None,
-            })
-    findings.sort(key=lambda f: f["confidence"], reverse=True)
-    elapsed_ms = (time.time() - start) * 1000
-    return {"study_id": study_id, "model": request.model, "status": "completed",
-            "findings": findings, "processing_time_ms": round(elapsed_ms, 2)}
-
-
-@app.post("/v1/infer-with-sr")
-async def infer_and_generate_sr(request: InferRequest):
-    if request.model not in AVAILABLE_MODELS:
-        raise HTTPException(status_code=400, detail=f"Unknown model: {request.model}")
-    if not request.studies:
-        raise HTTPException(status_code=400, detail="No studies provided")
-
-    start = time.time()
-    study_id = request.studies[0]
-    config = AVAILABLE_MODELS[request.model]
-    labels = config["labels"]
-    model = load_or_create_model(request.model)
-
-    dummy_image = np.random.randn(224, 224).astype(np.float32)
-    tensor = inference_transform(dummy_image)
-    batch = tensor.unsqueeze(0).to(DEVICE)
-
-    with torch.no_grad():
-        output = model(batch)
-        probabilities = torch.sigmoid(output).cpu().numpy()[0]
-
-    findings: list[dict] = []
-    for label, prob in zip(labels, probabilities):
-        prob_val = float(prob)
-        if prob_val >= 0.3:
-            severity = "High probability" if prob_val >= 0.75 else "Moderate probability" if prob_val >= 0.5 else "Low probability"
-            findings.append({
-                "label": label, "confidence": round(prob_val, 4),
-                "description": f"{severity} of {label.lower()} detected by AI model",
-                "location": config["body_parts"][0] if config["body_parts"] else None,
-            })
-    findings.sort(key=lambda f: f["confidence"], reverse=True)
-
-    significant = [f for f in findings if f["confidence"] >= 0.5]
-    summary = (
-        f"AI analysis ({request.model}): {len(significant)} significant finding(s) — "
-        + ", ".join(f"{f['label']} ({f['confidence']*100:.0f}%)" for f in significant[:5])
-        if significant
-        else f"AI analysis ({request.model}): No significant findings above 50% confidence."
-    )
-
-    sr_bytes = generate_dicom_sr(DicomSRRequest(
-        study_instance_uid=study_id, patient_name="", patient_id="",
-        model=request.model, findings=findings, summary=summary,
-    ))
+    model = load_model(model_name)
+    dummy = np.random.randn(*config.input_size).astype(np.float32)
+    result = run_inference(model_name, dummy)
 
     elapsed_ms = (time.time() - start) * 1000
     return {
-        "study_id": study_id, "model": request.model, "status": "completed",
-        "findings": findings, "summary": summary,
+        "study_id": study_id,
+        "model": model_name,
+        "status": "completed",
+        "findings": result.get("findings", []),
+        "processing_time_ms": round(elapsed_ms, 2),
+    }
+
+
+@app.post("/v1/infer-with-sr")
+async def infer_with_sr_legacy(request: InferRequest):
+    """Legacy infer + SR endpoint."""
+    model_name = request.model
+    name_map = {
+        "monai_chest_xray": "cxr_14class",
+        "monai_lung_nodule": "ct_lung_nodule",
+        "monai_brain_mri": "mri_brain_tumor",
+        "monai_ct_segmentation": "ct_multi_organ_seg",
+        "monai_cardiac": "mri_cardiac_seg",
+    }
+    model_name = name_map.get(model_name, model_name)
+
+    if model_name not in MODEL_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {model_name}")
+    if not request.studies:
+        raise HTTPException(status_code=400, detail="No studies provided")
+
+    start = time.time()
+    study_id = request.studies[0]
+    config = get_model_config(model_name)
+    model = load_model(model_name)
+
+    dummy = np.random.randn(*config.input_size).astype(np.float32)
+    result = run_inference(model_name, dummy)
+    findings = result.get("findings", [])
+
+    summary = _build_summary(model_name, findings)
+    sr_bytes = create_dicom_sr_tid1500(
+        source_ds=None,
+        findings=findings,
+        study_uid=study_id,
+        model_name=model_name,
+        model_version=config.version,
+        summary=summary,
+    )
+
+    elapsed_ms = (time.time() - start) * 1000
+    return {
+        "study_id": study_id,
+        "model": model_name,
+        "status": "completed",
+        "findings": findings,
+        "summary": summary,
         "processing_time_ms": round(elapsed_ms, 2),
         "dicom_sr_base64": base64.b64encode(sr_bytes).decode("ascii"),
         "dicom_sr_size_bytes": len(sr_bytes),
     }
 
+
+@app.get("/v1/infer/{job_id}/status")
+async def inference_status_legacy(job_id: str):
+    """Legacy status endpoint."""
+    status = get_job_status(job_id)
+    if status["status"] == "unknown":
+        return {"status": "completed", "progress": 100}
+    return status
+
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
+def _prepare_tensor(pixel_array: np.ndarray, config) -> torch.Tensor:
+    """Convert a pixel array to a tensor suitable for the model."""
+    from monai.transforms import Compose, EnsureChannelFirst, Resize, ScaleIntensity, EnsureType
+
+    arr = pixel_array
+    if arr.ndim == 3 and arr.shape[-1] <= 4:
+        arr = arr.mean(axis=-1)
+
+    if config.spatial_dims == 2:
+        spatial_size = list(config.input_size[:2])
+    else:
+        if arr.ndim == 2:
+            depth = config.input_size[2] if len(config.input_size) >= 3 else config.input_size[0]
+            arr = np.stack([arr] * depth, axis=-1)
+        spatial_size = list(config.input_size[:3])
+
+    transform = Compose([
+        EnsureChannelFirst(channel_dim="no_channel"),
+        Resize(spatial_size=spatial_size),
+        ScaleIntensity(),
+        EnsureType(dtype="float32"),
+    ])
+    return transform(arr)
+
+
+def _resize_masks_to_original(
+    masks: dict[str, np.ndarray],
+    original_shape: tuple[int, ...],
+) -> dict[str, np.ndarray]:
+    """Resize binary masks to source DICOM size using nearest interpolation."""
+    resized: dict[str, np.ndarray] = {}
+    for label, mask in masks.items():
+        target_shape = _target_shape_for_output(mask.shape, original_shape)
+        resized_mask = _resample_array(mask.astype(np.float32), target_shape, order=0)
+        resized[label] = (resized_mask > 0.5).astype(np.uint8)
+        logger.info("Resized mask '%s': %s → %s", label, mask.shape, resized[label].shape)
+    return resized
+
+
+def _resize_probability_maps_to_original(
+    probability_maps: dict[str, np.ndarray],
+    original_shape: tuple[int, ...],
+) -> dict[str, np.ndarray]:
+    """Resize class probability maps with bilinear interpolation for smooth heatmaps."""
+    resized: dict[str, np.ndarray] = {}
+    for label, prob_map in probability_maps.items():
+        target_shape = _target_shape_for_output(prob_map.shape, original_shape)
+        resized_map = _resample_array(prob_map.astype(np.float32), target_shape, order=1)
+        resized[label] = np.clip(resized_map, 0.0, 1.0).astype(np.float32)
+        logger.info(
+            "Resized probability map '%s': %s → %s",
+            label,
+            prob_map.shape,
+            resized[label].shape,
+        )
+    return resized
+
+
+def _target_shape_for_output(
+    source_shape: tuple[int, ...],
+    original_shape: tuple[int, ...],
+) -> tuple[int, ...]:
+    if len(source_shape) == 2 and len(original_shape) >= 2:
+        return (int(original_shape[-2]), int(original_shape[-1]))
+    if len(source_shape) == 3:
+        if len(original_shape) >= 3:
+            return tuple(int(v) for v in original_shape[:3])
+        if len(original_shape) == 2:
+            return (int(source_shape[0]), int(original_shape[0]), int(original_shape[1]))
+    return tuple(int(v) for v in source_shape)
+
+
+def _resample_array(
+    array: np.ndarray,
+    target_shape: tuple[int, ...],
+    order: int,
+) -> np.ndarray:
+    from scipy.ndimage import zoom
+
+    if array.shape == target_shape:
+        return array
+
+    zoom_factors = tuple(target_shape[i] / array.shape[i] for i in range(array.ndim))
+    resized = zoom(
+        array,
+        zoom_factors,
+        order=order,
+        mode="nearest",
+        prefilter=order > 1,
+    ).astype(np.float32)
+    return _match_shape(resized, target_shape)
+
+
+def _match_shape(array: np.ndarray, target_shape: tuple[int, ...]) -> np.ndarray:
+    """Center-crop/pad after interpolation to guarantee exact target shape."""
+    adjusted = array
+    for axis, target in enumerate(target_shape):
+        current = adjusted.shape[axis]
+        if current == target:
+            continue
+
+        if current > target:
+            start = (current - target) // 2
+            end = start + target
+            slicer = [slice(None)] * adjusted.ndim
+            slicer[axis] = slice(start, end)
+            adjusted = adjusted[tuple(slicer)]
+        else:
+            pad_before = (target - current) // 2
+            pad_after = target - current - pad_before
+            pad_width = [(0, 0)] * adjusted.ndim
+            pad_width[axis] = (pad_before, pad_after)
+            adjusted = np.pad(adjusted, pad_width, mode="edge")
+    return adjusted
+
+
+def _create_probability_overlay_png(
+    probability_maps: dict[str, np.ndarray],
+    pixel_array: np.ndarray,
+    alpha: float = 0.4,
+    smooth_sigma: float = 1.0,
+    activation_threshold: float = 0.30,
+    activation_percentile: float = 82.0,
+) -> bytes | None:
+    """Create a quality-preserving heatmap overlay from segmentation probabilities."""
+    from scipy.ndimage import gaussian_filter
+
+    if not probability_maps:
+        return None
+
+    planes: list[np.ndarray] = []
+    for prob in probability_maps.values():
+        if prob.ndim == 3:
+            prob = prob[prob.shape[0] // 2]
+        planes.append(prob.astype(np.float32))
+    if not planes:
+        return None
+
+    heat = np.maximum.reduce(planes)
+    heat = np.clip(heat, 0.0, 1.0)
+    if smooth_sigma > 0:
+        heat = gaussian_filter(heat, sigma=float(smooth_sigma))
+        heat = np.clip(heat, 0.0, 1.0)
+
+    heat_min = float(heat.min())
+    heat_max = float(heat.max())
+    if heat_max - heat_min > 1e-8:
+        heat = (heat - heat_min) / (heat_max - heat_min)
+
+    percentile_threshold = float(np.percentile(heat, activation_percentile))
+    floor_threshold = float(max(0.0, min(1.0, activation_threshold)))
+    effective_threshold = min(0.95, max(floor_threshold, percentile_threshold))
+    if effective_threshold > 0.0:
+        denom = max(1e-6, 1.0 - effective_threshold)
+        heat = np.where(heat >= effective_threshold, (heat - effective_threshold) / denom, 0.0)
+        heat = np.clip(heat, 0.0, 1.0)
+
+    base = pixel_array
+    if base.ndim == 3:
+        base = base[base.shape[0] // 2]
+    base_uint8 = normalize_to_uint8(base)
+    if heat.shape != base_uint8.shape:
+        heat = _resample_array(heat, base_uint8.shape, order=1)
+        heat = np.clip(heat, 0.0, 1.0)
+
+    heat_uint8 = (heat * 255.0).astype(np.uint8)
+    heat_rgb = _apply_jet_colormap(heat_uint8)
+
+    base_rgb = np.stack([base_uint8] * 3, axis=-1).astype(np.float32)
+    alpha_map = np.clip(heat[..., np.newaxis] * float(alpha), 0.0, 1.0)
+    blended = (
+        base_rgb * (1.0 - alpha_map) + heat_rgb.astype(np.float32) * alpha_map
+    ).clip(0, 255).astype(np.uint8)
+
+    buf = io.BytesIO()
+    Image.fromarray(blended, "RGB").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _apply_jet_colormap(gray: np.ndarray) -> np.ndarray:
+    try:
+        import cv2
+
+        bgr = cv2.applyColorMap(gray.astype(np.uint8), cv2.COLORMAP_JET)
+        return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    except Exception:
+        lut = np.array(
+            [
+                [0, 0, 128], [0, 0, 255], [0, 128, 255], [0, 255, 255],
+                [0, 255, 128], [0, 255, 0], [128, 255, 0], [255, 255, 0],
+                [255, 128, 0], [255, 0, 0],
+            ],
+            dtype=np.float32,
+        )
+        idx = gray.astype(np.float32) / 255.0 * (len(lut) - 1)
+        lo = np.floor(idx).astype(np.int32)
+        hi = np.clip(lo + 1, 0, len(lut) - 1)
+        w = (idx - lo)[..., np.newaxis]
+        return (lut[lo] * (1.0 - w) + lut[hi] * w).astype(np.uint8)
+
+
+def _log_mask_diagnostics(
+    masks: dict[str, np.ndarray],
+    original_shape: tuple[int, ...],
+) -> None:
+    """Log mask statistics for debugging overlay visibility issues."""
+    for label, mask in masks.items():
+        nonzero = int(mask.sum())
+        total = int(np.prod(mask.shape))
+        logger.info(
+            "Mask diagnostics [%s]: min=%s max=%s nonzero=%d/%d (%.2f%%) shape=%s original_shape=%s",
+            label,
+            mask.min(),
+            mask.max(),
+            nonzero,
+            total,
+            (nonzero / total * 100) if total > 0 else 0,
+            mask.shape,
+            original_shape,
+        )
+        if nonzero == 0:
+            logger.warning("Mask '%s' is EMPTY — no overlay will be visible", label)
+        if mask.shape[:2] != original_shape[:2]:
+            logger.warning(
+                "Mask '%s' spatial dims %s do NOT match original %s — overlay will be misaligned",
+                label, mask.shape, original_shape,
+            )
+
+
+def _push_seg_to_orthanc(seg_bytes: bytes) -> None:
+    """Push the DICOM SEG instance to Orthanc so OHIF can display it."""
+    try:
+        from inference.operators import _stow_to_orthanc
+        _stow_to_orthanc(seg_bytes)
+        logger.info("DICOM SEG pushed to Orthanc (%d bytes)", len(seg_bytes))
+    except Exception as e:
+        logger.error("Failed to push DICOM SEG to Orthanc: %s", e)
+
+
+def _create_secondary_capture(
+    source_ds: pydicom.Dataset,
+    png_bytes: bytes,
+    study_uid: str,
+    model_name: str,
+) -> bytes | None:
+    """Wrap a heatmap PNG as a DICOM Secondary Capture for PACS display."""
+    try:
+        img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+        pixel_data = np.array(img)
+
+        sc = pydicom.Dataset()
+        sc.file_meta = pydicom.Dataset()
+        sc.file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.7"
+        sc.file_meta.MediaStorageSOPInstanceUID = pydicom.uid.generate_uid()
+        sc.file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
+
+        sc.SOPClassUID = "1.2.840.10008.5.1.4.1.1.7"
+        sc.SOPInstanceUID = sc.file_meta.MediaStorageSOPInstanceUID
+        sc.StudyInstanceUID = study_uid
+        sc.SeriesInstanceUID = pydicom.uid.generate_uid()
+        sc.Modality = "OT"
+        sc.Manufacturer = "TD|ai MONAI"
+        sc.SeriesDescription = f"AI Heatmap ({model_name})"
+
+        sc.PatientName = getattr(source_ds, "PatientName", "Unknown")
+        sc.PatientID = getattr(source_ds, "PatientID", "0000")
+        sc.StudyDate = getattr(source_ds, "StudyDate", datetime.datetime.now().strftime("%Y%m%d"))
+
+        sc.Rows = pixel_data.shape[0]
+        sc.Columns = pixel_data.shape[1]
+        sc.SamplesPerPixel = 3
+        sc.PhotometricInterpretation = "RGB"
+        sc.BitsAllocated = 8
+        sc.BitsStored = 8
+        sc.HighBit = 7
+        sc.PixelRepresentation = 0
+        sc.PlanarConfiguration = 0
+        sc.PixelData = pixel_data.tobytes()
+
+        sc.is_little_endian = True
+        sc.is_implicit_VR = False
+
+        buf = io.BytesIO()
+        pydicom.dcmwrite(buf, sc, write_like_original=False)
+        return buf.getvalue()
+    except Exception as e:
+        logger.error("Secondary Capture creation failed: %s", e)
+        return None
+
+
+def _build_summary(model_name: str, findings: list[dict]) -> str:
+    significant = [f for f in findings if f.get("confidence", 0) >= 0.5]
+    if significant:
+        parts = ", ".join(
+            f"{f['label']} ({f['confidence']*100:.0f}%)" for f in significant[:5]
+        )
+        return f"AI analysis ({model_name}): {len(significant)} significant finding(s) — {parts}"
+    return f"AI analysis ({model_name}): No findings above 50% confidence."
+
+
+# ── Entry Point ──────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn

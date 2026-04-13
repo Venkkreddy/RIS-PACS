@@ -19,6 +19,7 @@ const roleDashboardLabel: Record<string, string> = {
   radiologist: "Patient List",
   radiographer: "Tech Dashboard",
   admin: "Admin Dashboard",
+  super_admin: "Super Admin Portal",
   developer: "Developer Portal",
   referring: "Referral Portal",
   billing: "Billing Dashboard",
@@ -42,6 +43,7 @@ const navItems: NavItem[] = [
 
 const roleLabels: Record<string, string> = {
   admin: "Administrator",
+  super_admin: "Super Admin",
   developer: "Developer",
   radiologist: "Radiologist",
   radiographer: "Radiographer",
@@ -60,49 +62,60 @@ export function InternalNavbar() {
   const dashboardLabel = roleDashboardLabel[auth.role] ?? "Dashboard";
 
   const visibleItems = navItems.filter((item) => {
-    if (item.adminOnly) return auth.role === "admin";
+    if (item.adminOnly) return auth.role === "admin" || auth.role === "super_admin";
     if (!item.permissions) return true;
-    if (auth.role === "admin") return true;
+    if (auth.role === "admin" || auth.role === "super_admin") return true;
     return item.permissions.some((p) => auth.hasPermission(p));
   });
 
   async function logout() {
-    await signOut(firebaseAuth).catch(() => undefined);
+    if (firebaseAuth) {
+      await signOut(firebaseAuth).catch(() => undefined);
+    }
     await api.post("/auth/logout").catch(() => undefined);
     window.location.href = "/login";
   }
 
-  const userInitial = (auth.email ?? "U")[0].toUpperCase();
+  const userInitial = (() => {
+    if (auth.displayName) {
+      const parts = auth.displayName.trim().split(/\s+/);
+      return parts.length >= 2
+        ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+        : parts[0][0].toUpperCase();
+    }
+    return (auth.email ?? "U")[0].toUpperCase();
+  })();
 
   return (
     <header className="sticky top-0 z-40 border-b border-tdai-gray-200/80 bg-white/95 backdrop-blur-xl shadow-nav">
-      <div className="mx-auto flex max-w-7xl items-center justify-between pl-6 pr-5 py-2.5">
+      <div className="mx-auto flex w-full max-w-[1720px] items-center justify-between gap-3 px-4 py-2.5 xl:px-6">
         <Link to={dashboardPath} className="group flex flex-shrink-0 items-center gap-3.5 transition-opacity duration-200 hover:opacity-90 lg:ml-1">
           <BrandLogo compact showPoweredBy={false} />
-          <div className="hidden h-6 w-px bg-tdai-gray-200 xl:block" />
-          <span className="hidden rounded-lg bg-tdai-teal-50 px-2.5 py-1 text-[9px] font-bold uppercase tracking-widest text-tdai-teal-700 ring-1 ring-tdai-teal-500/10 xl:inline">
+          <div className="hidden h-6 w-px bg-tdai-gray-200 lg:block" />
+          <span className="hidden max-w-[11rem] truncate rounded-lg bg-tdai-teal-50 px-2.5 py-1 text-[9px] font-bold uppercase tracking-widest text-tdai-teal-700 ring-1 ring-tdai-teal-500/10 lg:inline">
             {roleLabels[auth.role] ?? auth.role}
           </span>
         </Link>
 
-        <nav className="hidden flex-1 items-center gap-2 lg:flex">
-            <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-end gap-0 overflow-x-auto pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <nav className="hidden min-w-0 flex-1 items-center gap-3 lg:flex">
+          <div className="min-w-0 flex-1">
+            <div className="overflow-x-auto pr-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5">
+              <div className="flex min-w-max items-center justify-end gap-2 lg:gap-2.5">
               {/* Role-specific dashboard link */}
               {dashboardPath !== "/worklist" && (
                 <Link
                   to={dashboardPath}
                   title={dashboardLabel}
-                  className={`group relative flex flex-shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium transition-all duration-200 ${
+                  className={`group relative flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-[11px] font-medium transition-all duration-200 ${
                     location.pathname === dashboardPath
                       ? "bg-tdai-teal-50 text-tdai-teal-700 shadow-sm ring-1 ring-tdai-teal-500/10"
                       : "text-tdai-gray-500 hover:bg-tdai-gray-50 hover:text-tdai-navy-700"
                   }`}
                 >
-                  <svg className="h-3.5 w-3.5 flex-shrink-0 transition-transform duration-200 group-hover:scale-110" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                  <svg className="h-4 w-4 flex-shrink-0 transition-transform duration-200 group-hover:scale-110" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
                   </svg>
-                  <span className="hidden 2xl:inline">{dashboardLabel}</span>
+                  <span className="hidden lg:inline">{dashboardLabel}</span>
                 </Link>
               )}
               {visibleItems.map((item) => {
@@ -112,38 +125,57 @@ export function InternalNavbar() {
                     key={item.to}
                     to={item.to}
                     title={item.label}
-                    className={`group relative flex flex-shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium transition-all duration-200 ${
+                    className={`group relative flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-[11px] font-medium transition-all duration-200 ${
                       isActive
                         ? "bg-tdai-teal-50 text-tdai-teal-700 shadow-sm ring-1 ring-tdai-teal-500/10"
                         : "text-tdai-gray-500 hover:bg-tdai-gray-50 hover:text-tdai-navy-700"
                     }`}
                   >
-                    <svg className="h-3.5 w-3.5 flex-shrink-0 transition-transform duration-200 group-hover:scale-110" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                    <svg className="h-4 w-4 flex-shrink-0 transition-transform duration-200 group-hover:scale-110" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
                       <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
                     </svg>
-                    <span className="hidden 2xl:inline">{item.label}</span>
+                    <span className="hidden lg:inline">{item.label}</span>
                   </Link>
                 );
               })}
+              </div>
             </div>
           </div>
 
-          <div className="mx-1 h-7 w-px flex-shrink-0 bg-tdai-gray-200" />
+          <div className="mx-1.5 h-8 w-px flex-shrink-0 bg-tdai-gray-200" />
 
-          <div className="relative z-10 flex flex-shrink-0 items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-tdai-navy-700 to-tdai-navy-800 text-[11px] font-bold text-white shadow-sm">
-              {userInitial}
-            </div>
+          <div className="relative z-10 flex flex-shrink-0 items-center gap-2.5">
+            <Link
+              to="/profile"
+              className="group flex items-center gap-2 rounded-xl px-1.5 py-1 transition-colors hover:bg-tdai-gray-50"
+              title="My Profile"
+            >
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-tdai-navy-700 to-tdai-navy-800 text-[11px] font-bold text-white shadow-sm transition-transform group-hover:scale-105">
+                {userInitial}
+              </div>
+              <span className="hidden whitespace-nowrap text-[11px] font-medium text-tdai-navy-700 lg:inline xl:hidden">
+                Profile
+              </span>
+              <div className="hidden flex-col xl:flex">
+                <span className="max-w-[10rem] truncate text-[11px] font-semibold leading-tight text-tdai-navy-800">
+                  {auth.displayName || auth.email?.split("@")[0] || "User"}
+                </span>
+                <span className="max-w-[10rem] truncate text-[10px] leading-tight text-tdai-gray-400">
+                  {auth.email}
+                </span>
+              </div>
+            </Link>
             <button
-              className="flex flex-shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium text-tdai-gray-500 transition-all duration-200 hover:bg-tdai-red-50 hover:text-tdai-red-600"
+              className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-[11px] font-medium text-tdai-gray-500 transition-all duration-200 hover:bg-tdai-red-50 hover:text-tdai-red-600"
               type="button"
               onClick={() => void logout()}
+              aria-label="Sign out"
               title="Sign out"
             >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+              <svg className="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
-              <span>Sign out</span>
+              <span className="hidden lg:inline">Sign out</span>
             </button>
           </div>
         </nav>
@@ -217,7 +249,17 @@ export function InternalNavbar() {
               );
             })}
           </div>
-          <div className="mt-4 border-t border-tdai-gray-100 pt-4">
+          <div className="mt-4 border-t border-tdai-gray-100 pt-4 space-y-1">
+            <Link
+              to="/profile"
+              onClick={() => setMobileOpen(false)}
+              className="flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-medium text-tdai-navy-600 transition-colors hover:bg-tdai-gray-50 hover:text-tdai-navy-800"
+            >
+              <div className="flex h-[18px] w-[18px] items-center justify-center rounded-md bg-gradient-to-br from-tdai-navy-700 to-tdai-navy-800 text-[8px] font-bold text-white">
+                {userInitial}
+              </div>
+              My Profile
+            </Link>
             <button
               className="flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-medium text-tdai-gray-500 transition-colors hover:bg-tdai-red-50 hover:text-tdai-red-600"
               type="button"

@@ -45,6 +45,12 @@ const configUpdateSchema = z.object({
     monaiUrl: safeServiceUrl.optional(),
     uiVisible: z.boolean().optional(),
   }).partial().optional(),
+  storage: z.object({
+    mode: z.enum(["local", "cloud"]),
+    cloudBucket: z.string().min(3).max(63),
+    cloudPrefix: z.string().max(255),
+    keepLocalCopy: z.boolean(),
+  }).partial().optional(),
 }).strict();
 
 async function checkHealth(url: string): Promise<{ status: string; latencyMs: number | null }> {
@@ -112,6 +118,12 @@ export function servicesRouter(
       stt: { provider: config.stt.provider, ...sttHealth },
       llm: { provider: config.llm.provider, ...llmHealth },
       inference: { provider: "monai", enabled: config.inference.enabled, ...monaiHealth },
+      storage: {
+        mode: config.storage.mode,
+        cloudBucket: config.storage.cloudBucket,
+        cloudPrefix: config.storage.cloudPrefix,
+        keepLocalCopy: config.storage.keepLocalCopy,
+      },
     });
   }));
 

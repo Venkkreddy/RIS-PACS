@@ -85,7 +85,7 @@ NODE_ENV=production
 PORT=8081
 ENABLE_AUTH=true
 FRONTEND_URL=http://${VM_IP}:5173
-OHIF_BASE_URL=http://ohif-viewer
+OHIF_BASE_URL=${OHIF_BASE_URL:-http://${VM_IP}:3000}
 OHIF_PUBLIC_BASE_URL=http://${VM_IP}:3000
 CORS_ALLOWED_ORIGINS=http://${VM_IP}:5173,http://${VM_IP}:3000
 DEFAULT_DEV_ROLE=admin
@@ -100,7 +100,7 @@ GCS_BUCKET=ris-pacs-9859a.firebasestorage.app
 
 SENDGRID_API_KEY=your-sendgrid-key
 SENDGRID_FROM_EMAIL=reports@example.com
-DICOOGLE_BASE_URL=http://dicoogle:8080
+DICOOGLE_BASE_URL=${DICOOGLE_BASE_URL:-http://localhost:8080}
 MEDASR_SERVER_URL=http://medasr-server:5001
 MEDASR_ENABLED=true
 
@@ -116,7 +116,7 @@ ENVEOF
 echo "==> Creating frontend .env..."
 cat > packages/reporting-app/frontend/.env << ENVEOF
 VITE_API_BASE_URL=http://${VM_IP}:8081
-VITE_BACKEND_PROXY_TARGET=http://reporting-app-backend:8080
+VITE_BACKEND_PROXY_TARGET=${VITE_BACKEND_PROXY_TARGET:-http://${VM_IP}:8081}
 VITE_FIREBASE_API_KEY=AIzaSyC1VRHBcDWlkdUfu3-qrG5_l9qDHaZ-doQ
 VITE_FIREBASE_AUTH_DOMAIN=ris-pacs-9859a.firebaseapp.com
 VITE_FIREBASE_PROJECT_ID=ris-pacs-9859a

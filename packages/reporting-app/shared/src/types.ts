@@ -43,9 +43,19 @@ export interface AuditLogEntry {
 
 // --------------- RBAC Types ---------------
 
-export type UserRole = "admin" | "developer" | "radiologist" | "radiographer" | "billing" | "referring" | "receptionist" | "viewer";
+export type UserRole =
+  | "super_admin"
+  | "admin"
+  | "developer"
+  | "radiologist"
+  | "radiographer"
+  | "billing"
+  | "referring"
+  | "receptionist"
+  | "viewer";
 
 export type PermissionModule =
+  | "platform"
   | "dashboard"
   | "patients"
   | "orders"
@@ -66,6 +76,11 @@ export type PermissionAction = string;
 export type Permission = `${PermissionModule}:${PermissionAction}`;
 
 export const ALL_PERMISSIONS: readonly Permission[] = [
+  "platform:view_overview",
+  "platform:manage_hospitals",
+  "platform:assign_pacs",
+  "platform:manage_hospital_admins",
+  "platform:view_monitoring",
   "dashboard:view",
   "patients:view", "patients:create", "patients:edit", "patients:delete",
   "orders:view", "orders:create", "orders:edit", "orders:delete",

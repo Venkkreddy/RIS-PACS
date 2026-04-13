@@ -17,6 +17,7 @@ interface PermissionsResponse {
 
 const ROLE_LABELS: Record<UserRole, string> = {
   admin: "Admin",
+  super_admin: "Super Admin",
   developer: "Developer",
   radiologist: "Radiologist",
   radiographer: "Radiographer",
@@ -27,6 +28,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
 };
 
 const MODULE_LABELS: Record<string, string> = {
+  platform: "Platform",
   dashboard: "Dashboard",
   patients: "Patients",
   orders: "Orders",

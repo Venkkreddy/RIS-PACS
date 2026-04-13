@@ -175,17 +175,34 @@ Admin:      GET /admin/users, PATCH /admin/users/:id/approve, GET /admin/audit-l
 
 ---
 
-## 8. Security & Compliance
+## 8. Security & HIPAA Compliance
 
 | Layer | Implementation |
 |-------|---------------|
-| Transport | TLS 1.3 on all connections |
-| Auth | Firebase JWT + admin approval gate |
-| RBAC | Admin, Radiologist, Technologist, Referring, Billing |
-| Audit | Immutable append-only log, every mutation |
-| Data | Encryption at rest, no PHI in logs |
+| Transport | TLS 1.2+ enforced on all connections, HSTS with 1-year max-age, HTTP rejected in production |
+| Auth | Firebase JWT + admin approval gate + account lockout (5 failures / 30 min) |
+| RBAC | 9 roles (super_admin, admin, developer, radiologist, radiographer, billing, referring, receptionist, viewer) with granular per-permission overrides |
+| Session | 15-minute automatic logoff per HIPAA §164.312(a)(2)(iii), secure cookie with `httpOnly`, `sameSite`, `secure` |
+| HIPAA Audit | SHA-256 hash-chained immutable audit log for all PHI access, 6-year retention, integrity verification |
+| Emergency Access | Break-glass procedure with time-limited grants, mandatory reason, admin revocation (§164.312(a)(2)(ii)) |
+| PHI Protection | Error responses sanitized in production (SSN, MRN, names, dates redacted), no PHI in logs |
+| Data | Encryption at rest (Firebase/GCP managed), Cache-Control: no-store on all responses |
+| Headers | Helmet + HSTS + CSP + X-Frame-Options: DENY + Referrer-Policy + Permissions-Policy |
+| CORS | Wildcard CORS automatically blocked in production even if `CORS_ALLOW_ALL=true` misconfigured |
 | Network | Private mesh, only Gateway + Web App public |
 | Dicoogle | Admin UI not public, webhook secret validation, CORS restricted |
+| Password | HIPAA policy: min 12 chars, uppercase, lowercase, number, special character required |
+
+### HIPAA Admin Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/hipaa/audit-log` | Query PHI audit trail with filters (admin only) |
+| GET | `/hipaa/audit-log/integrity` | Verify audit log hash chain integrity |
+| POST | `/hipaa/emergency-access` | Request break-glass emergency access |
+| GET | `/hipaa/compliance-status` | Real-time compliance dashboard |
+
+See [`HIPAA_COMPLIANCE.md`](../HIPAA_COMPLIANCE.md) for full compliance documentation, PHI inventory, and deployment checklist.
 
 ---
 

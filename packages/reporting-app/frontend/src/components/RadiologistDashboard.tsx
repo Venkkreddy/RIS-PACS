@@ -1,16 +1,15 @@
-import { useCallback, useMemo, useState } from "react";
+import { FormEvent, useCallback, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ColumnDef, flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { api } from "../api/client";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { StudyPriority, WorklistStudy } from "../types/worklist";
+import type { Gender, Patient } from "@medical-report-system/shared";
 import { useAuthRole } from "../hooks/useAuthRole";
 import { useTheme } from "../hooks/useTheme";
 import { DicomUpload } from "./DicomUpload";
 import { OhifViewerEmbed } from "./OhifViewerEmbed";
-import { MonaiPanel } from "./MonaiPanel";
-import { useServiceStatus } from "../hooks/useServiceStatus";
 import { LayoutGroup, motion } from "framer-motion";
 import {
   ListTodo,
@@ -31,6 +30,7 @@ import {
   Copy,
   Edit2,
   UserCircle,
+  UserPlus,
   Eye,
   MonitorSmartphone,
   CalendarRange,
@@ -66,7 +66,9 @@ const SEARCH_OPTIONS: Array<{ value: SearchField; label: string; placeholder: st
 ];
 
 const MRN_METADATA_KEYS = ["patientId", "PatientID", "00100020", "mrn", "MRN"] as const;
+const REGISTRY_ID_METADATA_KEYS = ["patientRegistryId", "patientRegistryID", "registryPatientId"] as const;
 const ACCESSION_METADATA_KEYS = ["accessionNumber", "AccessionNumber", "00080050"] as const;
+const INDIA_PHONE_REGEX = /^(?:\+91[\s-]?)?[6-9]\d{9}$/;
 
 function parseStudyModalities(modality?: string): string[] {
   return (modality ?? "")
@@ -83,6 +85,11 @@ function normalizeSearchValue(value?: string): string {
     .trim();
 }
 
+/** DICOM UID pattern (numeric dotted); not a hospital MRN. */
+function looksLikeDicomUidString(value: string): boolean {
+  return /^\d+(?:\.\d+)+$/.test(value.trim());
+}
+
 function getStudyMetadataString(study: WorklistStudy, keys: readonly string[]): string {
   const metadata = study.metadata;
   if (!metadata) return "";
@@ -95,14 +102,156 @@ function getStudyMetadataString(study: WorklistStudy, keys: readonly string[]): 
   return "";
 }
 
-/** Aligns with DicomUpload patient binding / upload modal MRN. */
+function getStudyRegistryPatientId(study: WorklistStudy): string {
+  return getStudyMetadataString(study, REGISTRY_ID_METADATA_KEYS).trim();
+}
+
+/** Human MRN / Patient ID from metadata; excludes DICOM UID-shaped PatientID values. */
+function getHumanPatientMrn(study: WorklistStudy): string {
+  const raw = getStudyMetadataString(study, MRN_METADATA_KEYS).trim();
+  if (!raw) return "";
+  if (looksLikeDicomUidString(raw)) return "";
+  if (/^UPL-[A-Z0-9]+$/i.test(raw)) return "";
+  return raw;
+}
+
+function normalizeDicomPersonNameForKey(name?: string): string {
+  return normalizeSearchValue(name?.replace(/\^/g, " "));
+}
+
+/**
+ * Stable key for one row per patient + OHIF iframe reload bumps.
+ * Prefer real MRN; if metadata only has UID-like "PatientID", group by normalized name.
+ */
+function stablePatientListKey(study: WorklistStudy): string {
+  const registryId = getStudyRegistryPatientId(study);
+  if (registryId) return `rid:${registryId.toLowerCase()}`;
+  const mrn = getHumanPatientMrn(study);
+  if (mrn) return `mrn:${mrn.toLowerCase()}`;
+  const normalizedName = normalizeDicomPersonNameForKey(study.patientName);
+  if (normalizedName) return `name:${normalizedName}`;
+  return `study:${study.studyId}`;
+}
+
+function displayPatientId(study: WorklistStudy): string {
+  const mrn = getHumanPatientMrn(study);
+  return mrn || "—";
+}
+
+function isRegistryOnlyStudy(study: WorklistStudy): boolean {
+  return (study.metadata as Record<string, unknown> | undefined)?.registryOnly === true;
+}
+
+function buildRegistryOnlyWorklistStudy(patient: Patient): WorklistStudy {
+  return {
+    studyId: `registry-${patient.id}`,
+    patientName: `${patient.firstName} ${patient.lastName}`.trim(),
+    studyDate: patient.updatedAt?.slice(0, 10),
+    modality: "OT",
+    description: "Patient registered (no DICOM uploaded yet)",
+    location: "",
+    status: "unassigned",
+    assignedTo: undefined,
+    assignedAt: undefined,
+    reportedAt: undefined,
+    tatHours: undefined,
+    metadata: {
+      registryOnly: true,
+      patientId: patient.patientId,
+      patientRegistryId: patient.id,
+      patientDateOfBirth: patient.dateOfBirth,
+      ...(patient.phone ? { patientPhone: patient.phone } : {}),
+      ...(patient.email ? { patientEmail: patient.email } : {}),
+      ...(patient.address ? { patientAddress: patient.address } : {}),
+      updatedAt: patient.updatedAt,
+    },
+    viewerUrl: null,
+    weasisUrl: null,
+    reportUrl: "/patients",
+    viewerValidation: null,
+  };
+}
+
+function isValidDobForRegistration(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return false;
+  const now = new Date();
+  const dob = new Date(parsed);
+  if (dob > now) return false;
+  const oldest = new Date();
+  oldest.setFullYear(now.getFullYear() - 130);
+  return dob >= oldest;
+}
+
+function normalizeIndianPhoneNumber(value: string): string | null {
+  const digits = value.replace(/\D+/g, "");
+  let local = "";
+  if (digits.length === 10) {
+    local = digits;
+  } else if (digits.length === 11 && digits.startsWith("0")) {
+    local = digits.slice(1);
+  } else if (digits.length === 12 && digits.startsWith("91")) {
+    local = digits.slice(2);
+  } else {
+    return null;
+  }
+  if (!/^[6-9]\d{9}$/.test(local)) return null;
+  return `+91${local}`;
+}
+
+/** Aligns with DicomUpload patient binding; returns stable list key (not study UID). */
 function worklistRowPatientMrn(study: WorklistStudy): string {
-  return (
-    getStudyMetadataString(study, MRN_METADATA_KEYS) ||
-    study.studyId?.slice(0, 12) ||
-    study.studyId ||
-    ""
-  ).trim();
+  return stablePatientListKey(study);
+}
+
+function normalizeStudyDateForSort(studyDate?: string): string | undefined {
+  const raw = studyDate?.trim();
+  if (!raw) return undefined;
+  if (/^\d{8}$/.test(raw)) {
+    return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+  }
+  return raw;
+}
+
+function getStudyDateSortValue(studyDate?: string): number {
+  const normalized = normalizeStudyDateForSort(studyDate);
+  if (!normalized) return Number.NEGATIVE_INFINITY;
+  const parsed = Date.parse(normalized);
+  return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+}
+
+function getStudyUpdatedAtSortValue(study: WorklistStudy): number {
+  const metadata = study.metadata as Record<string, unknown> | undefined;
+  const candidates = [
+    typeof metadata?.updatedAt === "string" ? metadata.updatedAt : undefined,
+    typeof metadata?.receivedAt === "string" ? metadata.receivedAt : undefined,
+    typeof metadata?.validatedAt === "string" ? metadata.validatedAt : undefined,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const parsed = Date.parse(candidate);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return Number.NEGATIVE_INFINITY;
+}
+
+function compareStudiesByRecencyDesc(left: WorklistStudy, right: WorklistStudy): number {
+  const rightStudyDate = getStudyDateSortValue(right.studyDate);
+  const leftStudyDate = getStudyDateSortValue(left.studyDate);
+  if (rightStudyDate !== leftStudyDate) {
+    return rightStudyDate - leftStudyDate;
+  }
+  const rightUpdatedAt = getStudyUpdatedAtSortValue(right);
+  const leftUpdatedAt = getStudyUpdatedAtSortValue(left);
+  if (rightUpdatedAt !== leftUpdatedAt) {
+    return rightUpdatedAt - leftUpdatedAt;
+  }
+  return right.studyId.localeCompare(left.studyId);
+}
+
+function worklistPatientGroupKey(study: WorklistStudy): string {
+  return stablePatientListKey(study);
 }
 
 function matchesSearchField(study: WorklistStudy, searchField: SearchField, rawSearch: string): boolean {
@@ -111,7 +260,7 @@ function matchesSearchField(study: WorklistStudy, searchField: SearchField, rawS
 
   const candidatesByField: Record<SearchField, string[]> = {
     name: [study.patientName ?? ""],
-    mrn: [getStudyMetadataString(study, MRN_METADATA_KEYS), study.studyId],
+    mrn: [getHumanPatientMrn(study), getStudyMetadataString(study, MRN_METADATA_KEYS), study.studyId],
     accession: [getStudyMetadataString(study, ACCESSION_METADATA_KEYS), study.studyId],
   };
 
@@ -140,12 +289,28 @@ function isLaunchableViewerUrl(viewerUrl: string): boolean {
 }
 
 function resolveLaunchableViewerUrl(...candidates: Array<string | null | undefined>): string | null {
+  let bestCandidate: { url: string; uidCount: number } | null = null;
   for (const candidate of candidates) {
-    if (candidate && isLaunchableViewerUrl(candidate)) {
-      return candidate;
+    if (!candidate || !isLaunchableViewerUrl(candidate)) continue;
+    try {
+      const parsed = new URL(candidate);
+      const combined = [
+        parsed.searchParams.get("StudyInstanceUIDs") ?? "",
+        parsed.searchParams.get("studyInstanceUIDs") ?? "",
+      ]
+        .join(",")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const uidCount = new Set(combined).size;
+      if (!bestCandidate || uidCount > bestCandidate.uidCount) {
+        bestCandidate = { url: candidate, uidCount };
+      }
+    } catch {
+      // ignore malformed URL candidates
     }
   }
-  return null;
+  return bestCandidate?.url ?? null;
 }
 
 const isPendingStudy = (study: WorklistStudy) =>
@@ -209,12 +374,18 @@ export function RadiologistDashboard() {
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
   const [uploadStudy, setUploadStudy] = useState<WorklistStudy | null>(null);
   const { isDark: darkMode } = useTheme();
-  const serviceStatus = useServiceStatus();
   const [compactMode, setCompactMode] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [selectedRows, setSelectedRows] = useState<Record<string, boolean>>({});
   /** Per-patient revision so OHIF iframe remounts after uploads without affecting other patients' viewer state. */
   const [viewerReloadByPatientMrn, setViewerReloadByPatientMrn] = useState<Record<string, number>>({});
+
+  const [showRegisterPatient, setShowRegisterPatient] = useState(false);
+  const [regForm, setRegForm] = useState({ patientId: "", firstName: "", lastName: "", dateOfBirth: "", gender: "M" as Gender, phone: "", email: "", address: "" });
+  const [regError, setRegError] = useState<string | null>(null);
+  const [regSuccess, setRegSuccess] = useState<string | null>(null);
+  const [regSubmitting, setRegSubmitting] = useState(false);
+  const [recentlyRegisteredPatients, setRecentlyRegisteredPatients] = useState<Patient[]>([]);
 
   const bumpOhifReloadForPatient = useCallback(
     async (patientId: string) => {
@@ -233,16 +404,89 @@ export function RadiologistDashboard() {
 
   const handleDicomUploadedForPatient = useCallback(
     ({ patientId }: { patientId: string }) => {
-      void bumpOhifReloadForPatient(patientId);
+      const raw = patientId.trim();
+      if (!raw) return;
+      const key = looksLikeDicomUidString(raw) ? `study:${raw}` : `mrn:${raw.toLowerCase()}`;
+      void bumpOhifReloadForPatient(key);
     },
     [bumpOhifReloadForPatient],
   );
 
-  const canDicomUpload = auth.role === "admin" || auth.hasPermission("dicom:upload");
+  const canDicomUpload = auth.role === "admin" || auth.role === "super_admin" || auth.hasPermission("dicom:upload");
+
+  function resetRegForm() {
+    setRegForm({ patientId: "", firstName: "", lastName: "", dateOfBirth: "", gender: "M", phone: "", email: "", address: "" });
+    setRegError(null);
+    setRegSuccess(null);
+  }
+
+  function formatPatientApiError(err: unknown): string {
+    const data = (err as { response?: { data?: { error?: unknown } } })?.response?.data;
+    const e = data?.error;
+    if (Array.isArray(e)) {
+      return e
+        .map((item: { message?: string }) => item.message)
+        .filter(Boolean)
+        .join("; ");
+    }
+    if (typeof e === "string") return e;
+    return err instanceof Error ? err.message : "Failed to register patient";
+  }
+
+  async function handleRegisterPatient(e: FormEvent) {
+    e.preventDefault();
+    setRegError(null);
+    setRegSuccess(null);
+    if (!isValidDobForRegistration(regForm.dateOfBirth)) {
+      setRegError("Enter a valid date of birth (past date, up to 130 years old).");
+      return;
+    }
+    const rawPhone = regForm.phone.trim();
+    const normalizedPhone = rawPhone ? normalizeIndianPhoneNumber(rawPhone) : null;
+    if (rawPhone && (!normalizedPhone || !INDIA_PHONE_REGEX.test(rawPhone))) {
+      setRegError("Phone must be a valid Indian number (example: +91 9876543210).");
+      return;
+    }
+    setRegSubmitting(true);
+    try {
+      const payload = {
+        patientId: regForm.patientId.trim().toUpperCase(),
+        firstName: regForm.firstName.trim(),
+        lastName: regForm.lastName.trim(),
+        dateOfBirth: regForm.dateOfBirth,
+        gender: regForm.gender,
+        ...(normalizedPhone ? { phone: normalizedPhone } : {}),
+        ...(regForm.email.trim() ? { email: regForm.email.trim() } : {}),
+        ...(regForm.address.trim() ? { address: regForm.address.trim() } : {}),
+      };
+      const { data } = await api.post<Patient>("/patients", payload);
+      setRecentlyRegisteredPatients((prev) => [data, ...prev.filter((patient) => patient.id !== data.id)]);
+      await queryClient.invalidateQueries({ queryKey: ["patients"] });
+      await worklistQuery.refetch();
+      setShowRegisterPatient(false);
+      resetRegForm();
+    } catch (err: unknown) {
+      setRegError(formatPatientApiError(err));
+    } finally {
+      setRegSubmitting(false);
+    }
+  }
 
   const debouncedSearchText = useDebouncedValue(searchText, 400);
   const selectedSearchOption = SEARCH_OPTIONS.find((option) => option.value === searchField) ?? SEARCH_OPTIONS[0];
   const trimmedSearchText = debouncedSearchText.trim();
+
+  const canViewPatients = auth.hasPermission("patients:view");
+  const registryPatientsQuery = useQuery({
+    queryKey: ["patients", "worklist"],
+    queryFn: async () => {
+      const res = await api.get<Patient[]>("/patients");
+      return res.data;
+    },
+    enabled: auth.isAuthenticated && auth.approved && canViewPatients,
+    staleTime: 5000,
+    retry: 1,
+  });
 
   const worklistQuery = useQuery({
     queryKey: ["worklist", { searchField, searchText: debouncedSearchText, dateFrom: searchDateFrom, dateTo: searchDateTo }],
@@ -266,7 +510,40 @@ export function RadiologistDashboard() {
     retry: 1,
   });
 
-  const data = worklistQuery.data ?? [];
+  const knownPatientsByMrn = useMemo(() => {
+    const byMrn = new Map<string, Patient>();
+    for (const patient of registryPatientsQuery.data ?? []) {
+      byMrn.set(patient.patientId.trim().toLowerCase(), patient);
+    }
+    for (const patient of recentlyRegisteredPatients) {
+      byMrn.set(patient.patientId.trim().toLowerCase(), patient);
+    }
+    return byMrn;
+  }, [registryPatientsQuery.data, recentlyRegisteredPatients]);
+
+  const rawData = worklistQuery.data ?? [];
+  const data = useMemo(() => {
+    const latestStudyByPatient = new Map<string, WorklistStudy>();
+    for (const study of rawData) {
+      const key = worklistPatientGroupKey(study);
+      const existing = latestStudyByPatient.get(key);
+      if (!existing || compareStudiesByRecencyDesc(study, existing) < 0) {
+        latestStudyByPatient.set(key, study);
+      }
+    }
+    const merged = Array.from(latestStudyByPatient.values());
+    const existingMrnKeys = new Set(
+      merged
+        .map((study) => getHumanPatientMrn(study).trim().toLowerCase())
+        .filter(Boolean),
+    );
+    for (const patient of recentlyRegisteredPatients) {
+      const mrnKey = patient.patientId.trim().toLowerCase();
+      if (!mrnKey || existingMrnKeys.has(mrnKey)) continue;
+      merged.push(buildRegistryOnlyWorklistStudy(patient));
+    }
+    return merged.sort(compareStudiesByRecencyDesc);
+  }, [rawData, recentlyRegisteredPatients]);
 
   async function validateAndOpenViewer(study: WorklistStudy): Promise<void> {
     if (!study.viewerUrl) return;
@@ -278,40 +555,6 @@ export function RadiologistDashboard() {
         viewerUrl: string | null;
         message?: string;
       }>(`/worklist/${encodeURIComponent(study.studyId)}/viewer-access`);
-      const apiViewerUrl = response.data.viewerUrl;
-      let apiViewerHasLaunchParams = false;
-      let apiViewerLooksMicroscopy = false;
-      if (apiViewerUrl) {
-        try {
-          const parsed = new URL(apiViewerUrl);
-          apiViewerHasLaunchParams =
-            parsed.searchParams.getAll("StudyInstanceUIDs").length > 0 ||
-            Boolean(parsed.searchParams.get("studyInstanceUIDs"));
-          apiViewerLooksMicroscopy = /\/dicom-microscopy-viewer(?:\/|$)/i.test(parsed.pathname);
-        } catch {
-          apiViewerHasLaunchParams = false;
-        }
-      }
-      // #region agent log
-      void fetch("http://127.0.0.1:7526/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6646bc" },
-        body: JSON.stringify({
-          sessionId: "6646bc",
-          runId: "initial",
-          hypothesisId: "H3",
-          location: "frontend/components/RadiologistDashboard.tsx:validateAndOpenViewer:api",
-          message: "Viewer access API response received",
-          data: {
-            allowed: response.data.allowed,
-            hasViewerUrl: Boolean(apiViewerUrl),
-            apiViewerHasLaunchParams,
-            apiViewerLooksMicroscopy,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
 
       if (!response.data.allowed || !response.data.viewerUrl) {
         setViewerWarning(response.data.message || "Study exists but images not yet available");
@@ -320,25 +563,6 @@ export function RadiologistDashboard() {
       }
 
       const launchUrl = resolveLaunchableViewerUrl(response.data.viewerUrl, study.viewerUrl);
-      // #region agent log
-      void fetch("http://127.0.0.1:7526/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6646bc" },
-        body: JSON.stringify({
-          sessionId: "6646bc",
-          runId: "initial",
-          hypothesisId: "H3",
-          location: "frontend/components/RadiologistDashboard.tsx:validateAndOpenViewer:resolve",
-          message: "Resolved launch URL candidate",
-          data: {
-            hasLaunchUrl: Boolean(launchUrl),
-            usedBackendViewerUrl: launchUrl === response.data.viewerUrl,
-            usedFallbackViewerUrl: launchUrl === study.viewerUrl,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       if (!launchUrl) {
         setViewerWarning("OHIF launch URL is invalid (missing study parameters). Please refresh and try again.");
         setTimeout(() => setViewerWarning(null), 6000);
@@ -368,6 +592,10 @@ export function RadiologistDashboard() {
   /* Filter by tab (client-side — status mapping) */
   const filteredData = useMemo(() => {
     let next = data;
+
+    if (activeTab !== "all") {
+      next = next.filter((study) => !isRegistryOnlyStudy(study));
+    }
 
     if (activeTab === "emergency") {
       next = next.filter(isEmergencyStudy);
@@ -412,8 +640,9 @@ export function RadiologistDashboard() {
         header: "",
         cell: ({ row }) => {
           const isExpanded = expandedRowId === row.original.studyId;
-          const patientStudies = data.filter(
-            (s) => s.patientName === row.original.patientName && s.studyId !== row.original.studyId,
+          const rowPatientKey = worklistPatientGroupKey(row.original);
+          const patientStudies = rawData.filter(
+            (study) => worklistPatientGroupKey(study) === rowPatientKey && study.studyId !== row.original.studyId,
           );
           return (
             <button
@@ -464,7 +693,15 @@ export function RadiologistDashboard() {
         accessorKey: "patientName",
         header: "Patient",
         cell: ({ row }) => {
-          const pid = row.original.studyId?.slice(0, 12) ?? "—";
+          const mrn = displayPatientId(row.original);
+          const registryIdFromMetadata = getStudyRegistryPatientId(row.original);
+          const registryIdFromMrn =
+            mrn !== "—" ? (knownPatientsByMrn.get(mrn.toLowerCase())?.id ?? "") : "";
+          const uniquePatientId = registryIdFromMetadata || registryIdFromMrn;
+          const copyText = uniquePatientId || (mrn !== "—" ? mrn : "");
+          const uniquePatientLabel = uniquePatientId
+            ? `UID: ${uniquePatientId.slice(0, 12)}${uniquePatientId.length > 12 ? "…" : ""}`
+            : "UID: —";
           const isCopied = copiedId === row.original.studyId;
           return (
             <div>
@@ -482,12 +719,15 @@ export function RadiologistDashboard() {
                 </button>
               </div>
               <div className="mt-0.5 flex items-center gap-1.5">
-                <span className="font-mono text-[11px] text-tdai-secondary leading-none">{pid}</span>
+                <span className="font-mono text-[11px] text-tdai-secondary leading-none" title={uniquePatientId || "Registry unique ID not available"}>{uniquePatientLabel}</span>
+                <span className="font-mono text-[11px] text-tdai-muted leading-none" title="MRN / Patient ID">{mrn !== "—" ? `MRN: ${mrn}` : "MRN: —"}</span>
                 <button
                   className={`rounded p-0.5 transition-colors ${isCopied ? "text-tdai-teal-600" : "text-tdai-muted hover:bg-tdai-surface-alt hover:text-tdai-text"}`}
-                  title={isCopied ? "Copied!" : "Copy Patient ID"}
+                  title={isCopied ? "Copied!" : copyText ? "Copy patient unique ID" : "No patient ID on file"}
+                  disabled={!copyText}
                   onClick={() => {
-                    void navigator.clipboard.writeText(pid);
+                    if (!copyText) return;
+                    void navigator.clipboard.writeText(copyText);
                     setCopiedId(row.original.studyId);
                     setTimeout(() => setCopiedId(null), 1500);
                   }}
@@ -502,12 +742,15 @@ export function RadiologistDashboard() {
       {
         id: "accDiag",
         header: "Acc/Diag",
-        cell: ({ row }) => (
-          <div className="text-xs text-tdai-secondary">
-            <div className="font-medium">{row.original.studyId?.slice(0, 8) ?? "—"}</div>
-            <div className="text-tdai-muted mt-0.5">Diag</div>
-          </div>
-        ),
+        cell: ({ row }) => {
+          const acc = getStudyMetadataString(row.original, ACCESSION_METADATA_KEYS);
+          return (
+            <div className="text-xs text-tdai-secondary">
+              <div className="font-medium truncate" title={acc || undefined}>{acc || "—"}</div>
+              <div className="text-tdai-muted mt-0.5">Accession</div>
+            </div>
+          );
+        },
       },
       {
         id: "modality",
@@ -587,8 +830,10 @@ export function RadiologistDashboard() {
       {
         id: "actions",
         header: "",
-        cell: ({ row }) => (
-          <div className="flex h-full w-full items-center justify-start gap-1">
+        cell: ({ row }) => {
+          const isRegistryOnly = isRegistryOnlyStudy(row.original);
+          return (
+            <div className="flex h-full w-full items-center justify-start gap-1">
             {canDicomUpload && (
               <button
                 className="rounded-md p-0.5 text-amber-600 hover:bg-amber-50 transition-colors"
@@ -600,7 +845,7 @@ export function RadiologistDashboard() {
             )}
             <button
               className={`rounded-md p-0.5 transition-colors ${
-                !row.original.viewerUrl
+                !row.original.viewerUrl || isRegistryOnly
                   ? "text-tdai-gray-300 cursor-not-allowed"
                   : validatingViewerStudyId === row.original.studyId
                     ? "text-tdai-teal-500"
@@ -608,16 +853,17 @@ export function RadiologistDashboard() {
                     ? "bg-tdai-teal-500 text-white shadow-sm"
                     : "text-tdai-teal-600 hover:bg-tdai-teal-50"
               }`}
-              disabled={!row.original.viewerUrl || validatingViewerStudyId === row.original.studyId}
+              disabled={!row.original.viewerUrl || validatingViewerStudyId === row.original.studyId || isRegistryOnly}
               onClick={() => {
                 if (!row.original.viewerUrl) return;
+                if (isRegistryOnly) return;
                 if (viewerStudyId === row.original.studyId) {
                   setViewerStudyId(null);
                   return;
                 }
                 void validateAndOpenViewer(row.original);
               }}
-              title={row.original.viewerUrl ? "Open in OHIF Viewer" : "OHIF Viewer not available"}
+              title={isRegistryOnly ? "Upload DICOM to enable viewer" : row.original.viewerUrl ? "Open in OHIF Viewer" : "OHIF Viewer not available"}
             >
               {validatingViewerStudyId === row.original.studyId ? (
                 <RefreshCw className="h-4 w-4 animate-spin" />
@@ -625,7 +871,7 @@ export function RadiologistDashboard() {
                 <Eye className="h-4 w-4" />
               )}
             </button>
-            {row.original.weasisUrl && (
+            {row.original.weasisUrl && !isRegistryOnly && (
               <a
                 className="rounded-md p-0.5 text-indigo-600 hover:bg-indigo-50 transition-colors"
                 href={row.original.weasisUrl}
@@ -634,18 +880,29 @@ export function RadiologistDashboard() {
                 <MonitorSmartphone className="h-4 w-4" />
               </a>
             )}
-            <Link
-              className="rounded-md p-0.5 text-tdai-navy-500 hover:bg-tdai-navy-50 transition-colors"
-              to={row.original.reportUrl}
-              title="Open report"
-            >
-              <FileText className="h-4 w-4" />
-            </Link>
+            {!isRegistryOnly ? (
+              <Link
+                className="rounded-md p-0.5 text-tdai-navy-500 hover:bg-tdai-navy-50 transition-colors"
+                to={row.original.reportUrl}
+                title="Open report"
+              >
+                <FileText className="h-4 w-4" />
+              </Link>
+            ) : (
+              <button
+                className="rounded-md p-0.5 text-tdai-gray-300 cursor-not-allowed"
+                disabled
+                title="Report is available after DICOM upload"
+              >
+                <FileText className="h-4 w-4" />
+              </button>
+            )}
           </div>
-        ),
+        );
+        },
       },
     ],
-    [viewerStudyId, expandedRowId, data, copiedId, canDicomUpload, filteredData, selectedRows, navigate, validatingViewerStudyId],
+    [viewerStudyId, expandedRowId, data, rawData, copiedId, canDicomUpload, filteredData, selectedRows, navigate, validatingViewerStudyId, knownPatientsByMrn],
   );
 
   const table = useReactTable({ data: filteredData, columns, getCoreRowModel: getCoreRowModel() });
@@ -674,11 +931,21 @@ export function RadiologistDashboard() {
         transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
         className="bg-gradient-to-r from-tdai-navy-800 to-tdai-navy-700 px-6 py-3 shadow-sm z-10"
       >
-        <div className="flex items-center gap-3">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10 shadow-inner">
-            <Activity className="h-4 w-4 text-tdai-teal-400" />
+        <div className="flex w-full max-w-[1400px] mx-auto items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10 shadow-inner">
+              <Activity className="h-4 w-4 text-tdai-teal-400" />
+            </div>
+            <span className="text-sm font-bold tracking-widest text-white">PATIENT LIST</span>
           </div>
-          <span className="text-sm font-bold tracking-widest text-white">PATIENT LIST</span>
+          <button
+            type="button"
+            onClick={() => { resetRegForm(); setShowRegisterPatient(true); }}
+            className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-white/15"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Register Patient
+          </button>
         </div>
       </motion.div>
 
@@ -907,9 +1174,10 @@ export function RadiologistDashboard() {
           <div className={`divide-y ${darkMode ? "divide-white/5" : "divide-tdai-border-light"}`}>
             {table.getRowModel().rows.map((row) => {
               const isExpanded = expandedRowId === row.original.studyId;
-              const patientHistory = data.filter(
-                (s) => s.patientName === row.original.patientName && s.studyId !== row.original.studyId,
-              );
+              const rowPatientKey = worklistPatientGroupKey(row.original);
+              const patientHistory = rawData
+                .filter((study) => worklistPatientGroupKey(study) === rowPatientKey && study.studyId !== row.original.studyId)
+                .sort(compareStudiesByRecencyDesc);
               return (
                 <div key={row.id}>
                   <motion.div
@@ -918,6 +1186,7 @@ export function RadiologistDashboard() {
                     onClick={(e) => {
                       const target = e.target as HTMLElement;
                       if (target.closest("button") || target.closest("a") || target.closest("input")) return;
+                      if (isRegistryOnlyStudy(row.original)) return;
                       navigate(row.original.reportUrl);
                     }}
                     className={`grid grid-cols-[32px_32px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-0 px-0 cursor-pointer ${compactMode ? "py-2.5" : "py-3.5"} transition-all duration-200 origin-left will-change-transform transform-gpu hover:z-[1] hover:brightness-[1.02] ${
@@ -1118,7 +1387,10 @@ export function RadiologistDashboard() {
                     </span>
                   </div>
                   <div className="text-xs text-tdai-gray-400 mt-0.5">
-                    ID: {study.studyId?.slice(0, 12)} • {study.modality} • {study.studyDate}
+                    {getHumanPatientMrn(study)
+                      ? `MRN: ${getHumanPatientMrn(study)}`
+                      : `Study: ${study.studyId?.slice(0, 16) ?? "—"}…`}
+                    {" "}• {study.modality} • {study.studyDate}
                   </div>
                 </div>
               </div>
@@ -1150,11 +1422,6 @@ export function RadiologistDashboard() {
                   src={viewerUrl}
                 />
               </div>
-              {serviceStatus.monaiUiVisible && auth.hasAnyPermission(["ai:analyze", "ai:view_results"]) && (
-                <div className="w-96 shrink-0 overflow-y-auto">
-                  <MonaiPanel studyId={study.studyId} />
-                </div>
-              )}
             </div>
           </div>
         );
@@ -1163,7 +1430,7 @@ export function RadiologistDashboard() {
       {/* ── Upload Modal for selected patient ── */}
       {uploadStudy && (() => {
         const patientName = uploadStudy.patientName ?? "Unknown";
-        const patientMrn = getStudyMetadataString(uploadStudy, MRN_METADATA_KEYS);
+        const patientMrn = getHumanPatientMrn(uploadStudy);
         return (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-fade-in"
@@ -1200,6 +1467,82 @@ export function RadiologistDashboard() {
           </div>
         );
       })()}
+
+      {/* ── Register Patient Modal ───────── */}
+      {showRegisterPatient && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-fade-in"
+          onClick={() => { setShowRegisterPatient(false); resetRegForm(); }}
+        >
+          <div
+            className="w-full max-w-xl mx-4 max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl animate-slide-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-tdai-border px-6 py-4">
+              <div>
+                <h2 className="text-lg font-semibold text-tdai-text">Register New Patient</h2>
+                <p className="text-xs text-tdai-muted mt-0.5">Fields marked with * are required</p>
+              </div>
+              <button
+                className="rounded-lg p-1.5 text-tdai-muted hover:bg-tdai-surface-alt hover:text-tdai-text transition-colors"
+                onClick={() => { setShowRegisterPatient(false); resetRegForm(); }}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form className="overflow-y-auto p-6" onSubmit={handleRegisterPatient}>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">MRN / Patient ID *</label>
+                  <input className="input-field" placeholder="e.g. MRN-001" value={regForm.patientId} onChange={(e) => setRegForm({ ...regForm, patientId: e.target.value })} required />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Gender</label>
+                  <select className="select-field w-full" value={regForm.gender} onChange={(e) => setRegForm({ ...regForm, gender: e.target.value as Gender })}>
+                    <option value="M">Male</option>
+                    <option value="F">Female</option>
+                    <option value="O">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">First Name *</label>
+                  <input className="input-field" placeholder="First name" value={regForm.firstName} onChange={(e) => setRegForm({ ...regForm, firstName: e.target.value })} required />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Last Name *</label>
+                  <input className="input-field" placeholder="Last name" value={regForm.lastName} onChange={(e) => setRegForm({ ...regForm, lastName: e.target.value })} required />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Date of Birth *</label>
+                  <input className="input-field input-date" type="date" max={new Date().toISOString().slice(0, 10)} value={regForm.dateOfBirth} onChange={(e) => setRegForm({ ...regForm, dateOfBirth: e.target.value })} required />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Phone</label>
+                  <input className="input-field" type="tel" placeholder="+91 9876543210" value={regForm.phone} onChange={(e) => setRegForm({ ...regForm, phone: e.target.value })} />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Email</label>
+                  <input className="input-field" type="email" placeholder="Email address" value={regForm.email} onChange={(e) => setRegForm({ ...regForm, email: e.target.value })} />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Address</label>
+                  <input className="input-field" placeholder="Address" value={regForm.address} onChange={(e) => setRegForm({ ...regForm, address: e.target.value })} />
+                </div>
+              </div>
+              {regError && <p className="mt-4 rounded-xl border border-tdai-red-200 bg-tdai-red-50 px-4 py-2.5 text-sm text-tdai-red-700">{regError}</p>}
+              {regSuccess && <p className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-700">{regSuccess}</p>}
+              <div className="mt-6 flex gap-3 border-t border-tdai-border pt-6">
+                <button className="btn-primary !rounded-lg !px-5 !py-2.5" type="submit" disabled={regSubmitting}>
+                  {regSubmitting ? "Registering…" : "Register Patient"}
+                </button>
+                <button className="btn-secondary !rounded-lg !px-5 !py-2.5" type="button" onClick={() => { setShowRegisterPatient(false); resetRegForm(); }}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ── Footer bar ────────────────────── */}
       <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-tdai-navy-600 bg-tdai-navy-900 px-6 py-2.5 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">

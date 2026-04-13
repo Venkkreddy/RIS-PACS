@@ -1,0 +1,129 @@
+###############################################################################
+# TDAI – Development Overlay  (live-reload for ALL services)
+#
+# Usage:
+#   docker compose --env-file .env.docker \
+#     -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# What this does:
+#   - reporting-app-backend : bind-mounts source, runs ts-node-dev (auto-restart)
+#   - reporting-app-frontend: bind-mounts source, runs Vite dev server (HMR)
+#   - monai-server          : bind-mounts source, runs uvicorn --reload
+#   - medasr-server         : bind-mounts source, runs uvicorn --reload
+#   - dicoogle / ohif / postgres: unchanged (use production images)
+###############################################################################
+
+services:
+
+  # ── Reporting App Backend (Node.js + ts-node-dev) ──────────────────────────
+
+  reporting-app-backend:
+    build: !reset null
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -w backend"
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./packages/reporting-app:/app
+      - backend-node-modules:/app/node_modules
+      - backend-pkg-modules:/app/backend/node_modules
+      - backend-fe-modules:/app/frontend/node_modules
+      - backend-shared-modules:/app/shared/node_modules
+      - dicoogle-storage:/storage
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 10
+
+  # ── Reporting App Frontend (Vite dev server with HMR) ──────────────────────
+
+  reporting-app-frontend:
+    build: !reset null
+    image: node:20-alpine
+    working_dir: /app
+    command: >-
+      sh -c "
+        apk add --no-cache openssl &&
+        mkdir -p /app/frontend/certs &&
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048
+          -keyout /app/frontend/certs/selfsigned.key
+          -out    /app/frontend/certs/selfsigned.crt
+          -subj   '/C=US/ST=State/L=City/O=TDAI/CN=localhost' 2>/dev/null &&
+        npm install &&
+        npm run dev -w frontend -- --host 0.0.0.0 --port 5173
+      "
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    environment:
+      VITE_API_BASE_URL: "${VITE_API_BASE_URL:-https://localhost:5173/api}"
+      VITE_BACKEND_PROXY_TARGET: "${VITE_BACKEND_PROXY_TARGET:-http://reporting-app-backend:8080}"
+      VITE_FIREBASE_API_KEY: "${VITE_FIREBASE_API_KEY:-}"
+      VITE_FIREBASE_AUTH_DOMAIN: "${VITE_FIREBASE_AUTH_DOMAIN:-}"
+      VITE_FIREBASE_PROJECT_ID: "${VITE_FIREBASE_PROJECT_ID:-}"
+      VITE_FIREBASE_APP_ID: "${VITE_FIREBASE_APP_ID:-}"
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./packages/reporting-app:/app
+      - frontend-node-modules:/app/node_modules
+      - frontend-be-modules:/app/backend/node_modules
+      - frontend-fe-modules:/app/frontend/node_modules
+      - frontend-shared-modules:/app/shared/node_modules
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate -qO- https://localhost:5173/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 90s
+      retries: 10
+
+  # ── MONAI Server (FastAPI + uvicorn --reload) ──────────────────────────────
+
+  monai-server:
+    volumes:
+      - ./packages/monai-server/server.py:/app/server.py
+      - ./packages/monai-server/config.py:/app/config.py
+      - ./packages/monai-server/models:/app/models
+      - ./packages/monai-server/transforms:/app/transforms
+      - ./packages/monai-server/inference:/app/inference
+      - ./packages/monai-server/outputs:/app/outputs
+      - ./packages/monai-server/metrics:/app/metrics
+      - ./packages/monai-server/label:/app/label
+      - monai-models:/opt/monai/models
+    command: ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "5000", "--reload"]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      WATCHFILES_FORCE_POLLING: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/health')\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  # ── MedASR Server (FastAPI + uvicorn --reload) ─────────────────────────────
+
+  medasr-server:
+    volumes:
+      - ./packages/medasr-server:/app
+    command: ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "5001", "--reload"]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      WATCHFILES_FORCE_POLLING: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5001/health')\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+volumes:
+  backend-node-modules:
+  backend-pkg-modules:
+  backend-fe-modules:
+  backend-shared-modules:
+  frontend-node-modules:
+  frontend-be-modules:
+  frontend-fe-modules:
+  frontend-shared-modules:

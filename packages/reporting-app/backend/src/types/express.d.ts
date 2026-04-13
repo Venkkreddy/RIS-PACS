@@ -5,7 +5,7 @@ declare module "express-session" {
     user?: {
       id: string;
       email: string;
-      role: "admin" | "radiographer" | "radiologist" | "referring" | "billing" | "receptionist" | "viewer";
+      role: "super_admin" | "admin" | "developer" | "radiographer" | "radiologist" | "referring" | "billing" | "receptionist" | "viewer";
       approved?: boolean;
       requestStatus?: "pending" | "approved" | "rejected";
       displayName?: string;

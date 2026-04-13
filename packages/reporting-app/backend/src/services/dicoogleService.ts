@@ -21,13 +21,11 @@ export class DicoogleService {
     acceptedStatuses: number[] = [200],
   ): Promise<{ status: number; data: unknown }> {
     const endpoints = Array.from(
-      new Set([
-        env.DICOOGLE_BASE_URL,
-        env.DICOOGLE_FALLBACK_BASE_URL,
-        "http://tdairad-dicoogle.internal",
-        "http://tdairad-dicoogle.flycast",
-        "https://tdairad-dicoogle.fly.dev",
-      ]),
+      new Set(
+        [env.DICOOGLE_BASE_URL, env.DICOOGLE_FALLBACK_BASE_URL].filter(
+          (value): value is string => Boolean(value),
+        ),
+      ),
     );
 
     let authHeaders: Record<string, string> = {};

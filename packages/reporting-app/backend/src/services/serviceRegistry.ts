@@ -22,6 +22,13 @@ export interface ServiceConfig {
     useMedGemma: boolean;
     uiVisible: boolean;
   };
+  storage: {
+    mode: "local" | "cloud";
+    cloudBucket: string;
+    cloudPrefix: string;
+    // Keep a local mirror for DICOMweb compatibility when cloud mode is enabled.
+    keepLocalCopy: boolean;
+  };
   updatedAt: string;
   updatedBy: string;
 }
@@ -71,6 +78,12 @@ function defaultConfig(): ServiceConfig {
       monaiUrl: env.MONAI_SERVER_URL,
       useMedGemma: false,
       uiVisible: true,
+    },
+    storage: {
+      mode: "cloud",
+      cloudBucket: env.GCS_BUCKET,
+      cloudPrefix: "ris-pacs",
+      keepLocalCopy: true,
     },
     updatedAt: new Date().toISOString(),
     updatedBy: "system-defaults",
@@ -159,6 +172,7 @@ export class ServiceRegistry {
       stt: { ...current.stt, ...(patch.stt ?? {}) },
       llm: { ...current.llm, ...(patch.llm ?? {}) },
       inference: { ...current.inference, ...(patch.inference ?? {}) },
+      storage: { ...current.storage, ...(patch.storage ?? {}) },
       updatedAt: new Date().toISOString(),
       updatedBy,
     });
@@ -207,6 +221,11 @@ export class ServiceRegistry {
   async isInferenceEnabled(): Promise<boolean> {
     const config = await this.getConfig();
     return config.inference.enabled;
+  }
+
+  async getStorageConfig(): Promise<ServiceConfig["storage"]> {
+    const config = await this.getConfig();
+    return config.storage;
   }
 
   invalidateCache(): void {

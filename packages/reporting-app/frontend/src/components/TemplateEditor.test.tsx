@@ -12,7 +12,7 @@ describe("TemplateEditor", () => {
   it("submits template payload", async () => {
     render(<TemplateEditor />);
 
-    fireEvent.change(screen.getByPlaceholderText("Template name"), {
+    fireEvent.change(screen.getByPlaceholderText("e.g. Chest X-Ray Normal"), {
       target: { value: "CT Brain" },
     });
 

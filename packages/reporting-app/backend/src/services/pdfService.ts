@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont } from "pdf-lib";
-import { Report, ReportSection } from "@medical-report-system/shared";
+import { Report } from "@medical-report-system/shared";
 
 const MARGIN_LEFT = 50;
 const MARGIN_RIGHT = 50;

@@ -21,6 +21,15 @@ export async function seedDevData(store: InMemoryStoreService): Promise<void> {
     { id: "tech-rajesh", email: "rajesh.tiwari@tdai.in", role: "radiographer" as const, displayName: "Rajesh Tiwari", approved: true, requestStatus: "approved" as const },
     { id: "tech-lakshmi", email: "lakshmi.pillai@tdai.in", role: "radiographer" as const, displayName: "Lakshmi Pillai", approved: true, requestStatus: "approved" as const },
     { id: "admin-tdai", email: "admin@tdai.in", role: "admin" as const, displayName: "TDAI Admin", approved: true, requestStatus: "approved" as const },
+    { id: "demo-super-admin", email: "super_admin@example.com", role: "super_admin" as const, displayName: "Dev Super Admin", approved: true, requestStatus: "approved" as const },
+    { id: "demo-admin", email: "admin@example.com", role: "admin" as const, displayName: "Dev Admin", approved: true, requestStatus: "approved" as const },
+    { id: "demo-developer", email: "developer@example.com", role: "developer" as const, displayName: "Dev Developer", approved: true, requestStatus: "approved" as const },
+    { id: "demo-radiologist", email: "radiologist@example.com", role: "radiologist" as const, displayName: "Dev Radiologist", approved: true, requestStatus: "approved" as const },
+    { id: "demo-radiographer", email: "radiographer@example.com", role: "radiographer" as const, displayName: "Dev Radiographer", approved: true, requestStatus: "approved" as const },
+    { id: "demo-referring", email: "referring@example.com", role: "referring" as const, displayName: "Dev Referring", approved: true, requestStatus: "approved" as const },
+    { id: "demo-billing", email: "billing@example.com", role: "billing" as const, displayName: "Dev Billing", approved: true, requestStatus: "approved" as const },
+    { id: "demo-receptionist", email: "receptionist@example.com", role: "receptionist" as const, displayName: "Dev Receptionist", approved: true, requestStatus: "approved" as const },
+    { id: "demo-viewer", email: "viewer@example.com", role: "viewer" as const, displayName: "Dev Viewer", approved: true, requestStatus: "approved" as const },
   ];
   for (const u of users) {
     await store.upsertUser(u);
@@ -93,11 +102,11 @@ export async function seedDevData(store: InMemoryStoreService): Promise<void> {
   // Real DICOM StudyInstanceUIDs indexed in Dicoogle
   const studies = [
     { studyId: "1.3.6.1.4.1.44316.6.102.1.2023091384336494.746252101381252750643", patientName: "Vikram Desai", studyDate: "2026-03-10", modality: "PX", description: "Panoramic X-Ray — Jaw", bodyPart: "Jaw", location: "Apollo Diagnostics, Chennai", status: "assigned" as const, assignedTo: "rad-dr-sanjay", assignedAt: new Date().toISOString(), uploaderId: "tech-rajesh" },
-    { studyId: "1.2.826.0.1.3680043.8.1055.1.20111103111148288.98361414.79379639", patientName: "Meena Nair", studyDate: "2026-03-09", modality: "MR", description: "MRI Knee (R)", bodyPart: "Knee", location: "Apollo Diagnostics, Chennai", status: "pending" as const, uploaderId: "tech-rajesh" },
-    { studyId: "1.2.826.0.1.3680043.8.498.25078228286114488662691612626295400838", patientName: "Amit Singh", studyDate: "2026-03-14", modality: "CT", description: "CT Chest w/ contrast", bodyPart: "Chest", location: "Apollo Hospitals, Delhi", status: "pending" as const, uploaderId: "tech-rajesh" },
+    { studyId: "1.2.826.0.1.3680043.8.1055.1.20111103111148288.98361414.79379639", patientName: "Meena Nair", studyDate: "2026-03-09", modality: "MR", description: "MRI Knee (R)", bodyPart: "Knee", location: "Apollo Diagnostics, Chennai", status: "unassigned" as const, uploaderId: "tech-rajesh" },
+    { studyId: "1.2.826.0.1.3680043.8.498.25078228286114488662691612626295400838", patientName: "Amit Singh", studyDate: "2026-03-14", modality: "CT", description: "CT Chest w/ contrast", bodyPart: "Chest", location: "Apollo Hospitals, Delhi", status: "unassigned" as const, uploaderId: "tech-rajesh" },
     { studyId: "1.2.826.0.1.3680043.8.498.33671051009637181933407679879111779118", patientName: "Neha Patel", studyDate: "2026-03-13", modality: "MR", description: "MRI Lumbar Spine w/o contrast", bodyPart: "Lumbar Spine", location: "Fortis Hospital, Ahmedabad", status: "assigned" as const, assignedTo: "rad-dr-deepa", assignedAt: new Date().toISOString(), uploaderId: "tech-rajesh" },
     { studyId: "1.2.826.0.1.3680043.8.498.7650919683101803526004408509422926761", patientName: "Ravi Kumar", studyDate: "2026-03-15", modality: "MR", description: "MRI Brain w/ & w/o contrast", bodyPart: "Brain", location: "Manipal Hospital, Bangalore", status: "assigned" as const, assignedTo: "rad-dr-arjun", assignedAt: new Date().toISOString(), uploaderId: "tech-lakshmi" },
-    { studyId: "1.2.826.0.1.3680043.8.498.12452783231387736129149000279779292065", patientName: "Pooja Sharma", studyDate: "2026-03-12", modality: "CT", description: "CT Abdomen / Pelvis", bodyPart: "Abdomen / Pelvis", location: "Tata Memorial Hospital, Mumbai", status: "pending" as const, uploaderId: "tech-lakshmi" },
+    { studyId: "1.2.826.0.1.3680043.8.498.12452783231387736129149000279779292065", patientName: "Pooja Sharma", studyDate: "2026-03-12", modality: "CT", description: "CT Abdomen / Pelvis", bodyPart: "Abdomen / Pelvis", location: "Tata Memorial Hospital, Mumbai", status: "unassigned" as const, uploaderId: "tech-lakshmi" },
     { studyId: "1.2.826.0.1.3680043.8.498.38295520635455189473067266483083688997", patientName: "Suresh Reddy", studyDate: "2026-03-14", modality: "CR", description: "X-Ray Right Knee (3 views)", bodyPart: "Right Knee", location: "Apollo Diagnostics, Chennai", status: "assigned" as const, assignedTo: "rad-dr-sneha", assignedAt: new Date().toISOString(), uploaderId: "tech-rajesh" },
     { studyId: "1.2.826.0.1.3680043.8.498.30846453286534628577940689408376587200", patientName: "Anjali Mehta", studyDate: "2026-03-11", modality: "CR", description: "Chest X-Ray PA & Lateral", bodyPart: "Chest", location: "Medanta, Kolkata", status: "assigned" as const, assignedTo: "rad-dr-sanjay", assignedAt: new Date().toISOString(), uploaderId: "tech-rajesh" },
   ];

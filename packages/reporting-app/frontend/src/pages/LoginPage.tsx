@@ -1,8 +1,33 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPopup } from "firebase/auth";
 import axios from "axios";
 import { api } from "../api/client";
 import { firebaseAuth, firebaseConfigIssues, firebaseConfigReady, googleProvider } from "../lib/firebase";
+
+function debugLoginLog(
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown> = {},
+  runId = "run-1",
+) {
+  fetch("http://127.0.0.1:7829/ingest/0823df88-6411-4f3d-9920-ebf0779efd31", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": "b161f5",
+    },
+    body: JSON.stringify({
+      sessionId: "b161f5",
+      runId,
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+}
 
 export function LoginPage() {
   const [email, setEmail] = useState("");
@@ -12,7 +37,19 @@ export function LoginPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [showQuickAccess, setShowQuickAccess] = useState(false);
+
+  useEffect(() => {
+    // #region agent log
+    debugLoginLog("H7", "LoginPage.tsx:mount", "login page mounted", {
+      path: typeof window !== "undefined" ? window.location.pathname : "unknown",
+    });
+    // #endregion
+  }, []);
+
+  function redirectAfterLogin() {
+    // Force a full navigation so AuthProvider rehydrates from the new session cookie.
+    window.location.replace("/home");
+  }
 
   function toErrorMessage(value: unknown): string {
     if (axios.isAxiosError(value)) {
@@ -23,9 +60,6 @@ export function LoginPage() {
       if (typeof data?.error === "string" && data.error.trim().length > 0) {
         return data.error;
       }
-      if (value.response?.status === 403) {
-        return "Quick access is disabled on this server. Use email/password or Google sign-in.";
-      }
     }
     if (typeof value === "object" && value !== null) {
       const maybeMessage = "message" in value ? value.message : undefined;
@@ -35,6 +69,7 @@ export function LoginPage() {
   }
 
   async function syncSessionFromFirebaseUser() {
+    if (!firebaseAuth) throw new Error("Firebase auth is unavailable");
     const user = firebaseAuth.currentUser;
     if (!user) throw new Error("No authenticated user");
     const idToken = await user.getIdToken();
@@ -47,7 +82,7 @@ export function LoginPage() {
     setMessage(null);
     setLoading(true);
 
-    if (!firebaseConfigReady) {
+    if (!firebaseConfigReady || !firebaseAuth) {
       setError(`Firebase config missing: ${firebaseConfigIssues.join(", ")}`);
       setLoading(false);
       return;
@@ -57,31 +92,22 @@ export function LoginPage() {
       if (mode === "register") {
         await createUserWithEmailAndPassword(firebaseAuth, email, password);
         await syncSessionFromFirebaseUser();
-        await api.post("/auth/register-request", { role: "radiographer" });
-        setMessage("Registration request submitted. Wait for admin approval.");
-        window.location.href = "/pending-approval";
+        try {
+          await api.post("/auth/register-request", { role: "radiographer" });
+        } catch {
+          // Account is still usable; this request only marks the email for admin review.
+        }
+        setMessage("Account created. Admin can assign role access for this email.");
+        redirectAfterLogin();
         return;
       }
 
       await signInWithEmailAndPassword(firebaseAuth, email, password);
       await syncSessionFromFirebaseUser();
-      window.location.href = "/home";
+      redirectAfterLogin();
     } catch (err) {
       setError(toErrorMessage(err));
     } finally {
-      setLoading(false);
-    }
-  }
-
-  async function devLogin(role: "admin" | "developer" | "radiologist" | "radiographer" | "referring" | "billing" | "receptionist" | "viewer") {
-    setError(null);
-    setMessage(null);
-    setLoading(true);
-    try {
-      await api.post("/auth/dev-login", { role });
-      window.location.href = "/home";
-    } catch (err) {
-      setError(toErrorMessage(err));
       setLoading(false);
     }
   }
@@ -91,7 +117,7 @@ export function LoginPage() {
     setMessage(null);
     setLoading(true);
 
-    if (!firebaseConfigReady) {
+    if (!firebaseConfigReady || !firebaseAuth) {
       setError(`Firebase config missing: ${firebaseConfigIssues.join(", ")}`);
       setLoading(false);
       return;
@@ -100,35 +126,13 @@ export function LoginPage() {
     try {
       await signInWithPopup(firebaseAuth, googleProvider);
       await syncSessionFromFirebaseUser();
-      window.location.href = "/home";
+      redirectAfterLogin();
     } catch (err) {
       setError(toErrorMessage(err));
     } finally {
       setLoading(false);
     }
   }
-
-  const roleIcons: Record<string, string> = {
-    admin: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z",
-    developer: "M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4",
-    radiologist: "M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z",
-    radiographer: "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12",
-    referring: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z",
-    billing: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
-    receptionist: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4",
-    viewer: "M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z",
-  };
-
-  const roleLabels: Record<string, string> = {
-    admin: "Admin Portal",
-    developer: "Developer Portal",
-    radiologist: "Dr Portal",
-    radiographer: "Radiographer Portal",
-    referring: "Referring Portal",
-    billing: "Billing Portal",
-    receptionist: "Reception Portal",
-    viewer: "Viewer Portal",
-  };
 
   const features = [
     { text: "DICOM-native PACS integration", icon: "M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2" },
@@ -558,51 +562,6 @@ export function LoginPage() {
               </div>
             </div>
           ) : null}
-
-          {/* Quick Access Mode */}
-          <div className="mt-8">
-            <button
-              type="button"
-              className="group flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/50 py-3 text-xs font-semibold transition-all duration-200 hover:border-[#00B4A6] hover:bg-[#EDFAF9]"
-              style={{ color: "#64748B" }}
-              onClick={() => setShowQuickAccess((prev) => !prev)}
-            >
-              <svg className="h-4 w-4 transition-colors group-hover:text-[#009488]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-              {showQuickAccess ? "Hide quick access" : "Quick access mode"}
-              <svg className={`h-3.5 w-3.5 transition-transform duration-200 ${showQuickAccess ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
-            </button>
-
-            {showQuickAccess && (
-              <div className="mt-3 animate-slide-up overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_2px_12px_-4px_rgba(26,43,86,0.06)]">
-                <div className="flex items-center gap-2.5 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-5 py-3.5">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg shadow-[0_2px_6px_-1px_rgba(0,180,166,0.4)]" style={{ background: "linear-gradient(to bottom right, #00B4A6, #009488)" }}>
-                    <svg className="h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold" style={{ color: "#1A2B56" }}>Quick access</div>
-                    <div className="text-[11px] font-medium" style={{ color: "#64748B" }}>Select a role to enter the platform instantly</div>
-                  </div>
-                </div>
-                <div className="stagger-children grid grid-cols-2 gap-2 p-4 sm:grid-cols-3 lg:grid-cols-4">
-                  {(["admin", "developer", "radiologist", "radiographer", "referring", "billing", "receptionist", "viewer"] as const).map((role) => (
-                    <button
-                      key={role}
-                      type="button"
-                      className="group flex flex-col items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-3 text-xs font-semibold transition-all duration-200 hover:border-[#6DD8CF] hover:bg-[#EDFAF9] hover:shadow-[0_2px_8px_-2px_rgba(0,180,166,0.15)] hover:-translate-y-0.5"
-                      style={{ color: "#1A2B56" }}
-                      onClick={() => void devLogin(role)}
-                      disabled={loading}
-                    >
-                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white shadow-[0_1px_3px_rgba(26,43,86,0.06)] transition-all group-hover:bg-[#EDFAF9] group-hover:shadow-[0_1px_4px_rgba(0,180,166,0.12)]">
-                        <svg className="h-4 w-4 transition-colors group-hover:text-[#009488]" style={{ color: "#64748B" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d={roleIcons[role]} /></svg>
-                      </div>
-                      {roleLabels[role] ?? (role.charAt(0).toUpperCase() + role.slice(1))}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
 
           {/* Security trust footer */}
           <div className="mt-10 flex items-center justify-center gap-6">

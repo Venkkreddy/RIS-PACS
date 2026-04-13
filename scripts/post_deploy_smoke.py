@@ -58,7 +58,7 @@ def request_json(method: str, url: str, payload: dict[str, Any] | None, timeout_
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run tdairad post-deploy smoke checks.")
-    parser.add_argument("--api-base-url", default="https://tdairad-api.fly.dev", help="Reporting API base URL")
+    parser.add_argument("--api-base-url", default="http://localhost:8081", help="Reporting API base URL")
     parser.add_argument("--timeout-seconds", type=int, default=20, help="Request timeout")
     parser.add_argument(
         "--output",

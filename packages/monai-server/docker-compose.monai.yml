@@ -1,0 +1,184 @@
+# ══════════════════════════════════════════════════════════════════════
+# MONAI Production Stack — docker-compose.monai.yml
+#
+# Services:
+#   monai-server   — FastAPI inference server (GPU or CPU)
+#   redis          — Job queue broker
+#   celery-stat    — High-priority STAT GPU worker
+#   celery-routine — Normal-priority worker
+#   celery-batch   — Low-priority batch/overnight worker
+#   triton         — NVIDIA Triton Inference Server (optional)
+#   monailabel     — MONAI Label active learning server (optional)
+# ══════════════════════════════════════════════════════════════════════
+
+version: "3.9"
+
+services:
+  # ── Redis (job queue broker) ─────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── MONAI Inference Server ──────────────────────────────────────
+  monai-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+    ports:
+      - "${MONAI_PORT:-5000}:5000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - ORTHANC_URL=${ORTHANC_URL:-http://orthanc:8042}
+      - ORTHANC_USER=${ORTHANC_USER:-}
+      - ORTHANC_PASS=${ORTHANC_PASS:-}
+      - TRITON_URL=triton:8001
+      - MONAI_LABEL_URL=http://monailabel:8000
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8080,http://localhost:8081,http://localhost:3000}
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID:-}
+      - VERTEX_AI_ENABLED=${VERTEX_AI_ENABLED:-false}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3}
+    volumes:
+      - monai-models:/app/models/weights
+      - monai-metrics:/app/metrics_store
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
+
+  # ── Celery Workers ─────────────────────────────────────────────
+  celery-stat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: >
+      celery -A inference.job_queue.celery_app worker
+        --queues=stat_gpu
+        --concurrency=1
+        --loglevel=info
+        --hostname=stat@%h
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - ORTHANC_URL=${ORTHANC_URL:-http://orthanc:8042}
+    volumes:
+      - monai-models:/app/models/weights
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  celery-routine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: >
+      celery -A inference.job_queue.celery_app worker
+        --queues=routine_gpu
+        --concurrency=2
+        --loglevel=info
+        --hostname=routine@%h
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - ORTHANC_URL=${ORTHANC_URL:-http://orthanc:8042}
+    volumes:
+      - monai-models:/app/models/weights
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  celery-batch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: >
+      celery -A inference.job_queue.celery_app worker
+        --queues=batch_overnight
+        --concurrency=4
+        --loglevel=info
+        --hostname=batch@%h
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - ORTHANC_URL=${ORTHANC_URL:-http://orthanc:8042}
+    volumes:
+      - monai-models:/app/models/weights
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ── Triton Inference Server (optional) ─────────────────────────
+  triton:
+    image: nvcr.io/nvidia/tritonserver:24.01-py3
+    ports:
+      - "8000:8000"  # HTTP
+      - "8001:8001"  # gRPC
+      - "8002:8002"  # Metrics
+    volumes:
+      - ./model_repository:/models
+    command: >
+      tritonserver
+        --model-repository=/models
+        --strict-model-config=false
+        --log-verbose=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    profiles:
+      - triton
+
+  # ── MONAI Label Server (optional) ──────────────────────────────
+  monailabel:
+    image: projectmonai/monailabel:latest
+    ports:
+      - "8000:8000"
+    command: >
+      monailabel start_server
+        --app radiology
+        --studies orthanc://${ORTHANC_URL:-orthanc:8042}
+        --conf models deepedit
+        --host 0.0.0.0
+        --port 8000
+    volumes:
+      - monai-labels:/opt/monai/labels
+    profiles:
+      - monailabel
+
+volumes:
+  redis-data:
+  monai-models:
+  monai-metrics:
+  monai-labels:

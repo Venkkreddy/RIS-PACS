@@ -1,6 +1,5 @@
 import { v4 as uuid } from "uuid";
 import { getFirestore } from "./firebaseAdmin";
-import { logger } from "./logger";
 
 /**
  * TenantScopedStore: All database operations are scoped by tenant_id.
@@ -132,6 +131,24 @@ export class TenantScopedStore {
   async getPatient(tenantId: string, patientId: string): Promise<PatientRow | null> {
     const doc = await this.tenantCol(tenantId, "patients").doc(patientId).get();
     return doc.exists ? ({ id: doc.id, ...doc.data() } as PatientRow) : null;
+  }
+
+  async getPatientByMrn(tenantId: string, patientId: string): Promise<PatientRow | null> {
+    const normalized = patientId.trim().toUpperCase();
+    if (!normalized) return null;
+    const snapshot = await this.tenantCol(tenantId, "patients")
+      .where("patient_id", "==", normalized)
+      .limit(1)
+      .get();
+    if (!snapshot.empty) {
+      const doc = snapshot.docs[0];
+      return { id: doc.id, ...doc.data() } as PatientRow;
+    }
+    const fallback = await this.tenantCol(tenantId, "patients").get();
+    const match = fallback.docs
+      .map((doc) => ({ id: doc.id, ...doc.data() } as PatientRow))
+      .find((row) => row.patient_id.trim().toUpperCase() === normalized);
+    return match ?? null;
   }
 
   async listPatients(tenantId: string, search?: string): Promise<PatientRow[]> {

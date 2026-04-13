@@ -40,7 +40,9 @@ flowchart LR
 - **LLM Correction (OpenAI/Gemini/Ollama):** post-processing layer that corrects medical terminology, expands abbreviations, and formats dictations as structured radiology reports.
 - **SendGrid:** robust transactional email delivery for report sharing workflows.
 - **Google OAuth2 + session:** practical SSO and role control for radiologists.
-- **Winston + GCP logging friendly JSON:** operational observability.
+- **Winston + GCP logging friendly JSON:** operational observability with HIPAA-compliant structured logging (service metadata, hostname, ISO 8601 timestamps).
+- **HIPAA Audit Service:** SHA-256 hash-chained immutable audit trail for all PHI access, emergency break-glass access, compliance dashboard, 6-year retention.
+- **HIPAA Middleware:** Automatic PHI route detection and logging, 15-minute session timeout, account lockout, HTTPS enforcement, password policy validation.
 
 ## Repository structure
 

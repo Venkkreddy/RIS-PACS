@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import PropTypes from 'prop-types';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Button, Icons } from '@ohif/ui-next';
 import { useAppConfig } from '@state';
+
+const LEGACY_DICOM_UID_PATTERN = /^\d+(?:\.\d+)+$/;
 
 const NotFound = ({
   message = "We can't find the page you're looking for.",
@@ -11,13 +13,43 @@ const NotFound = ({
   const [appConfig] = useAppConfig();
   const { showStudyList } = appConfig;
   const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    // Backward compatibility: accept /viewer/:StudyInstanceUID(/:dataSource) URLs.
+    // OHIF v3 expects StudyInstanceUIDs in query params instead.
+    const pathParts = location.pathname.split('/').filter(Boolean);
+    if (pathParts[0]?.toLowerCase() !== 'viewer') {
+      return;
+    }
+    if (pathParts.length < 2 || pathParts.length > 3) {
+      return;
+    }
+
+    const legacyStudyUid = decodeURIComponent(pathParts[1] || '');
+    if (!LEGACY_DICOM_UID_PATTERN.test(legacyStudyUid)) {
+      return;
+    }
+
+    const legacyDataSource = pathParts[2] ? decodeURIComponent(pathParts[2]) : null;
+    const nextPath = legacyDataSource
+      ? `/viewer/${encodeURIComponent(legacyDataSource)}`
+      : '/viewer';
+    const params = new URLSearchParams(location.search);
+
+    if (!params.get('StudyInstanceUIDs') && !params.get('studyInstanceUIDs')) {
+      params.set('StudyInstanceUIDs', legacyStudyUid);
+    }
+
+    navigate(`${nextPath}?${params.toString()}`, { replace: true });
+  }, [location.pathname, location.search, navigate]);
 
   const reportingWorklist = appConfig?.reporting?.uiBaseUrl
     ? `${appConfig.reporting.uiBaseUrl}/worklist`
     : '/worklist';
 
   return (
-    <div className="absolute flex h-full w-full items-center justify-center bg-background">
+    <div className="bg-background absolute flex h-full w-full items-center justify-center">
       <div className="flex flex-col">
         <div className="bg-background flex items-center justify-center rounded-t-2xl p-6">
           <Icons.IllustrationNotFound />
@@ -40,7 +72,9 @@ const NotFound = ({
           {showGoBackButton && !showStudyList && (
             <Button
               className="mt-8 px-3 text-lg"
-              onClick={() => { window.location.href = reportingWorklist; }}
+              onClick={() => {
+                window.location.href = reportingWorklist;
+              }}
             >
               Return to Worklist
             </Button>

@@ -6,7 +6,6 @@ import { JwtService } from "../services/jwtService";
 import { TenantScopedStore } from "../services/tenantScopedStore";
 import { getFirestore } from "../services/firebaseAdmin";
 import { tenantContextMiddleware, TenantRequest } from "../middleware/tenantContext";
-import { logger } from "../services/logger";
 
 const loginSchema = z.object({
   email: z.string().email(),

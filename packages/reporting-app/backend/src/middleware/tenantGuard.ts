@@ -19,7 +19,8 @@ export function validateResourceOwnership(collectionName: string, paramName: str
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const tenantReq = req as TenantRequest;
-    const resourceId = req.params[paramName];
+    const rawResourceId = req.params[paramName];
+    const resourceId = Array.isArray(rawResourceId) ? rawResourceId[0] : rawResourceId;
 
     if (!resourceId || !tenantReq.tenant?.id) {
       res.status(400).json({ error: "Missing resource ID or tenant context" });

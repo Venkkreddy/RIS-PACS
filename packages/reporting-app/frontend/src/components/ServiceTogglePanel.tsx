@@ -1,11 +1,71 @@
+import { useMutation } from "@tanstack/react-query";
+import { api } from "../api/client";
+import { useServiceStatus } from "../hooks/useServiceStatus";
+
+type StorageMode = "local" | "cloud";
+
 export function ServiceTogglePanel() {
+  const { config, refetch } = useServiceStatus();
+  const storageMode = config?.storage.mode ?? "cloud";
+
+  const updateStorageModeMutation = useMutation({
+    mutationFn: async (mode: StorageMode) => {
+      await api.put("/services/config", { storage: { mode } });
+    },
+    onSuccess: () => {
+      refetch();
+    },
+  });
+
+  function setStorageMode(mode: StorageMode) {
+    if (mode === storageMode || updateStorageModeMutation.isPending) {
+      return;
+    }
+    updateStorageModeMutation.mutate(mode);
+  }
+
   return (
     <div className="space-y-6">
       <div className="rounded-2xl bg-gradient-to-r from-tdai-navy-800 to-tdai-navy-700 px-6 py-5 text-white shadow-md">
         <p className="text-sm font-bold">Platform Configuration</p>
         <p className="mt-1 text-xs text-tdai-teal-200">
-          MONAI inference is available. MedGemma, Gemini/Google report AI, speech-to-text, and other paid/cloud integrations are disabled.
+          Cloud database/storage is the default. Switch to local mode from this developer section when needed.
         </p>
+      </div>
+
+      <div className="rounded-xl border border-tdai-border bg-white p-5 shadow-sm">
+        <p className="text-sm font-bold text-tdai-navy-800">Database Storage Mode</p>
+        <p className="mt-1 text-xs text-tdai-secondary">
+          Default is Cloud for all environments. Use Local only for development workflows.
+        </p>
+        <div className="mt-3 inline-flex rounded-xl border border-tdai-gray-200 p-1">
+          <button
+            type="button"
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+              storageMode === "cloud" ? "bg-tdai-teal-600 text-white" : "text-tdai-secondary"
+            }`}
+            onClick={() => setStorageMode("cloud")}
+            disabled={updateStorageModeMutation.isPending}
+          >
+            Cloud
+          </button>
+          <button
+            type="button"
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+              storageMode === "local" ? "bg-tdai-navy-700 text-white" : "text-tdai-secondary"
+            }`}
+            onClick={() => setStorageMode("local")}
+            disabled={updateStorageModeMutation.isPending}
+          >
+            Local (Dev)
+          </button>
+        </div>
+        {updateStorageModeMutation.isPending && (
+          <p className="mt-2 text-xs text-tdai-secondary">Updating storage mode...</p>
+        )}
+        {updateStorageModeMutation.isError && (
+          <p className="mt-2 text-xs text-tdai-red-600">Failed to update storage mode. Please try again.</p>
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">

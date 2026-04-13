@@ -6,10 +6,12 @@ import { errorHandler } from "./middleware/errorHandler";
 import { requestLogger } from "./middleware/requestLogger";
 import { securityMiddleware } from "./middleware/security";
 import { apiGateway } from "./middleware/apiGateway";
+import { hipaaPhiAccessLogger, hipaaRequireHttps } from "./middleware/hipaaMiddleware";
 import { authRouter } from "./routes/auth";
 import { adminRouter } from "./routes/admin";
 import { aiRouter } from "./routes/ai";
 import { healthRouter } from "./routes/health";
+import { hipaaRouter } from "./routes/hipaa";
 import { reportsRouter } from "./routes/reports";
 import { templatesRouter } from "./routes/templates";
 import { transcribeRouter } from "./routes/transcribe";
@@ -26,11 +28,12 @@ import { dicomwebMultiTenantRouter } from "./routes/dicomwebMultiTenant";
 import { permissionsRouter } from "./routes/permissions";
 import { servicesRouter } from "./routes/services";
 import { tenantAuthRouter } from "./routes/tenantAuth";
-import { tenantAdminRouter } from "./routes/tenantAdmin";
+import { tenantAdminRouter } from "./routes/tenantAdminPlatform";
 import { JwtService } from "./services/jwtService";
 import { TenantScopedStore } from "./services/tenantScopedStore";
 import { DicoogleService } from "./services/dicoogleService";
 import { EmailService } from "./services/emailService";
+import { HipaaAuditService } from "./services/hipaaAuditService";
 import { PdfService } from "./services/pdfService";
 import { ReportService } from "./services/reportService";
 import { SpeechService } from "./services/speechService";
@@ -85,19 +88,27 @@ export function createApp(deps?: {
     logger.info({ message: "Multi-tenant mode ENABLED — all routes will support tenant isolation" });
   }
 
+  // ── HIPAA Compliance: audit service ──
+  const hipaaAuditService = new HipaaAuditService();
+  logger.info({ message: "HIPAA compliance layer initialized — audit logging, session timeout, PHI tracking active" });
+
   app.set("trust proxy", 1);
+
+  // ── Health (mounted before security middleware so container probes always work) ──
+  app.use("/health", healthRouter(dicoogleService));
+
+  // ── HIPAA: enforce HTTPS in production (§164.312(e)(1)) ──
+  app.use(hipaaRequireHttps());
+
   securityMiddleware.forEach((middleware) => app.use(middleware));
   app.use(requestLogger);
 
+  // ── HIPAA: PHI access audit logging (§164.312(b)) ──
+  app.use(hipaaPhiAccessLogger(hipaaAuditService));
+
   // ── API Gateway: security controller between frontend and all backend routes ──
-  // Validates JWT for multi-tenant, injects tenant context, rate-limits per tenant.
   app.use(apiGateway(jwtService));
 
-  // In production, SameSite=None + Secure is required for cross-origin
-  // requests (e.g. OHIF iframe at :3000 hitting backend at :8081).
-  // In development, SameSite=Lax works for same-origin proxied requests
-  // and avoids the Chrome 80+ rule that silently drops SameSite=None
-  // cookies that lack the Secure flag.
   const isProduction = env.NODE_ENV === "production";
 
   app.use(
@@ -109,6 +120,7 @@ export function createApp(deps?: {
         httpOnly: true,
         sameSite: isProduction ? "none" : "lax",
         secure: isProduction,
+        maxAge: 15 * 60 * 1000,
       },
     }),
   );
@@ -116,11 +128,8 @@ export function createApp(deps?: {
   app.use(passport.initialize());
   app.use(passport.session());
 
-  // ── Health (no auth required) ──
-  app.use("/health", healthRouter(dicoogleService));
-
   // ── Session-based auth routes ──
-  app.use("/auth", authRouter(store));
+  app.use("/auth", authRouter(store, hipaaAuditService));
 
   // ── Core application routes (all go through gateway + session auth) ──
   app.use("/", adminRouter(store, emailService));
@@ -128,14 +137,14 @@ export function createApp(deps?: {
   app.use("/reports", reportsRouter({ store, reportService, storageService, speechService, emailService, pdfService }));
   app.use("/ai", aiRouter(monaiService, store));
   app.use("/", worklistRouter(store, dicoogleService, tenantStore));
-  app.use("/webhook", webhookRouter(reportService, dicoogleService));
+  app.use("/webhook", webhookRouter(reportService, dicoogleService, monaiService, store as StoreService));
   app.use("/transcribe", transcribeRouter(speechService));
   app.use("/patients", patientsRouter(store));
   app.use("/orders", ordersRouter(store));
   app.use("/scans", scansRouter(store));
   app.use("/billing", billingRouter(store));
   app.use("/referring-physicians", referringPhysiciansRouter(store));
-  app.use("/dicom", dicomUploadRouter(store));
+  app.use("/dicom", dicomUploadRouter(store, serviceRegistry, storageService, tenantStore, monaiService));
   app.use("/dicomweb/weasis/:accessToken", dicomRouter);
   app.use("/dicomweb", dicomRouter);
   app.use("/dicom-web/weasis/:accessToken", dicomRouter);
@@ -144,6 +153,9 @@ export function createApp(deps?: {
   app.use("/wado", dicomRouter);
   app.use("/permissions", permissionsRouter(store));
   app.use("/", servicesRouter(serviceRegistry, store));
+
+  // ── HIPAA compliance routes (audit log, emergency access, compliance dashboard) ──
+  app.use("/hipaa", hipaaRouter(hipaaAuditService));
 
   // ── Multi-tenant API routes (v1 namespace) ──
   if (env.MULTI_TENANT_ENABLED && jwtService && tenantStore) {

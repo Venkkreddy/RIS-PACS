@@ -2,7 +2,7 @@
 -- Multi-tenant aware: extracts tenant slug from the storage path (e.g. /storage/<tenant-slug>/...)
 -- Expected runtime helpers: http, json.
 
-local webhookUrl = os.getenv("REPORTING_WEBHOOK_URL") or "http://reporting-app-backend:8080/webhook/study"
+local webhookUrl = os.getenv("REPORTING_WEBHOOK_URL") or "http://localhost:8081/webhook/study"
 local webhookSecret = os.getenv("WEBHOOK_SECRET") or ""
 
 local function safeValue(value)

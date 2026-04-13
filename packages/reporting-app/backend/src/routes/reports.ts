@@ -40,6 +40,15 @@ const statusSchema = z.object({
 const addendumSchema = z.object({ addendum: z.string().min(1) });
 const shareSchema = z.object({ email: z.string().email() });
 
+function metadataString(metadata: Record<string, unknown> | undefined, keys: string[]): string | undefined {
+  if (!metadata) return undefined;
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
 export function reportsRouter(params: {
   store: StoreService;
   reportService: ReportService;
@@ -53,6 +62,29 @@ export function reportsRouter(params: {
 
   router.post("/", ensureAuthenticated, ensurePermission(params.store, "reports:create"), asyncHandler(async (req, res) => {
     const body = createReportSchema.parse(req.body);
+    const studyRecord = await params.store.getStudyRecord(body.studyId);
+    const studyMetadata = studyRecord?.metadata as Record<string, unknown> | undefined;
+    const patientMrn = metadataString(studyMetadata, ["patientId", "PatientID", "patient_id", "00100020"]);
+    const patient = patientMrn ? await params.store.getPatientByMrn(patientMrn) : null;
+    const reportMetadata = {
+      ...(body.metadata ?? {}),
+      patient: {
+        ...(body.metadata && typeof body.metadata.patient === "object" && body.metadata.patient !== null
+          ? body.metadata.patient as Record<string, unknown>
+          : {}),
+        studyId: body.studyId,
+        patientName:
+          patient
+            ? `${patient.firstName} ${patient.lastName}`.trim()
+            : (studyRecord?.patientName ?? metadataString(studyMetadata, ["patientName", "PatientName", "00100010"])),
+        patientId: patient?.patientId ?? patientMrn,
+        patientRegistryId: patient?.id ?? metadataString(studyMetadata, ["patientRegistryId"]),
+        dateOfBirth: patient?.dateOfBirth ?? metadataString(studyMetadata, ["patientDateOfBirth"]),
+        phone: patient?.phone ?? metadataString(studyMetadata, ["patientPhone"]),
+        email: patient?.email ?? metadataString(studyMetadata, ["patientEmail"]),
+        address: patient?.address ?? metadataString(studyMetadata, ["patientAddress"]),
+      },
+    };
     const report = await params.reportService.createReport({
       studyId: body.studyId,
       templateId: body.templateId,
@@ -61,7 +93,7 @@ export function reportsRouter(params: {
       status: "draft",
       priority: body.priority,
       ownerId: req.session.user!.id,
-      metadata: body.metadata,
+      metadata: reportMetadata,
     });
     res.status(201).json(report);
   }));

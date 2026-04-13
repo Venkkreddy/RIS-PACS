@@ -22,12 +22,10 @@ function createProbeSignal(timeoutMs: number, parentSignal?: AbortSignal): { sig
 
 async function probeViewerUrl(url: string, signal?: AbortSignal): Promise<boolean> {
   let directOutcome: "available" | "unavailable" | "exception" = "unavailable";
-  let directResponseType: string | null = null;
   const directProbe = createProbeSignal(DIRECT_VIEWER_PROBE_TIMEOUT_MS, signal);
   try {
     const origin = new URL(url).origin;
     const response = await fetch(origin, { mode: "no-cors", cache: "no-store", signal: directProbe.signal });
-    directResponseType = response.type;
     if (response.type === "opaque" || response.ok) {
       directOutcome = "available";
     }
@@ -37,33 +35,13 @@ async function probeViewerUrl(url: string, signal?: AbortSignal): Promise<boolea
   } finally {
     directProbe.cleanup();
   }
-  // #region agent log
-  void fetch("http://127.0.0.1:7526/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6646bc" },
-    body: JSON.stringify({
-      sessionId: "6646bc",
-      runId: "initial",
-      hypothesisId: "H4",
-      location: "frontend/components/OhifViewerEmbed.tsx:probeViewerUrl:direct",
-      message: "Direct OHIF origin probe completed",
-      data: {
-        directOutcome,
-        directResponseType,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
   if (directOutcome === "available") return true;
 
   // Fallback: ask the backend which can reach OHIF via Docker networking
   let fallbackOutcome: "available" | "unavailable" | "exception" = "unavailable";
-  let fallbackStatus: number | null = null;
   const fallbackProbe = createProbeSignal(VIEWER_PROBE_TIMEOUT_MS, signal);
   try {
     const res = await fetch("/api/health/ohif?force=true", { signal: fallbackProbe.signal });
-    fallbackStatus = res.status;
     if (res.ok) {
       const data = await res.json();
       fallbackOutcome = data.available === true ? "available" : "unavailable";
@@ -74,24 +52,6 @@ async function probeViewerUrl(url: string, signal?: AbortSignal): Promise<boolea
   } finally {
     fallbackProbe.cleanup();
   }
-  // #region agent log
-  void fetch("http://127.0.0.1:7526/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6646bc" },
-    body: JSON.stringify({
-      sessionId: "6646bc",
-      runId: "initial",
-      hypothesisId: "H4",
-      location: "frontend/components/OhifViewerEmbed.tsx:probeViewerUrl:fallback",
-      message: "Backend OHIF health probe completed",
-      data: {
-        fallbackOutcome,
-        fallbackStatus,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
   return fallbackOutcome === "available";
 }
 
@@ -122,23 +82,6 @@ export function OhifViewerEmbed({ src }: { src: string }) {
   useEffect(() => {
     if (status !== "available" || iframeLoaded) return;
     const timer = window.setTimeout(() => {
-      // #region agent log
-      void fetch("http://127.0.0.1:7526/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6646bc" },
-        body: JSON.stringify({
-          sessionId: "6646bc",
-          runId: "initial",
-          hypothesisId: "H5",
-          location: "frontend/components/OhifViewerEmbed.tsx:iframe-ready-timeout",
-          message: "Iframe did not report load before timeout",
-          data: {
-            iframeReadyTimeoutMs: IFRAME_READY_TIMEOUT_MS,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       setStatus((prev) => (prev === "available" ? "error" : prev));
     }, IFRAME_READY_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
@@ -146,39 +89,29 @@ export function OhifViewerEmbed({ src }: { src: string }) {
 
   const handleRetry = () => setRetryCount((c) => c + 1);
   const handleIframeLoad = () => {
-    // #region agent log
-    void fetch("http://127.0.0.1:7526/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6646bc" },
-      body: JSON.stringify({
-        sessionId: "6646bc",
-        runId: "initial",
-        hypothesisId: "H5",
-        location: "frontend/components/OhifViewerEmbed.tsx:handleIframeLoad",
-        message: "Iframe load event fired",
-        data: {},
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     setIframeLoaded(true);
+    const countStudyUids = (url: string): number => {
+      try {
+        const parsed = new URL(url);
+        const all = [
+          parsed.searchParams.get("StudyInstanceUIDs") ?? "",
+          parsed.searchParams.get("studyInstanceUIDs") ?? "",
+        ]
+          .join(",")
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean);
+        return new Set(all).size;
+      } catch {
+        return 0;
+      }
+    };
+    const frameRect = iframeRef.current?.getBoundingClientRect();
+    // #region agent log
+    fetch("http://127.0.0.1:7829/ingest/0823df88-6411-4f3d-9920-ebf0779efd31",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"8d3439"},body:JSON.stringify({sessionId:"8d3439",runId:"multi-series",hypothesisId:"H13",location:"OhifViewerEmbed.tsx:handleIframeLoad",message:"OHIF iframe loaded in embed container",data:{uidCount:countStudyUids(src),iframeWidth:frameRect?Math.round(frameRect.width):null,iframeHeight:frameRect?Math.round(frameRect.height):null,windowWidth:window.innerWidth,windowHeight:window.innerHeight},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
   };
   const handleIframeError = () => {
-    // #region agent log
-    void fetch("http://127.0.0.1:7526/ingest/cd2ccaa8-51d1-4291-bf05-faef93098c97", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6646bc" },
-      body: JSON.stringify({
-        sessionId: "6646bc",
-        runId: "initial",
-        hypothesisId: "H5",
-        location: "frontend/components/OhifViewerEmbed.tsx:handleIframeError",
-        message: "Iframe error event fired",
-        data: {},
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     setStatus("error");
   };
 

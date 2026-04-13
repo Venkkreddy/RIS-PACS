@@ -371,7 +371,7 @@
     <additional-sop-classes/>
     <additional-transfer-syntaxes/>
     <move-destinations/>
-    <storage autostart="true" port="6666">
+    <storage autostart="true" port="104">
       <save-ae-titles>true</save-ae-titles>
     </storage>
     <query-retrieve autostart="true" port="1045">

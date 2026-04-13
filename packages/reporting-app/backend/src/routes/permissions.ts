@@ -6,8 +6,9 @@ import { asyncHandler } from "../middleware/asyncHandler";
 import { ensureAuthenticated, ensureAdmin } from "../middleware/auth";
 import { StoreService } from "../services/store";
 import { DEFAULT_PERMISSIONS, resolvePermissions } from "../services/permissions";
+import { logger } from "../services/logger";
 
-const VALID_ROLES: UserRole[] = ["admin", "developer", "radiologist", "radiographer", "billing", "referring", "receptionist", "viewer"];
+const VALID_ROLES: UserRole[] = ["super_admin", "admin", "developer", "radiologist", "radiographer", "billing", "referring", "receptionist", "viewer"];
 
 const updatePermissionsSchema = z.object({
   permissions: z.array(z.string()),
@@ -40,8 +41,8 @@ export function permissionsRouter(store: StoreService): Router {
       res.status(400).json({ error: `Invalid role: ${role}` });
       return;
     }
-    if (role === "admin") {
-      res.status(400).json({ error: "Cannot modify admin permissions" });
+    if (role === "admin" || role === "super_admin") {
+      res.status(400).json({ error: "Cannot modify admin platform permissions" });
       return;
     }
 
@@ -71,7 +72,16 @@ export function permissionsRouter(store: StoreService): Router {
 
   router.get("/my-permissions", ensureAuthenticated, asyncHandler(async (req, res) => {
     const role = req.session.user!.role as UserRole;
-    const override = await store.getRolePermissions(role);
+    let override = null;
+    try {
+      override = await store.getRolePermissions(role);
+    } catch (error) {
+      logger.warn({
+        message: "Failed to load role permission override, using defaults",
+        role,
+        error: String(error),
+      });
+    }
     const permissions = resolvePermissions(role, override);
     res.json({ role, permissions });
   }));

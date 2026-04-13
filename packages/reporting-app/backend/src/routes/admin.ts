@@ -13,12 +13,12 @@ const inviteSchema = z.object({
 });
 
 const updateUserSchema = z.object({
-  role: z.enum(["admin", "developer", "radiographer", "radiologist", "referring", "billing", "receptionist", "viewer"]),
+  role: z.enum(["super_admin", "admin", "developer", "radiographer", "radiologist", "referring", "billing", "receptionist", "viewer"]),
   displayName: z.string().optional(),
 });
 
 const approvalSchema = z.object({
-  role: z.enum(["admin", "developer", "radiographer", "radiologist", "referring", "billing", "receptionist", "viewer"]).optional(),
+  role: z.enum(["super_admin", "admin", "developer", "radiographer", "radiologist", "referring", "billing", "receptionist", "viewer"]).optional(),
 });
 
 export function adminRouter(store: StoreService, emailService: EmailService): Router {
@@ -69,7 +69,7 @@ export function adminRouter(store: StoreService, emailService: EmailService): Ro
       const body = z.object({
         id: z.string().min(1),
         email: z.string().email(),
-        role: z.enum(["admin", "developer", "radiographer", "radiologist", "referring", "billing", "receptionist", "viewer"]),
+        role: z.enum(["super_admin", "admin", "developer", "radiographer", "radiologist", "referring", "billing", "receptionist", "viewer"]),
         displayName: z.string().optional(),
       }).parse(req.body);
       const user = await store.upsertUser({
@@ -88,7 +88,7 @@ export function adminRouter(store: StoreService, emailService: EmailService): Ro
   router.get("/users", ensureAuthenticated, asyncHandler(async (req, res) => {
     const users = await store.listUsers();
 
-    if (req.session.user?.role === "admin" || req.session.user?.role === "developer") {
+    if (req.session.user?.role === "super_admin" || req.session.user?.role === "admin" || req.session.user?.role === "developer") {
       res.json(users);
       return;
     }

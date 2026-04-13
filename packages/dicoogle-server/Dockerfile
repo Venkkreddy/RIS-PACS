@@ -20,6 +20,10 @@ COPY --from=builder /runtime/plugins/ /opt/dicoogle/Plugins/
 COPY config/*.xml /opt/dicoogle/Plugins/settings/
 COPY src/custom-webhook.lua /opt/dicoogle/Plugins/lua/custom-webhook.lua
 
+# Provide the pre-configured server.xml so Dicoogle starts with lucene DIM
+# provider, file-storage, and the correct DICOM port (104).
+COPY confs/server.xml /opt/dicoogle/confs/server.xml
+
 EXPOSE 8080 104
 
 CMD ["java", "-jar", "/opt/dicoogle/dicoogle.jar", "-s"]

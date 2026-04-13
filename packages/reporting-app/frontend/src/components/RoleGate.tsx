@@ -5,7 +5,7 @@ import { useAuthRole } from "../hooks/useAuthRole";
 export function RoleGate({
   allow,
   children,
-}: PropsWithChildren<{ allow: Array<"admin" | "developer" | "radiographer" | "radiologist" | "referring" | "billing" | "receptionist" | "viewer"> }>) {
+}: PropsWithChildren<{ allow: Array<"admin" | "super_admin" | "developer" | "radiographer" | "radiologist" | "referring" | "billing" | "receptionist" | "viewer"> }>) {
   const auth = useAuthRole();
 
   if (auth.loading) {

@@ -119,13 +119,15 @@ tenants
 
 **Indexing strategy:** Every table has a composite index starting with `tenant_id`:
 
-| Table | Key Indexes |
-|-------|-------------|
-| users | `(tenant_id)`, `(tenant_id, email)`, `(tenant_id, role)` |
-| patients | `(tenant_id)`, `(tenant_id, patient_id)`, `(tenant_id, last_name, first_name)` |
-| studies | `(tenant_id)`, `(tenant_id, study_instance_uid)`, `(tenant_id, status)`, `(tenant_id, study_date DESC)` |
-| reports | `(tenant_id)`, `(tenant_id, study_id)`, `(tenant_id, owner_id)` |
-| audit_logs | `(tenant_id, created_at DESC)`, `(tenant_id, action)` |
+
+| Table      | Key Indexes                                                                                             |
+| ---------- | ------------------------------------------------------------------------------------------------------- |
+| users      | `(tenant_id)`, `(tenant_id, email)`, `(tenant_id, role)`                                                |
+| patients   | `(tenant_id)`, `(tenant_id, patient_id)`, `(tenant_id, last_name, first_name)`                          |
+| studies    | `(tenant_id)`, `(tenant_id, study_instance_uid)`, `(tenant_id, status)`, `(tenant_id, study_date DESC)` |
+| reports    | `(tenant_id)`, `(tenant_id, study_id)`, `(tenant_id, owner_id)`                                         |
+| audit_logs | `(tenant_id, created_at DESC)`, `(tenant_id, action)`                                                   |
+
 
 **Row-Level Security (RLS):** Defense-in-depth via PostgreSQL RLS policies:
 
@@ -147,6 +149,7 @@ The application sets `SET LOCAL app.current_tenant_id = '<uuid>'` on every conne
 See `src/services/jwtService.ts`.
 
 **Token payload structure:**
+
 ```json
 {
   "sub": "user-uuid",
@@ -164,6 +167,7 @@ See `src/services/jwtService.ts`.
 See `src/middleware/tenantContext.ts`.
 
 **Flow:**
+
 1. Extract Bearer token from `Authorization` header
 2. Verify JWT signature + expiry
 3. Extract `tid` (tenant ID) from payload
@@ -197,6 +201,7 @@ async listStudies(tenantId: string, filters?: StudyFilters): Promise<StudyRow[]>
 ```
 
 **Triple-layer isolation:**
+
 1. Application layer: `WHERE tenant_id = $1` in every query
 2. Database layer: RLS policy enforces `tenant_id = current_setting('app.current_tenant_id')`
 3. Connection layer: `tenantQuery()` sets the RLS variable before every query
@@ -208,6 +213,7 @@ async listStudies(tenantId: string, filters?: StudyFilters): Promise<StudyRow[]>
 See `config/orthanc-multi-tenant.json` and `config/orthanc-lua/multi-tenant-routing.lua`.
 
 **AE Title per tenant:**
+
 ```json
 {
   "DicomModalities": {
@@ -218,6 +224,7 @@ See `config/orthanc-multi-tenant.json` and `config/orthanc-lua/multi-tenant-rout
 ```
 
 **Lua routing logic (simplified):**
+
 ```lua
 function IncomingCStoreRequestFilter(dicom, origin)
     local calling_aet = origin["CallingAet"]
@@ -237,95 +244,127 @@ end
 ## 5. API Design (REST Endpoints)
 
 ### Authentication
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/auth/login` | Login with email + password + tenantSlug |
-| POST | `/api/v1/auth/register` | Register under a tenant |
-| POST | `/api/v1/auth/refresh` | Exchange refresh token |
-| POST | `/api/v1/auth/logout` | Revoke tokens |
-| GET | `/api/v1/auth/me` | Current user + tenant context |
+
+
+| Method | Endpoint                | Description                              |
+| ------ | ----------------------- | ---------------------------------------- |
+| POST   | `/api/v1/auth/login`    | Login with email + password + tenantSlug |
+| POST   | `/api/v1/auth/register` | Register under a tenant                  |
+| POST   | `/api/v1/auth/refresh`  | Exchange refresh token                   |
+| POST   | `/api/v1/auth/logout`   | Revoke tokens                            |
+| GET    | `/api/v1/auth/me`       | Current user + tenant context            |
+
 
 ### Platform Admin (super-admin key)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/platform/tenants` | Create new tenant + admin user |
-| GET | `/api/v1/platform/tenants` | List all tenants |
-| PATCH | `/api/v1/platform/tenants/:id` | Update tenant settings |
+
+
+| Method | Endpoint                       | Description                    |
+| ------ | ------------------------------ | ------------------------------ |
+| POST   | `/api/v1/platform/tenants`     | Create new tenant + admin user |
+| GET    | `/api/v1/platform/tenants`     | List all tenants               |
+| PATCH  | `/api/v1/platform/tenants/:id` | Update tenant settings         |
+
 
 ### Tenant Admin (JWT + admin role)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/v1/admin/users` | List tenant users |
-| PATCH | `/api/v1/admin/users/:id/approve` | Approve/reject user |
-| GET | `/api/v1/admin/audit-logs` | View tenant audit trail |
+
+
+| Method | Endpoint                          | Description             |
+| ------ | --------------------------------- | ----------------------- |
+| GET    | `/api/v1/admin/users`             | List tenant users       |
+| PATCH  | `/api/v1/admin/users/:id/approve` | Approve/reject user     |
+| GET    | `/api/v1/admin/audit-logs`        | View tenant audit trail |
+
 
 ### Clinical Data (JWT + role-based)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/v1/patients` | List patients (tenant-scoped) |
-| POST | `/api/v1/patients` | Create patient |
-| GET | `/api/v1/studies` | List studies (tenant-scoped) |
-| GET | `/api/v1/reports` | List reports (tenant-scoped) |
-| POST | `/api/v1/reports` | Create report |
-| GET | `/api/v1/orders` | List orders (tenant-scoped) |
-| GET | `/api/v1/billing` | List billing (tenant-scoped) |
+
+
+| Method | Endpoint           | Description                   |
+| ------ | ------------------ | ----------------------------- |
+| GET    | `/api/v1/patients` | List patients (tenant-scoped) |
+| POST   | `/api/v1/patients` | Create patient                |
+| GET    | `/api/v1/studies`  | List studies (tenant-scoped)  |
+| GET    | `/api/v1/reports`  | List reports (tenant-scoped)  |
+| POST   | `/api/v1/reports`  | Create report                 |
+| GET    | `/api/v1/orders`   | List orders (tenant-scoped)   |
+| GET    | `/api/v1/billing`  | List billing (tenant-scoped)  |
+
 
 ### DICOMweb (JWT + tenant-scoped)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/v1/dicomweb/studies` | QIDO-RS: search (tenant-filtered) |
-| GET | `/api/v1/dicomweb/studies/:uid/series` | QIDO-RS: series |
-| GET | `/api/v1/dicomweb/studies/:uid/series/:uid/instances` | QIDO-RS: instances |
-| GET | `/api/v1/dicomweb/studies/:uid/series/:uid/instances/:uid` | WADO-RS: retrieve |
+
+
+| Method | Endpoint                                                   | Description                       |
+| ------ | ---------------------------------------------------------- | --------------------------------- |
+| GET    | `/api/v1/dicomweb/studies`                                 | QIDO-RS: search (tenant-filtered) |
+| GET    | `/api/v1/dicomweb/studies/:uid/series`                     | QIDO-RS: series                   |
+| GET    | `/api/v1/dicomweb/studies/:uid/series/:uid/instances`      | QIDO-RS: instances                |
+| GET    | `/api/v1/dicomweb/studies/:uid/series/:uid/instances/:uid` | WADO-RS: retrieve                 |
+
 
 ---
 
 ## 6. Security Checklist
 
 ### Authentication
-- [x] JWT tokens include `tenant_id` (`tid` claim)
-- [x] Tokens are short-lived (15 min access, 7 day refresh)
-- [x] Refresh tokens stored as SHA-256 hashes, not plaintext
-- [x] Token revocation on logout (all user tokens)
-- [x] Password hashing with bcrypt (cost factor 12)
-- [x] Rate limiting per tenant (prevents resource monopolization)
+
+- JWT tokens include `tenant_id` (`tid` claim)
+- Tokens are short-lived (15 min access, 7 day refresh)
+- Refresh tokens stored as SHA-256 hashes, not plaintext
+- Token revocation on logout (all user tokens)
+- Password hashing with bcrypt (cost factor 12)
+- Rate limiting per tenant (prevents resource monopolization)
 
 ### Authorization
-- [x] Role-based access control (admin, radiologist, technician, etc.)
-- [x] Per-tenant role permission overrides
-- [x] Middleware chain: JWT → Tenant Context → Role Check → Handler
+
+- Role-based access control (admin, radiologist, technician, etc.)
+- Per-tenant role permission overrides
+- Middleware chain: JWT → Tenant Context → Role Check → Handler
 
 ### Data Isolation
-- [x] `tenant_id` column on every data table
-- [x] Every SQL query includes `WHERE tenant_id = $1`
-- [x] PostgreSQL RLS as defense-in-depth backup
-- [x] `tenantQuery()` sets RLS session variable per connection
-- [x] No cross-tenant joins possible at database level
+
+- `tenant_id` column on every data table
+- Every SQL query includes `WHERE tenant_id = $1`
+- PostgreSQL RLS as defense-in-depth backup
+- `tenantQuery()` sets RLS session variable per connection
+- No cross-tenant joins possible at database level
 
 ### IDOR Prevention
-- [x] `validateResourceOwnership()` middleware verifies resource belongs to tenant
-- [x] `validateStudyAccess()` checks Study UID against tenant's studies
-- [x] `injectTenantId()` overrides any client-supplied tenant_id in request body
-- [x] URL tenant slug matched against JWT tenant (prevents token replay)
+
+- `validateResourceOwnership()` middleware verifies resource belongs to tenant
+- `validateStudyAccess()` checks Study UID against tenant's studies
+- `injectTenantId()` overrides any client-supplied tenant_id in request body
+- URL tenant slug matched against JWT tenant (prevents token replay)
 
 ### DICOM Security
-- [x] C-STORE filtered by CallingAET → tenant mapping
-- [x] Unknown AE Titles rejected at PACS level
-- [x] Study metadata tagged with tenant_id on ingestion
-- [x] DICOMweb proxy validates study ownership before serving
+
+- C-STORE filtered by CallingAET → tenant mapping
+- Unknown AE Titles rejected at PACS level
+- Study metadata tagged with tenant_id on ingestion
+- DICOMweb proxy validates study ownership before serving
 
 ### Infrastructure
-- [x] Helmet security headers
-- [x] CORS restricted to configured origins
-- [x] Request rate limiting (500/15min global + per-tenant)
-- [x] Audit logging for all sensitive operations
-- [x] Secrets via environment variables (never in code)
 
-### Compliance
-- [x] Audit trail for all data access and modifications
-- [x] Tenant data isolation meets HIPAA BAA requirements
-- [x] No PHI in logs (structured logging with Winston)
-- [x] Token-based session (no server-side session for multi-tenant routes)
+- Helmet security headers
+- CORS restricted to configured origins
+- Request rate limiting (500/15min global + per-tenant)
+- Audit logging for all sensitive operations
+- Secrets via environment variables (never in code)
+
+### Compliance (HIPAA)
+
+- **HIPAA audit trail**: SHA-256 hash-chained immutable audit log (`hipaa_audit_log` Firestore collection) for all PHI access
+- **Automatic PHI tracking**: Middleware auto-detects PHI routes (patients, reports, studies, orders, scans, billing, DICOM) and logs every access
+- **Session timeout**: 15-minute automatic logoff per HIPAA §164.312(a)(2)(iii)
+- **Account lockout**: Accounts locked after 5 failed login attempts (30-minute lockout)
+- **Emergency access**: Break-glass procedure with time-limited grants, mandatory reason, admin revocation
+- **Error sanitization**: PHI scrubbed from production error responses (SSN, MRN, names, dates redacted)
+- **HTTPS enforcement**: HTTP requests rejected in production; HSTS with 1-year max-age
+- **CORS hardening**: Wildcard CORS automatically blocked in production even if misconfigured
+- **Audit integrity**: Hash chain verification endpoint detects log tampering
+- **6-year retention**: Audit logs retained per HIPAA §164.530(j)(2)
+- Tenant data isolation meets HIPAA BAA requirements
+- No PHI in logs (structured logging with Winston)
+- Token-based session (no server-side session for multi-tenant routes)
+- See [`HIPAA_COMPLIANCE.md`](./HIPAA_COMPLIANCE.md) for full compliance documentation
 
 ---
 
@@ -334,69 +373,62 @@ end
 ### Phase 1: Infrastructure (Week 1)
 
 1. **Deploy PostgreSQL** alongside existing Firestore
-   ```bash
+  ```bash
    docker-compose up -d postgres
-   ```
-
+  ```
 2. **Run migration scripts**
-   ```bash
+  ```bash
    psql $DATABASE_URL -f migrations/001_multi_tenant_schema.sql
    psql $DATABASE_URL -f migrations/002_backfill_tenant_id.sql
-   ```
-
+  ```
 3. **Create default tenant** for existing data
-   - The migration creates a "Default Hospital" tenant automatically
-   - All backfilled data maps to this tenant
+  - The migration creates a "Default Hospital" tenant automatically
+  - All backfilled data maps to this tenant
 
 ### Phase 2: Backend Multi-Tenant Layer (Week 2)
 
-4. **Install new dependencies**
-   ```bash
+1. **Install new dependencies**
+  ```bash
    cd packages/reporting-app && npm install
-   ```
-
-5. **Set environment variables**
-   ```bash
+  ```
+2. **Set environment variables**
+  ```bash
    MULTI_TENANT_ENABLED=false    # Keep disabled initially
    DATABASE_URL=postgresql://tdai:password@postgres:5432/tdai_multitenant
    JWT_SECRET=<generate-64-char-random-string>
    PLATFORM_ADMIN_KEY=<generate-32-char-random-string>
-   ```
-
-6. **Deploy with multi-tenant code** (but disabled)
-   - All existing `/` routes continue using Firestore (unchanged)
-   - `/api/v1/*` routes exist but are gated behind `MULTI_TENANT_ENABLED`
+  ```
+3. **Deploy with multi-tenant code** (but disabled)
+  - All existing `/` routes continue using Firestore (unchanged)
+  - `/api/v1/`* routes exist but are gated behind `MULTI_TENANT_ENABLED`
 
 ### Phase 3: Data Migration (Week 3)
 
-7. **Export Firestore data** to CSV/JSON
-   ```bash
+1. **Export Firestore data** to CSV/JSON
+  ```bash
    # Use firestore-export or custom script
    node scripts/export-firestore.js --collections users,patients,studies,reports
-   ```
-
-8. **Load into staging tables** and map IDs
-   ```bash
+  ```
+2. **Load into staging tables** and map IDs
+  ```bash
    psql $DATABASE_URL -c "\copy _staging_users FROM 'firestore_users.csv' CSV HEADER"
    # Run the INSERT...SELECT statements from 002_backfill_tenant_id.sql
-   ```
-
-9. **Verify data integrity**
-   ```sql
+  ```
+3. **Verify data integrity**
+  ```sql
    SELECT 'users' AS tbl, COUNT(*) FROM users WHERE tenant_id IS NULL
    UNION ALL SELECT 'studies', COUNT(*) FROM studies WHERE tenant_id IS NULL;
    -- Expected: 0 rows with NULL tenant_id
-   ```
+  ```
 
 ### Phase 4: Enable Multi-Tenant (Week 4)
 
-10. **Enable multi-tenant mode**
-    ```bash
+1. **Enable multi-tenant mode**
+  ```bash
     MULTI_TENANT_ENABLED=true
-    ```
-
-11. **Create additional tenants** via platform API
-    ```bash
+  ```
+2. **Create additional tenants** via platform API
+  ```bash
     curl -X POST http://localhost:8081/api/v1/platform/tenants \
       -H "X-Platform-Key: $PLATFORM_ADMIN_KEY" \
       -H "Content-Type: application/json" \
@@ -408,18 +440,17 @@ end
         "adminPassword": "SecurePass123!",
         "adminDisplayName": "Hospital Admin"
       }'
-    ```
-
-12. **Configure Orthanc** with tenant AE Titles
-    - Update `orthanc-multi-tenant.json` with real AE Title → IP mappings
+  ```
+3. **Configure Orthanc** with tenant AE Titles
+  - Update `orthanc-multi-tenant.json` with real AE Title → IP mappings
     - Restart Orthanc container
 
 ### Phase 5: Cut Over (Week 5)
 
-13. **Migrate frontend** to use `/api/v1/*` endpoints with JWT
-14. **Update OHIF** viewer configuration to pass JWT in DICOMweb requests
-15. **Decommission** Firestore-backed routes (or keep as fallback)
-16. **Drop staging tables** from migration
+1. **Migrate frontend** to use `/api/v1/`* endpoints with JWT
+2. **Update OHIF** viewer configuration to pass JWT in DICOMweb requests
+3. **Decommission** Firestore-backed routes (or keep as fallback)
+4. **Drop staging tables** from migration
 
 ### Zero-Downtime Strategy
 
@@ -514,6 +545,7 @@ CREATE TABLE tenant_billing (
 ```
 
 Meter usage with a cron job:
+
 ```sql
 INSERT INTO tenant_billing (tenant_id, period_start, period_end, study_count, user_count)
 SELECT
@@ -540,6 +572,7 @@ ALTER TABLE tenants ADD COLUMN ai_config JSONB DEFAULT '{
 ```
 
 Pass tenant context to AI microservices:
+
 ```typescript
 const response = await axios.post(`${env.MONAI_SERVER_URL}/inference`, dicomData, {
     headers: {
@@ -551,13 +584,15 @@ const response = await axios.post(`${env.MONAI_SERVER_URL}/inference`, dicomData
 
 ### When to Move to Separate DB per Tenant
 
-| Signal | Threshold |
-|--------|-----------|
-| Query latency P99 | > 200ms for tenant-scoped queries |
-| Table row count | > 50M rows in studies table |
-| Tenant count | > 500 tenants on shared DB |
-| Compliance requirement | Tenant demands physical data isolation |
-| Data sovereignty | Tenant requires data in specific region |
+
+| Signal                 | Threshold                               |
+| ---------------------- | --------------------------------------- |
+| Query latency P99      | > 200ms for tenant-scoped queries       |
+| Table row count        | > 50M rows in studies table             |
+| Tenant count           | > 500 tenants on shared DB              |
+| Compliance requirement | Tenant demands physical data isolation  |
+| Data sovereignty       | Tenant requires data in specific region |
+
 
 **Hybrid approach:** Start shared, promote high-value tenants to dedicated:
 
@@ -568,3 +603,4 @@ function getConnectionForTenant(tenantId: string): Pool {
     return sharedPool; // Default shared database
 }
 ```
+

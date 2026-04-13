@@ -1,0 +1,41 @@
+# ── GPU Dockerfile ───────────────────────────────────────────────────
+# Requires nvidia-docker / NVIDIA Container Toolkit
+FROM nvcr.io/nvidia/pytorch:24.01-py3
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1
+ENV MONAI_SERVER_PORT=5000
+ENV PYTHONPATH=/app
+
+RUN pip install --no-cache-dir \
+    monai>=1.3.0 \
+    fastapi>=0.110.0 \
+    "uvicorn[standard]>=0.29.0" \
+    python-multipart>=0.0.9 \
+    numpy>=1.24.0 \
+    scipy>=1.10.0 \
+    scikit-image>=0.21.0 \
+    scikit-learn>=1.3.0 \
+    pydicom>=2.4.0 \
+    pylibjpeg>=2.0.0 \
+    pylibjpeg-libjpeg>=2.1.0 \
+    pylibjpeg-openjpeg>=2.1.0 \
+    highdicom>=0.22.0 \
+    Pillow>=10.0.0 \
+    httpx>=0.27.0 \
+    requests>=2.31.0 \
+    "celery[redis]>=5.3.0" \
+    redis>=5.0.0 \
+    "tritonclient[grpc]>=2.42.0" \
+    google-cloud-aiplatform>=1.60.0 \
+    pydantic>=2.0.0
+
+COPY . .
+RUN mkdir -p models/weights sr_output metrics_store model_repository
+
+EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:5000/health || exit 1
+
+CMD ["python", "server.py"]
