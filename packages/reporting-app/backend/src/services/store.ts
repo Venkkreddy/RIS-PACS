@@ -487,6 +487,45 @@ export class StoreService {
       deletedAt: now,
       updatedAt: now,
     });
+    await this.deleteStudyRecordsForPatient(existing.patientId, `${existing.firstName} ${existing.lastName}`);
+  }
+
+  async deleteStudyRecordsForPatient(patientMrn: string, patientFullName: string): Promise<void> {
+    const mrnUpper = patientMrn.trim().toUpperCase();
+    const nameNormalized = patientFullName.replace(/[\^,]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+    const mrnKeys = ["patientId", "PatientID", "patientID", "PatientId", "patient_id", "mrn", "MRN", "00100020", "x00100020", "(0010,0020)"];
+
+    const snapshot = await this.firestore.collection("studies").get();
+    const batch = this.firestore.batch();
+    let count = 0;
+
+    for (const doc of snapshot.docs) {
+      const study = doc.data() as StudyRecord;
+      const meta = study.metadata as Record<string, unknown> | undefined;
+      let matches = false;
+
+      if (meta) {
+        for (const key of mrnKeys) {
+          const val = meta[key];
+          if (typeof val === "string" && val.trim().toUpperCase() === mrnUpper) {
+            matches = true;
+            break;
+          }
+        }
+      }
+
+      if (!matches && study.patientName) {
+        const studyNameNorm = study.patientName.replace(/[\^,]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+        if (studyNameNorm === nameNormalized) matches = true;
+      }
+
+      if (matches) {
+        batch.delete(doc.ref);
+        count++;
+      }
+    }
+
+    if (count > 0) await batch.commit();
   }
 
   async listPatients(search?: string): Promise<Patient[]> {

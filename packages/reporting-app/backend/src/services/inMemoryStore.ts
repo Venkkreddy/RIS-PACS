@@ -269,6 +269,35 @@ export class InMemoryStoreService {
     if (!existing) throw new Error("Patient not found");
     const now = this.now();
     this.patients.set(patientId, { ...existing, isDeleted: true, deletedAt: now, updatedAt: now });
+    this.deleteStudyRecordsForPatient(existing.patientId, `${existing.firstName} ${existing.lastName}`);
+  }
+
+  private deleteStudyRecordsForPatient(patientMrn: string, patientFullName: string): void {
+    const mrnUpper = patientMrn.trim().toUpperCase();
+    const nameNormalized = patientFullName.replace(/[\^,]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+    const mrnKeys = ["patientId", "PatientID", "patientID", "PatientId", "patient_id", "mrn", "MRN", "00100020", "x00100020", "(0010,0020)"];
+
+    for (const [id, study] of this.studies) {
+      const meta = study.metadata as Record<string, unknown> | undefined;
+      let matches = false;
+
+      if (meta) {
+        for (const key of mrnKeys) {
+          const val = meta[key];
+          if (typeof val === "string" && val.trim().toUpperCase() === mrnUpper) {
+            matches = true;
+            break;
+          }
+        }
+      }
+
+      if (!matches && study.patientName) {
+        const studyNameNorm = study.patientName.replace(/[\^,]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+        if (studyNameNorm === nameNormalized) matches = true;
+      }
+
+      if (matches) this.studies.delete(id);
+    }
   }
 
   async listPatients(search?: string): Promise<Patient[]> {
