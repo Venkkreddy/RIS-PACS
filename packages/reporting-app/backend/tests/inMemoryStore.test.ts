@@ -104,20 +104,6 @@ describe("Reports", () => {
     await expect(store.addAttachment("bad", "url", "u")).rejects.toThrow("Report not found");
   });
 
-  it("sets voice with audit trail", async () => {
-    const r = await store.createReport(payload);
-    const voice = { audioUrl: "https://audio.example.com/a.ogg", transcript: "Findings normal" };
-
-    const updated = await store.setVoice(r.id, voice, "user-1");
-
-    expect(updated.voice).toEqual(voice);
-    expect(updated.versions).toHaveLength(2);
-    expect(updated.versions[1].type).toBe("voice-transcript");
-  });
-
-  it("throws when setting voice on missing report", async () => {
-    await expect(store.setVoice("bad", { audioUrl: "", transcript: "" }, "u")).rejects.toThrow("Report not found");
-  });
 });
 
 // ── Studies (worklist) ───────────────────────────────────────────────────────

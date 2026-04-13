@@ -37,9 +37,6 @@ function buildMockDeps(overrides: Record<string, unknown> = {}) {
       uploadBuffer: jest.fn().mockResolvedValue("gs://bucket/path"),
       deleteObject: jest.fn(),
     } as never,
-    speechService: {
-      transcribeAudio: jest.fn().mockResolvedValue({ transcript: "normal", storageUrl: "gs://tmp" }),
-    } as never,
     emailService: {
       sendReportShareEmail: jest.fn(),
       sendInviteEmail: jest.fn(),
@@ -154,16 +151,6 @@ describe("BUG 1: Missing asyncHandler wrappers cause unhandled rejections", () =
     const agent = await loginAs(app, "admin");
     const res = await agent.post("/referring-physicians").send({});
     expect(res.status).toBeLessThan(500);
-  });
-
-  it("POST /transcribe — no file → returns 500 error, not crash (FIXED: asyncHandler catches)", async () => {
-    const { app } = buildMockDeps();
-    const agent = await loginAs(app, "radiologist");
-
-    const res = await agent.post("/transcribe");
-
-    // No file throws "Audio file is required" → error handler returns 500
-    expect(res.status).toBe(500);
   });
 
   it("GET /worklist — store fails → returns 500 error (FIXED: asyncHandler catches)", async () => {

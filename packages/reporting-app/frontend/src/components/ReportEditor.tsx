@@ -461,7 +461,7 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
         <div className="my-2.5 h-px bg-tdai-gray-100 dark:bg-white/[0.08]" />
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Tools — Voice & Addendum always available; Attach only for editable reports */}
+          {/* Tools — Addendum always available; Attach only for editable reports */}
           {!isLocked && (
             <label className={`btn-secondary cursor-pointer py-2 text-xs ${attachUploading ? "opacity-50 pointer-events-none" : ""}`}>
               {attachUploading ? (
@@ -541,60 +541,6 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
 
       <ShareButton reportId={report.id} />
 
-      {/* ── Transcript ───────────────────── */}
-      {report.voice?.transcript && (
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <div className="icon-box h-7 w-7 rounded-lg bg-tdai-navy-50 dark:bg-tdai-navy-900/40">
-                <svg className="h-3.5 w-3.5 text-tdai-navy-500 dark:text-tdai-navy-300" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
-                  <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
-                </svg>
-              </div>
-              <h3 className="text-sm font-bold text-tdai-navy-800 dark:text-tdai-gray-100">Voice Transcript</h3>
-            </div>
-            {report.voice.modelUsed && (
-              <span className="badge bg-tdai-gray-100 text-tdai-gray-500 font-mono dark:bg-tdai-gray-800 dark:text-tdai-gray-400">
-                {report.voice.modelUsed}
-              </span>
-            )}
-          </div>
-          {report.voice.radiologyReport ? (
-            <div className="space-y-2">
-              <div className="rounded-xl bg-tdai-gray-50 p-3 border border-tdai-gray-100 dark:bg-tdai-gray-800/50 dark:border-white/[0.08]">
-                <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-tdai-gray-400 dark:text-tdai-gray-500">Findings</p>
-                <p className="mt-1 text-sm text-tdai-navy-600 leading-relaxed dark:text-tdai-gray-300">{report.voice.radiologyReport.findings}</p>
-              </div>
-              <div className="rounded-xl bg-tdai-gray-50 p-3 border border-tdai-gray-100 dark:bg-tdai-gray-800/50 dark:border-white/[0.08]">
-                <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-tdai-gray-400 dark:text-tdai-gray-500">Impression</p>
-                <p className="mt-1 text-sm text-tdai-navy-600 leading-relaxed dark:text-tdai-gray-300">{report.voice.radiologyReport.impression}</p>
-              </div>
-              {report.voice.rawTranscript && report.voice.rawTranscript !== report.voice.transcript && (
-                <details className="text-[11px] text-tdai-gray-400 dark:text-tdai-gray-500">
-                  <summary className="cursor-pointer hover:text-tdai-gray-500 font-medium dark:hover:text-tdai-gray-400">Show raw transcript</summary>
-                  <p className="mt-1.5 text-tdai-gray-500 bg-tdai-gray-50 rounded-lg p-2.5 dark:text-tdai-gray-400 dark:bg-tdai-gray-800/50">{report.voice.rawTranscript}</p>
-                </details>
-              )}
-              {report.voice.confidence != null && (
-                <div className="flex items-center gap-2 pt-1">
-                  <span className="text-[10px] text-tdai-gray-400 dark:text-tdai-gray-500">Confidence</span>
-                  <div className="h-1.5 flex-1 rounded-full bg-tdai-gray-200 dark:bg-tdai-gray-700">
-                    <div
-                      className="h-1.5 rounded-full bg-gradient-to-r from-tdai-teal-500 to-tdai-teal-400 transition-all duration-500"
-                      style={{ width: `${Math.round(report.voice.confidence * 100)}%` }}
-                    />
-                  </div>
-                  <span className="text-[10px] font-semibold text-tdai-teal-600 dark:text-tdai-teal-400">{Math.round(report.voice.confidence * 100)}%</span>
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-sm text-tdai-navy-600 leading-relaxed dark:text-tdai-gray-300">{report.voice.transcript}</p>
-          )}
-        </div>
-      )}
-
       {/* ── Audit Trail ──────────────────── */}
       <details className="card overflow-hidden">
         <summary className="cursor-pointer px-5 py-3.5 hover:bg-tdai-gray-50/50 transition-colors dark:hover:bg-white/[0.06]">
@@ -618,7 +564,6 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
                 sign: "bg-tdai-teal-100 text-tdai-teal-800 dark:bg-tdai-teal-900/30 dark:text-tdai-teal-300",
                 "status-change": "bg-tdai-gray-100 text-tdai-gray-600 dark:bg-tdai-gray-800 dark:text-tdai-gray-400",
                 share: "bg-tdai-teal-50 text-tdai-teal-600 dark:bg-tdai-teal-900/20 dark:text-tdai-teal-400",
-                "voice-transcript": "bg-tdai-teal-50 text-tdai-teal-700 dark:bg-tdai-teal-900/20 dark:text-tdai-teal-300",
                 attachment: "bg-tdai-gray-100 text-tdai-gray-600 dark:bg-tdai-gray-800 dark:text-tdai-gray-400",
               };
               return (

@@ -124,7 +124,6 @@ CREATE TABLE reports (
     metadata        JSONB DEFAULT '{}'::jsonb,
     versions        JSONB DEFAULT '[]'::jsonb,
     attachments     JSONB DEFAULT '[]'::jsonb,
-    voice           JSONB,
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     updated_at      TIMESTAMPTZ DEFAULT NOW()
 );

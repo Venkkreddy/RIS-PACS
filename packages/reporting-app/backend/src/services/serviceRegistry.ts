@@ -3,12 +3,6 @@ import { logger } from "./logger";
 import type { InMemoryStoreService } from "./inMemoryStore";
 
 export interface ServiceConfig {
-  stt: {
-    provider: "wav2vec2" | "medasr" | "off";
-    wav2vec2Url: string;
-    medasrUrl: string;
-    uiVisible: boolean;
-  };
   llm: {
     provider: "ollama" | "gemini" | "off";
     ollamaUrl: string;
@@ -39,11 +33,6 @@ const KV_CONFIG_KEY = "serviceConfig:active";
 function enforceMonaiOnlyConfig(config: ServiceConfig): ServiceConfig {
   return {
     ...config,
-    stt: {
-      ...config.stt,
-      provider: "off",
-      uiVisible: false,
-    },
     llm: {
       ...config.llm,
       provider: "off",
@@ -60,12 +49,6 @@ function enforceMonaiOnlyConfig(config: ServiceConfig): ServiceConfig {
 
 function defaultConfig(): ServiceConfig {
   return enforceMonaiOnlyConfig({
-    stt: {
-      provider: "off",
-      wav2vec2Url: env.WAV2VEC2_SERVER_URL,
-      medasrUrl: env.MEDASR_SERVER_URL,
-      uiVisible: false,
-    },
     llm: {
       provider: "off",
       ollamaUrl: env.OLLAMA_URL,
@@ -169,7 +152,6 @@ export class ServiceRegistry {
   async updateConfig(patch: Partial<ServiceConfig>, updatedBy: string): Promise<ServiceConfig> {
     const current = await this.getConfig();
     const merged = enforceMonaiOnlyConfig({
-      stt: { ...current.stt, ...(patch.stt ?? {}) },
       llm: { ...current.llm, ...(patch.llm ?? {}) },
       inference: { ...current.inference, ...(patch.inference ?? {}) },
       storage: { ...current.storage, ...(patch.storage ?? {}) },
@@ -197,14 +179,6 @@ export class ServiceRegistry {
     return merged;
   }
 
-  async getSttUrl(): Promise<string | null> {
-    const config = await this.getConfig();
-    if (config.stt.provider === "off") return null;
-    return config.stt.provider === "wav2vec2"
-      ? config.stt.wav2vec2Url
-      : config.stt.medasrUrl;
-  }
-
   async getLlmProvider(): Promise<"ollama" | "gemini" | "off"> {
     const config = await this.getConfig();
     return config.llm.provider;
@@ -213,8 +187,8 @@ export class ServiceRegistry {
   async getCorrectionUrl(): Promise<string | null> {
     const config = await this.getConfig();
     if (config.llm.provider === "off") return null;
-    if (config.llm.provider === "gemini") return config.stt.medasrUrl;
-    if (config.llm.provider === "ollama") return config.stt.wav2vec2Url;
+    if (config.llm.provider === "gemini") return config.llm.ollamaUrl;
+    if (config.llm.provider === "ollama") return config.llm.ollamaUrl;
     return null;
   }
 

@@ -23,7 +23,6 @@ const makeApp = () => {
     store,
     reportService,
     storageService: { uploadBuffer: jest.fn(), deleteObject: jest.fn() } as never,
-    speechService: { transcribeAudio: jest.fn() } as never,
     emailService: { sendReportShareEmail: jest.fn() } as never,
     pdfService: { buildReportPdf: jest.fn() } as never,
     dicoogleService: { fetchStudyMetadata: jest.fn() } as never,

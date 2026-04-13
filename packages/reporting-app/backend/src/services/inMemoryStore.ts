@@ -12,7 +12,6 @@ import type {
   OrderStatus,
   ReferringPhysician,
   Report,
-  ReportVoice,
   Scan,
   ScanStatus,
   Template,
@@ -102,15 +101,6 @@ export class InMemoryStoreService {
     if (!r) throw new Error("Report not found");
     const v: AuditVersion = { id: this.id(), type: "attachment", content: `Attached image: ${attachmentUrl}`, authorId: userId, createdAt: this.now() };
     const updated: Report = { ...r, attachments: [...r.attachments, attachmentUrl], versions: [...r.versions, v], updatedAt: this.now() };
-    this.reports.set(reportId, updated);
-    return updated;
-  }
-
-  async setVoice(reportId: string, voice: ReportVoice, userId: string): Promise<Report> {
-    const r = this.reports.get(reportId);
-    if (!r) throw new Error("Report not found");
-    const v: AuditVersion = { id: this.id(), type: "voice-transcript", content: voice.transcript, authorId: userId, createdAt: this.now() };
-    const updated: Report = { ...r, voice, versions: [...r.versions, v], updatedAt: this.now() };
     this.reports.set(reportId, updated);
     return updated;
   }
@@ -219,7 +209,7 @@ export class InMemoryStoreService {
   // ── Patients ───────────────────────────────────────────
   async getPatientByMrn(mrn: string): Promise<Patient | null> {
     const needle = mrn.trim().toUpperCase();
-    return [...this.patients.values()].find((p) => p.patientId.trim().toUpperCase() === needle) ?? null;
+    return [...this.patients.values()].find((p) => !p.isDeleted && p.patientId.trim().toUpperCase() === needle) ?? null;
   }
 
   async createPatient(payload: Omit<Patient, "id" | "createdAt" | "updatedAt">): Promise<Patient> {

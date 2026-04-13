@@ -634,7 +634,7 @@ export interface ReportRow {
   content?: string; sections: unknown; status: string; priority: string;
   signed_by?: string; signed_at?: string; owner_id: string;
   metadata: Record<string, unknown>; versions: unknown; attachments: unknown;
-  voice?: unknown; created_at: string; updated_at: string;
+  created_at: string; updated_at: string;
 }
 
 export interface CreateReportInput {

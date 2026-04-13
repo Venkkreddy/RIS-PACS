@@ -43,7 +43,6 @@ export type PhiCategory =
   | "scan"
   | "billing"
   | "dicom"
-  | "transcript"
   | "referring_physician";
 
 export interface AuditEntry {

@@ -68,7 +68,6 @@ export type PermissionModule =
   | "referring_physicians"
   | "dicom"
   | "ai"
-  | "voice"
   | "admin"
   | "developer";
 
@@ -93,7 +92,6 @@ export const ALL_PERMISSIONS: readonly Permission[] = [
   "referring_physicians:view", "referring_physicians:create", "referring_physicians:edit", "referring_physicians:delete",
   "dicom:upload", "dicom:view",
   "ai:analyze", "ai:view_results",
-  "voice:transcribe",
   "admin:manage_users", "admin:manage_roles", "admin:view_analytics", "admin:manage_invites",
   "developer:toggle_services", "developer:view_health",
 ] as const;
@@ -108,7 +106,7 @@ export interface RolePermissions {
 
 // --------------- Report Types ---------------
 
-export type ReportVersionType = "initial" | "addendum" | "voice-transcript" | "attachment" | "share" | "status-change" | "edit" | "sign";
+export type ReportVersionType = "initial" | "addendum" | "attachment" | "share" | "status-change" | "edit" | "sign";
 
 export interface AuditVersion {
   id: string;
@@ -142,20 +140,6 @@ export interface Template {
   updatedAt: string;
 }
 
-export interface RadiologyTranscript {
-  findings: string;
-  impression: string;
-  corrections_applied?: string[];
-}
-
-export interface ReportVoice {
-  audioUrl: string;
-  transcript: string;
-  radiologyReport?: RadiologyTranscript;
-  rawTranscript?: string;
-  confidence?: number;
-  modelUsed?: string;
-}
 
 export interface Report {
   id: string;
@@ -171,7 +155,6 @@ export interface Report {
   metadata?: Record<string, unknown>;
   versions: AuditVersion[];
   attachments: string[];
-  voice?: ReportVoice;
   createdAt: string;
   updatedAt: string;
 }

@@ -26,7 +26,6 @@ describe("Share endpoint", () => {
         addAddendum: jest.fn(),
       } as never,
       storageService: { uploadBuffer: jest.fn(), deleteObject: jest.fn() } as never,
-      speechService: { transcribeAudio: jest.fn() } as never,
       emailService: emailService as never,
       pdfService: { buildReportPdf: jest.fn().mockResolvedValue(Buffer.from("pdf")) } as never,
       dicoogleService: { fetchStudyMetadata: jest.fn() } as never,

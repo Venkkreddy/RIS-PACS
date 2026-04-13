@@ -16,7 +16,7 @@ const ROLE_DEFAULT_PERMISSIONS: Record<Role, Permission[]> = {
     "templates:view", "templates:create", "templates:edit", "templates:delete",
     "billing:view", "billing:create", "billing:edit", "billing:delete", "billing:invoice", "billing:mark_paid",
     "referring_physicians:view", "referring_physicians:create", "referring_physicians:edit", "referring_physicians:delete",
-    "dicom:upload", "dicom:view", "ai:analyze", "ai:view_results", "voice:transcribe",
+    "dicom:upload", "dicom:view", "ai:analyze", "ai:view_results",
     "admin:manage_users", "admin:manage_roles", "admin:view_analytics", "admin:manage_invites",
     "developer:toggle_services", "developer:view_health",
   ],
@@ -30,13 +30,13 @@ const ROLE_DEFAULT_PERMISSIONS: Record<Role, Permission[]> = {
     "templates:view", "templates:create", "templates:edit", "templates:delete",
     "billing:view", "billing:create", "billing:edit", "billing:delete", "billing:invoice", "billing:mark_paid",
     "referring_physicians:view", "referring_physicians:create", "referring_physicians:edit", "referring_physicians:delete",
-    "dicom:upload", "dicom:view", "ai:analyze", "ai:view_results", "voice:transcribe",
+    "dicom:upload", "dicom:view", "ai:analyze", "ai:view_results",
     "admin:manage_users", "admin:manage_roles", "admin:view_analytics", "admin:manage_invites",
     "developer:toggle_services", "developer:view_health",
   ],
   developer: [
     "dashboard:view", "patients:view", "worklist:view", "reports:view",
-    "dicom:view", "ai:analyze", "ai:view_results", "voice:transcribe",
+    "dicom:view", "ai:analyze", "ai:view_results",
     "admin:manage_users", "developer:toggle_services", "developer:view_health",
   ],
   radiologist: [
@@ -46,7 +46,7 @@ const ROLE_DEFAULT_PERMISSIONS: Record<Role, Permission[]> = {
     "reports:view", "reports:create", "reports:edit", "reports:sign", "reports:addendum", "reports:share",
     "templates:view", "templates:create", "templates:edit", "templates:delete",
     "billing:view", "dicom:upload", "dicom:view", "ai:analyze", "ai:view_results",
-    "voice:transcribe", "referring_physicians:view",
+    "referring_physicians:view",
   ],
   radiographer: [
     "dashboard:view", "patients:view", "patients:create", "patients:edit",

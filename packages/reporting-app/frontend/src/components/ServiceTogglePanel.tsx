@@ -113,7 +113,7 @@ export function ServiceTogglePanel() {
       </div>
 
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
-        This portal keeps OHIF, Weasis, and MONAI. MedGemma, Gemini/Google integrations, and voice AI remain unavailable.
+        This portal keeps OHIF, Weasis, and MONAI. MedGemma and Gemini/Google integrations remain unavailable.
       </div>
     </div>
   );

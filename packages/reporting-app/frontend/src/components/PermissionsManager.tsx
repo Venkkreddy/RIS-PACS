@@ -40,7 +40,6 @@ const MODULE_LABELS: Record<string, string> = {
   referring_physicians: "Physicians",
   dicom: "DICOM",
   ai: "AI Analysis",
-  voice: "Voice",
   admin: "Administration",
 };
 

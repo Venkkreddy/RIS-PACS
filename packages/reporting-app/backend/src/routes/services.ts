@@ -27,12 +27,6 @@ const safeServiceUrl = z.string().url().refine(
 );
 
 const configUpdateSchema = z.object({
-  stt: z.object({
-    provider: z.enum(["wav2vec2", "medasr", "off"]),
-    wav2vec2Url: safeServiceUrl.optional(),
-    medasrUrl: safeServiceUrl.optional(),
-    uiVisible: z.boolean().optional(),
-  }).partial().optional(),
   llm: z.object({
     provider: z.enum(["ollama", "gemini", "off"]),
     ollamaUrl: safeServiceUrl.optional(),
@@ -96,10 +90,7 @@ export function servicesRouter(
   router.get("/services/health", ensureAuthenticated, ensureHealth, asyncHandler(async (_req, res) => {
     const config = await registry.getConfig();
 
-    const [sttHealth, monaiHealth, ollamaHealth] = await Promise.all([
-      config.stt.provider !== "off"
-        ? checkHealth(config.stt.provider === "wav2vec2" ? config.stt.wav2vec2Url : config.stt.medasrUrl)
-        : Promise.resolve({ status: "off", latencyMs: null }),
+    const [monaiHealth, ollamaHealth] = await Promise.all([
       config.inference.enabled
         ? checkHealth(config.inference.monaiUrl)
         : Promise.resolve({ status: "off", latencyMs: null }),
@@ -115,7 +106,6 @@ export function servicesRouter(
         : { status: "configured", latencyMs: null, model: config.llm.geminiModel };
 
     res.json({
-      stt: { provider: config.stt.provider, ...sttHealth },
       llm: { provider: config.llm.provider, ...llmHealth },
       inference: { provider: "monai", enabled: config.inference.enabled, ...monaiHealth },
       storage: {

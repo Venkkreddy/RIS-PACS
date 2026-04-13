@@ -73,9 +73,6 @@ function buildApp(overrides?: {
       deleteObject: jest.fn(),
       uploadFile: jest.fn().mockResolvedValue("gs://bucket/uploaded"),
     } as never,
-    speechService: {
-      transcribeAudio: jest.fn().mockResolvedValue({ transcript: "normal chest x-ray", storageUrl: "gs://t" }),
-    } as never,
     emailService: {
       sendReportShareEmail: jest.fn(),
       sendInviteEmail: jest.fn(),
@@ -228,7 +225,6 @@ describe("1. Health Checks & Service Availability", () => {
     const agent = await login(app, "admin");
     const res = await agent.get("/services/config");
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty("stt");
     expect(res.body).toHaveProperty("llm");
     expect(res.body).toHaveProperty("inference");
     expect(res.body).toHaveProperty("storage");
@@ -958,20 +954,6 @@ describe("6. Report Creation & Management with AI Findings", () => {
     expect(res.body.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("6.7: Report voice dictation endpoint", async () => {
-    const { app, store } = buildApp();
-    const report = await store.createReport({
-      studyId: "s-1",
-      content: "test",
-      ownerId: "dev-radiologist",
-      status: "draft",
-    });
-    const agent = await login(app, "radiologist");
-    const res = await agent
-      .post(`/reports/${report.id}/voice`)
-      .attach("audio", Buffer.from("fake-audio"), "recording.wav");
-    expect(res.status).toBeLessThan(500);
-  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1118,25 +1100,6 @@ describe("10. Permissions & HIPAA Compliance", () => {
     const agent = await login(app, "admin");
     const res = await agent.get("/hipaa/compliance-status");
     expect(res.status).toBeLessThan(600);
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 11. TRANSCRIPTION SERVICE
-// ═══════════════════════════════════════════════════════════════════════════
-
-describe("11. Transcription Service", () => {
-  it("11.1: POST /transcribe requires authentication", async () => {
-    const { app } = buildApp();
-    const res = await request(app).post("/transcribe").send({});
-    expect(res.status).toBeLessThanOrEqual(403);
-  });
-
-  it("11.2: POST /transcribe/radiology endpoint exists", async () => {
-    const { app } = buildApp();
-    const agent = await login(app, "radiologist");
-    const res = await agent.post("/transcribe/radiology");
-    expect(res.status).toBeLessThanOrEqual(500);
   });
 });
 
@@ -1627,14 +1590,7 @@ describe("19. Service Registry & Configuration", () => {
     expect(res.body.inference).toHaveProperty("monaiUrl");
   });
 
-  it("19.2: Service config includes STT settings", async () => {
-    const { app } = buildApp();
-    const agent = await login(app, "admin");
-    const res = await agent.get("/services/config");
-    expect(res.body.stt).toHaveProperty("provider");
-  });
-
-  it("19.3: Service config includes LLM settings", async () => {
+  it("19.2: Service config includes LLM settings", async () => {
     const { app } = buildApp();
     const agent = await login(app, "admin");
     const res = await agent.get("/services/config");

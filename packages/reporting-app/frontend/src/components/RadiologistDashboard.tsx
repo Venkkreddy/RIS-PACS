@@ -483,6 +483,7 @@ export function RadiologistDashboard() {
     setDeleteError(null);
     try {
       await api.delete(`/patients/${deleteTarget.registryId}`);
+      setRecentlyRegisteredPatients((prev) => prev.filter((p) => p.id !== deleteTarget.registryId));
       setDeleteTarget(null);
       await queryClient.invalidateQueries({ queryKey: ["patients"] });
       await queryClient.invalidateQueries({ queryKey: ["worklist"] });
@@ -619,7 +620,6 @@ export function RadiologistDashboard() {
       const parsed = new URL(rawLaunchUrl);
       parsed.protocol = window.location.protocol;
       parsed.hostname = window.location.hostname;
-      parsed.port = window.location.port;
       const launchUrl = parsed.toString();
 
       setResolvedViewerUrlByStudyId((prev) => ({

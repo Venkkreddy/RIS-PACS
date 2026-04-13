@@ -24,14 +24,12 @@ describe("Webhook endpoint", () => {
         getReport: jest.fn(),
         appendVersion: jest.fn(),
         addAttachment: jest.fn(),
-        setVoice: jest.fn(),
       } as never,
       reportService: {
         createReport,
         addAddendum: jest.fn(),
       } as never,
       storageService: { uploadBuffer: jest.fn(), deleteObject: jest.fn() } as never,
-      speechService: { transcribeAudio: jest.fn() } as never,
       emailService: { sendReportShareEmail: jest.fn() } as never,
       pdfService: { buildReportPdf: jest.fn() } as never,
       dicoogleService: {

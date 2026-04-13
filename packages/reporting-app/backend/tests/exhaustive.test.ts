@@ -12,7 +12,7 @@
  *   VII. Template edge cases
  *   VIII. Worklist & sync
  *   IX.  Report sharing & attachments
- *   X.   Transcription & voice
+ *
  *   XI.  AI endpoints
  *   XII. Session lifecycle
  *   XIII. Data isolation & leak prevention
@@ -45,10 +45,6 @@ function buildApp(storeOverride?: InMemoryStoreService) {
       ),
     } as never,
     storageService: { uploadBuffer: jest.fn().mockResolvedValue("gs://bucket/path"), deleteObject: jest.fn() } as never,
-    speechService: {
-      transcribeAudio: jest.fn().mockResolvedValue({ transcript: "normal", storageUrl: "gs://t" }),
-      transcribeRadiology: jest.fn().mockResolvedValue({ rawTranscript: "raw", correctedTranscript: "corrected", radiologyReport: { findings: "F", impression: "I" }, confidence: 0.95, modelUsed: "test" }),
-    } as never,
     emailService: { sendReportShareEmail: jest.fn(), sendInviteEmail: jest.fn(), sendTatReminderEmail: jest.fn() } as never,
     pdfService: { buildReportPdf: jest.fn().mockResolvedValue(Buffer.from("fake-pdf")) } as never,
     dicoogleService: { searchStudies: jest.fn().mockResolvedValue([]), fetchStudyMetadata: jest.fn().mockResolvedValue({}) } as never,

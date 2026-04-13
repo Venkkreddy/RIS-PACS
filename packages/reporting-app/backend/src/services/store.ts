@@ -8,7 +8,6 @@ import {
   OrderStatus,
   ReferringPhysician,
   Report,
-  ReportVoice,
   Scan,
   ScanStatus,
   Template,
@@ -194,29 +193,6 @@ export class StoreService {
     const updated: Report = {
       ...report,
       attachments: [...report.attachments, attachmentUrl],
-      versions: [...report.versions, version],
-      updatedAt: new Date().toISOString(),
-    };
-
-    await this.firestore.collection("reports").doc(reportId).set(updated);
-    return updated;
-  }
-
-  async setVoice(reportId: string, voice: ReportVoice, userId: string): Promise<Report> {
-    const report = await this.getReport(reportId);
-    if (!report) throw new Error("Report not found");
-
-    const version: AuditVersion = {
-      id: uuid(),
-      type: "voice-transcript",
-      content: voice.transcript,
-      authorId: userId,
-      createdAt: new Date().toISOString(),
-    };
-
-    const updated: Report = {
-      ...report,
-      voice,
       versions: [...report.versions, version],
       updatedAt: new Date().toISOString(),
     };
@@ -434,11 +410,14 @@ export class StoreService {
     const normalized = normalizeMrn(trimmed);
     const snapshot = await this.firestore.collection("patients").where("patientId", "==", trimmed).limit(1).get();
     if (snapshot.docs.length > 0) {
-      return snapshot.docs[0].data() as Patient;
+      const patient = snapshot.docs[0].data() as Patient;
+      if (patient.isDeleted) return null;
+      return patient;
     }
     const fallback = await this.firestore.collection("patients").get();
     const match = fallback.docs
       .map((doc) => doc.data() as Patient)
+      .filter((p) => !p.isDeleted)
       .find((patient) => normalizeMrn(patient.patientId) === normalized);
     return match ?? null;
   }

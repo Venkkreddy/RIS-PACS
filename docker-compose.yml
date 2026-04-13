@@ -209,7 +209,7 @@ services:
       MULTI_TENANT_ENABLED: "${MULTI_TENANT_ENABLED:-true}"
       PLATFORM_ADMIN_KEY: "${PLATFORM_ADMIN_KEY:-tdai-platform-admin-key-dev}"
       TENANT_STORAGE_ROOT: "/storage"
-      WEASIS_BASE_URL: "${WEASIS_BASE_URL:-http://localhost:8081/dicom-web}"
+      WEASIS_BASE_URL: "${WEASIS_BASE_URL:-https://localhost:5173/dicom-web}"
       CORS_ALLOW_ALL: "${CORS_ALLOW_ALL:-true}"
       CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-https://localhost:5173,http://localhost:3000,https://localhost:3000}"
       MASTER_ADMIN_EMAILS: "${MASTER_ADMIN_EMAILS:-}"

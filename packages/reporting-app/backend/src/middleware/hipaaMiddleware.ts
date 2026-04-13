@@ -22,7 +22,6 @@ function resolvePhiCategory(path: string): PhiCategory | null {
   if (/^\/scans/.test(path)) return "scan";
   if (/^\/billing/.test(path)) return "billing";
   if (/^\/(dicom|dicomweb|dicom-web|wado)/.test(path)) return "dicom";
-  if (/^\/transcribe/.test(path)) return "transcript";
   if (/^\/referring-physicians/.test(path)) return "referring_physician";
   if (/^\/ai\/(analyze|results)/.test(path)) return "study";
   if (/^\/api\/v1\/dicomweb/.test(path)) return "dicom";

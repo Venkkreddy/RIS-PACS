@@ -22,7 +22,6 @@ function buildApp(storeOverride?: InMemoryStoreService) {
       ),
     } as never,
     storageService: { uploadBuffer: jest.fn().mockResolvedValue("gs://bucket/path"), deleteObject: jest.fn() } as never,
-    speechService: { transcribeAudio: jest.fn().mockResolvedValue({ transcript: "normal", storageUrl: "" }), transcribeRadiology: jest.fn().mockResolvedValue({ rawTranscript: "r", correctedTranscript: "c", radiologyReport: { findings: "F", impression: "I" }, confidence: 0.9, modelUsed: "t" }) } as never,
     emailService: { sendReportShareEmail: jest.fn(), sendInviteEmail: jest.fn(), sendTatReminderEmail: jest.fn() } as never,
     pdfService: { buildReportPdf: jest.fn().mockResolvedValue(Buffer.from("pdf")) } as never,
     dicoogleService: { searchStudies: jest.fn().mockResolvedValue([]), fetchStudyMetadata: jest.fn().mockResolvedValue({}) } as never,
@@ -316,14 +315,6 @@ describe("M6. Report Audit Trail", () => {
     await store.addAttachment(r.id, "https://img.com/a.jpg", "u");
     const updated = await store.getReport(r.id);
     expect(updated!.versions.some((v) => v.type === "attachment")).toBe(true);
-  });
-
-  it("M6.4: setVoice adds voice-transcript version", async () => {
-    const store = new InMemoryStoreService();
-    const r = await store.createReport(mkReport({ studyId: "s-1", content: "c", ownerId: "u" }));
-    await store.setVoice(r.id, { audioUrl: "", transcript: "hello" }, "u");
-    const updated = await store.getReport(r.id);
-    expect(updated!.versions.some((v) => v.type === "voice-transcript")).toBe(true);
   });
 
   it("M6.5: 10 sequential edits produce 11 versions (1 initial + 10 edits)", async () => {

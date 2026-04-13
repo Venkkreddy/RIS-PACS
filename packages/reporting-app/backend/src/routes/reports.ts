@@ -6,7 +6,7 @@ import { asyncHandler } from "../middleware/asyncHandler";
 import { EmailService } from "../services/emailService";
 import { PdfService } from "../services/pdfService";
 import { ReportService } from "../services/reportService";
-import { SpeechService } from "../services/speechService";
+
 import { StorageService } from "../services/storageService";
 import { StoreService } from "../services/store";
 
@@ -53,7 +53,7 @@ export function reportsRouter(params: {
   store: StoreService;
   reportService: ReportService;
   storageService: StorageService;
-  speechService: SpeechService;
+
   emailService: EmailService;
   pdfService: PdfService;
 }): Router {
@@ -198,38 +198,6 @@ export function reportsRouter(params: {
     res.json(updated);
   }));
 
-  router.post("/:id/voice", ensureAuthenticated, ensurePermission(params.store, "reports:edit"), upload.single("audio"), asyncHandler(async (req, res) => {
-    if (!req.file) throw new Error("No audio uploaded");
-
-    const reportId = resolveParamId(req.params.id);
-    const audioPath = `reports/${reportId}/voice/${Date.now()}-${req.file.originalname}`;
-
-    let audioUrl = "";
-    try {
-      audioUrl = await params.storageService.uploadBuffer(audioPath, req.file.buffer, req.file.mimetype);
-    } catch {
-      // Storage unavailable (no GCS in local dev) — continue without persisting audio
-    }
-
-    const useRadiology = req.query.radiology === "true";
-
-    if (useRadiology) {
-      const result = await params.speechService.transcribeRadiology(req.file.buffer, req.file.mimetype);
-      const updated = await params.store.setVoice(reportId, {
-        audioUrl,
-        transcript: result.correctedTranscript,
-        radiologyReport: result.radiologyReport,
-        rawTranscript: result.rawTranscript,
-        confidence: result.confidence,
-        modelUsed: result.modelUsed,
-      }, req.session.user!.id);
-      res.json(updated);
-    } else {
-      const { transcript } = await params.speechService.transcribeAudio(req.file.buffer, req.file.mimetype, "en-US");
-      const updated = await params.store.setVoice(reportId, { audioUrl, transcript }, req.session.user!.id);
-      res.json(updated);
-    }
-  }));
 
   router.post("/:id/share", ensureAuthenticated, ensurePermission(params.store, "reports:share"), asyncHandler(async (req, res) => {
     const body = shareSchema.parse(req.body);

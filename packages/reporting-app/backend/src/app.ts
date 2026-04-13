@@ -14,7 +14,7 @@ import { healthRouter } from "./routes/health";
 import { hipaaRouter } from "./routes/hipaa";
 import { reportsRouter } from "./routes/reports";
 import { templatesRouter } from "./routes/templates";
-import { transcribeRouter } from "./routes/transcribe";
+
 import { webhookRouter } from "./routes/webhook";
 import { worklistRouter } from "./routes/worklist";
 import { patientsRouter } from "./routes/patients";
@@ -36,7 +36,7 @@ import { EmailService } from "./services/emailService";
 import { HipaaAuditService } from "./services/hipaaAuditService";
 import { PdfService } from "./services/pdfService";
 import { ReportService } from "./services/reportService";
-import { SpeechService } from "./services/speechService";
+
 import { StorageService } from "./services/storageService";
 import { StoreService } from "./services/store";
 import { InMemoryStoreService } from "./services/inMemoryStore";
@@ -47,7 +47,7 @@ import { logger } from "./services/logger";
 export function createApp(deps?: {
   store?: StoreService;
   storageService?: StorageService;
-  speechService?: SpeechService;
+
   emailService?: EmailService;
   pdfService?: PdfService;
   dicoogleService?: DicoogleService;
@@ -70,7 +70,7 @@ export function createApp(deps?: {
   }
   const storageService = deps?.storageService ?? new StorageService();
   const serviceRegistry = deps?.serviceRegistry ?? new ServiceRegistry(store);
-  const speechService = deps?.speechService ?? new SpeechService(storageService, serviceRegistry);
+
   const emailService = deps?.emailService ?? new EmailService();
   const pdfService = deps?.pdfService ?? new PdfService();
   const dicoogleService = deps?.dicoogleService ?? new DicoogleService();
@@ -134,11 +134,11 @@ export function createApp(deps?: {
   // ── Core application routes (all go through gateway + session auth) ──
   app.use("/", adminRouter(store, emailService));
   app.use("/templates", templatesRouter(store));
-  app.use("/reports", reportsRouter({ store, reportService, storageService, speechService, emailService, pdfService }));
+  app.use("/reports", reportsRouter({ store, reportService, storageService, emailService, pdfService }));
   app.use("/ai", aiRouter(monaiService, store));
   app.use("/", worklistRouter(store, dicoogleService, tenantStore));
   app.use("/webhook", webhookRouter(reportService, dicoogleService, monaiService, store as StoreService));
-  app.use("/transcribe", transcribeRouter(speechService));
+
   app.use("/patients", patientsRouter(store));
   app.use("/orders", ordersRouter(store));
   app.use("/scans", scansRouter(store));

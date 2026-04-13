@@ -148,7 +148,7 @@ export function ReportList() {
           </div>
           <p className="mt-4 text-sm font-semibold text-tdai-navy-700 dark:text-tdai-gray-100">No reports yet</p>
           <p className="mt-1 text-xs text-tdai-gray-400 dark:text-tdai-gray-500">
-            Create your first report to get started with voice dictation and radiology templates
+            Create your first report to get started with radiology templates
           </p>
           <button className="btn-primary mt-5" onClick={() => void createNewReport()} disabled={creating}>
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -167,7 +167,6 @@ export function ReportList() {
             const badge = STATUS_BADGE[status] ?? STATUS_BADGE.draft;
             const priority = report.priority ?? "routine";
             const preview = sectionPreview(report);
-            const hasVoice = !!report.voice?.transcript;
             const sectionCount = report.sections?.filter(s => s.content.replace(/<[^>]*>/g, "").trim()).length ?? 0;
             const totalSections = report.sections?.length ?? 0;
 
@@ -224,15 +223,6 @@ export function ReportList() {
                           }`}
                         />
                         {sectionCount}/{totalSections} sections
-                      </span>
-                    )}
-                    {hasVoice && (
-                      <span className="flex items-center gap-1 text-tdai-teal-500 dark:text-tdai-teal-400">
-                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
-                          <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
-                        </svg>
-                        Voice
                       </span>
                     )}
                   </div>

@@ -4,7 +4,7 @@ A full-stack radiology reporting application designed to work alongside Dicoogle
 
 ## Project layout
 
-- `backend/`: Node.js + Express API, Firestore/GCS/Speech integration, versioned reports, sharing.
+- `backend/`: Node.js + Express API, Firestore/GCS integration, versioned reports, sharing.
 - `frontend/`: React + Tailwind + Quill UI for templates and reporting workflow.
 - `shared/`: Shared TypeScript interfaces.
 - `docs/`: Architecture, deployment and integration notes.

@@ -40,7 +40,6 @@ export const hipaaConfig = {
     /^\/dicomweb/,
     /^\/dicom-web/,
     /^\/wado/,
-    /^\/transcribe/,
     /^\/ai\/analyze/,
     /^\/ai\/results/,
     /^\/referring-physicians/,

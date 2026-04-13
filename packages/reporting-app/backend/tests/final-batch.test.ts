@@ -22,7 +22,6 @@ function buildApp(storeOverride?: InMemoryStoreService) {
       ),
     } as never,
     storageService: { uploadBuffer: jest.fn().mockResolvedValue("gs://b/p"), deleteObject: jest.fn() } as never,
-    speechService: { transcribeAudio: jest.fn().mockResolvedValue({ transcript: "n", storageUrl: "" }), transcribeRadiology: jest.fn().mockResolvedValue({ rawTranscript: "r", correctedTranscript: "c", radiologyReport: { findings: "F", impression: "I" }, confidence: 0.9, modelUsed: "t" }) } as never,
     emailService: { sendReportShareEmail: jest.fn(), sendInviteEmail: jest.fn(), sendTatReminderEmail: jest.fn() } as never,
     pdfService: { buildReportPdf: jest.fn().mockResolvedValue(Buffer.from("pdf")) } as never,
     dicoogleService: { searchStudies: jest.fn().mockResolvedValue([]), fetchStudyMetadata: jest.fn().mockResolvedValue({}) } as never,

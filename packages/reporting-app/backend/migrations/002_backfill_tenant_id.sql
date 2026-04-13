@@ -128,7 +128,6 @@ CREATE TABLE IF NOT EXISTS _staging_reports (
     metadata        TEXT,
     versions        TEXT,
     attachments     TEXT,
-    voice           TEXT,
     created_at      VARCHAR(100),
     updated_at      VARCHAR(100)
 );

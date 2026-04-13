@@ -6,7 +6,7 @@ Enable in your GCP project:
 
 - Firestore API
 - Cloud Storage API
-- Speech-to-Text API
+
 - App Engine Admin API (if App Engine)
 - Cloud Run API (optional alternative)
 

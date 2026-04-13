@@ -44,9 +44,6 @@ function buildApp(storeOverride?: InMemoryStoreService) {
       uploadBuffer: jest.fn().mockResolvedValue("gs://bucket/path"),
       deleteObject: jest.fn(),
     } as never,
-    speechService: {
-      transcribeAudio: jest.fn().mockResolvedValue({ transcript: "normal", storageUrl: "gs://t" }),
-    } as never,
     emailService: {
       sendReportShareEmail: jest.fn(),
       sendInviteEmail: jest.fn(),
@@ -1006,8 +1003,6 @@ describe("E. Data Integrity", () => {
   it("E24: updateReferringPhysician throws for missing", async () => { await expect(store.updateReferringPhysician("x", {})).rejects.toThrow(); });
   it("E25: appendVersion throws for missing", async () => { await expect(store.appendVersion("x", { id: "v", type: "edit", content: "c", authorId: "u", createdAt: "" })).rejects.toThrow(); });
   it("E26: addAttachment throws for missing", async () => { await expect(store.addAttachment("x", "url", "u")).rejects.toThrow(); });
-  it("E27: setVoice throws for missing", async () => { await expect(store.setVoice("x", { audioUrl: "", transcript: "" }, "u")).rejects.toThrow(); });
-
   // E28–E40: Search/filter tests
   it("E28: listStudyRecords filters by status", async () => {
     await store.upsertStudyRecord("s-1", { status: "assigned" });
