@@ -13,7 +13,8 @@ RUN mvn -f pom.xml -DskipTests -Dskip.installnodenpm -Dskip.npm package && \
 # Download official Dicoogle 3.5.1 release to get pre-built lucene + filestorage plugins
 RUN curl -fsSL -o /tmp/dicoogle-release.zip \
       https://github.com/dicoogle/dicoogle/releases/download/3.5.1/Dicoogle_v3.5.1.zip && \
-    cd /tmp && unzip -o dicoogle-release.zip -d dicoogle-release && \
+    mkdir -p /tmp/dicoogle-release && \
+    cd /tmp/dicoogle-release && jar xf /tmp/dicoogle-release.zip && \
     find /tmp/dicoogle-release -iname 'lucene*.jar' -exec cp {} /runtime/plugins/ \; && \
     find /tmp/dicoogle-release -iname 'filestorage*.jar' -exec cp {} /runtime/plugins/ \; && \
     rm -rf /tmp/dicoogle-release /tmp/dicoogle-release.zip
