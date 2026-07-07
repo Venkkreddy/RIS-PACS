@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import { formatIsoDateDisplay } from "../lib/dateDisplay";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import type { Patient, Gender, RadiologyOrder } from "@medical-report-system/shared";
+import { useAuthRole } from "../hooks/useAuthRole";
 
 type CheckInStatus = "waiting" | "checked-in" | "in-exam" | "completed";
 
@@ -29,6 +30,7 @@ const statusLabel: Record<CheckInStatus, string> = {
 };
 
 export function ReceptionistDashboard() {
+  const auth = useAuthRole();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 400);
@@ -38,6 +40,17 @@ export function ReceptionistDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"patients" | "today">("today");
   const [checkIns, setCheckIns] = useState<CheckInEntry[]>([]);
+
+  const isAdmin = auth.role === "admin" || auth.role === "super_admin";
+  const hasPatients = auth.hasPermission("patients:view") || isAdmin;
+  const canCreatePatient = auth.hasPermission("patients:create") || isAdmin;
+  const canEditPatient = auth.hasPermission("patients:edit") || isAdmin;
+
+  useEffect(() => {
+    if (!hasPatients && activeTab === "patients") {
+      setActiveTab("today");
+    }
+  }, [hasPatients, activeTab]);
 
   const patientsQuery = useQuery({
     queryKey: ["patients", debouncedSearch],
@@ -156,16 +169,18 @@ export function ReceptionistDashboard() {
 
       <div className="mx-auto max-w-7xl px-6 py-6">
         {/* KPI row */}
-        <div className="mb-6 grid gap-4 sm:grid-cols-4">
-          <div className="card-hover px-5 py-4 flex items-center gap-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-tdai-navy-50 text-tdai-navy-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+        <div className={`mb-6 grid gap-4 ${hasPatients ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
+          {hasPatients && (
+            <div className="card-hover px-5 py-4 flex items-center gap-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-tdai-navy-50 text-tdai-navy-600">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+              </div>
+              <div>
+                <p className="text-2xl font-semibold text-tdai-text">{patients.length}</p>
+                <p className="text-xs text-tdai-muted">Total Patients</p>
+              </div>
             </div>
-            <div>
-              <p className="text-2xl font-semibold text-tdai-text">{patients.length}</p>
-              <p className="text-xs text-tdai-muted">Total Patients</p>
-            </div>
-          </div>
+          )}
           <div className="card-hover px-5 py-4 flex items-center gap-4">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -204,18 +219,22 @@ export function ReceptionistDashboard() {
             Today's Queue
             <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px]">{checkIns.length}</span>
           </button>
-          <button
-            className={`rounded-lg px-4 py-2 text-xs font-medium transition-all ${activeTab === "patients" ? "bg-tdai-navy-700 text-white" : "border border-tdai-border bg-white text-tdai-secondary hover:bg-tdai-surface-alt"}`}
-            onClick={() => setActiveTab("patients")}
-          >
-            Patient Registry
-            <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px]">{patients.length}</span>
-          </button>
+          {hasPatients && (
+            <button
+              className={`rounded-lg px-4 py-2 text-xs font-medium transition-all ${activeTab === "patients" ? "bg-tdai-navy-700 text-white" : "border border-tdai-border bg-white text-tdai-secondary hover:bg-tdai-surface-alt"}`}
+              onClick={() => setActiveTab("patients")}
+            >
+              Patient Registry
+              <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px]">{patients.length}</span>
+            </button>
+          )}
           <div className="flex-1" />
-          <button className="btn-primary !rounded-lg !px-4 !py-2 text-xs" onClick={() => { resetForm(); setShowForm(true); setActiveTab("patients"); }}>
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-            New Patient
-          </button>
+          {canCreatePatient && (
+            <button className="btn-primary !rounded-lg !px-4 !py-2 text-xs" onClick={() => { resetForm(); setShowForm(true); setActiveTab("patients"); }}>
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+              New Patient
+            </button>
+          )}
           <button className="btn-secondary !rounded-lg !px-4 !py-2 text-xs" onClick={() => { void queryClient.invalidateQueries({ queryKey: ["patients"] }); void queryClient.invalidateQueries({ queryKey: ["orders-today"] }); }}>
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
             Refresh
@@ -226,38 +245,40 @@ export function ReceptionistDashboard() {
         {activeTab === "today" && (
           <div className="space-y-4">
             {/* Quick search for walk-in check-in */}
-            <div className="card p-4">
-              <label className="mb-2 block text-xs font-semibold text-tdai-secondary uppercase tracking-wider">Quick Check-In (Walk-In)</label>
-              <div className="flex gap-3">
-                <div className="relative flex-1">
-                  <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-tdai-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                  <input
-                    className="input-field pl-10"
-                    placeholder="Search patient by name or MRN to check in..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
+            {hasPatients && (
+              <div className="card p-4">
+                <label className="mb-2 block text-xs font-semibold text-tdai-secondary uppercase tracking-wider">Quick Check-In (Walk-In)</label>
+                <div className="flex gap-3">
+                  <div className="relative flex-1">
+                    <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-tdai-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                    <input
+                      className="input-field pl-10"
+                      placeholder="Search patient by name or MRN to check in..."
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </div>
                 </div>
-              </div>
-              {search && patients.length > 0 && (
-                <div className="mt-3 max-h-48 overflow-y-auto rounded-lg border border-tdai-border bg-white">
-                  {patients.slice(0, 8).map((p) => (
-                    <div key={p.id} className="flex items-center justify-between border-b border-tdai-border-light px-4 py-2.5 last:border-b-0 hover:bg-tdai-surface-alt transition-colors">
-                      <div>
-                        <p className="text-sm font-medium text-tdai-text">{p.firstName} {p.lastName}</p>
-                        <p className="text-xs text-tdai-muted">MRN: {p.patientId} &middot; DOB: {formatIsoDateDisplay(p.dateOfBirth)} &middot; {p.gender === "M" ? "Male" : p.gender === "F" ? "Female" : "Other"}</p>
+                {search && patients.length > 0 && (
+                  <div className="mt-3 max-h-48 overflow-y-auto rounded-lg border border-tdai-border bg-white">
+                    {patients.slice(0, 8).map((p) => (
+                      <div key={p.id} className="flex items-center justify-between border-b border-tdai-border-light px-4 py-2.5 last:border-b-0 hover:bg-tdai-surface-alt transition-colors">
+                        <div>
+                          <p className="text-sm font-medium text-tdai-text">{p.firstName} {p.lastName}</p>
+                          <p className="text-xs text-tdai-muted">MRN: {p.patientId} &middot; DOB: {formatIsoDateDisplay(p.dateOfBirth)} &middot; {p.gender === "M" ? "Male" : p.gender === "F" ? "Female" : "Other"}</p>
+                        </div>
+                        <button
+                          className="btn-primary !rounded-lg !px-3 !py-1.5 text-xs"
+                          onClick={() => { quickCheckIn(p); setSearch(""); }}
+                        >
+                          Check In
+                        </button>
                       </div>
-                      <button
-                        className="btn-primary !rounded-lg !px-3 !py-1.5 text-xs"
-                        onClick={() => { quickCheckIn(p); setSearch(""); }}
-                      >
-                        Check In
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Queue list */}
             {checkIns.length === 0 && (
@@ -325,12 +346,14 @@ export function ReceptionistDashboard() {
                                   Done
                                 </span>
                               )}
-                              <button
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-tdai-navy-200 bg-tdai-navy-50 px-3 py-1.5 text-xs font-medium text-tdai-navy-700 transition-all duration-150 hover:bg-tdai-navy-100 hover:border-tdai-navy-300 hover:shadow-sm"
-                                onClick={() => startEdit(entry.patient)}
-                              >
-                                Edit
-                              </button>
+                              {canEditPatient && (
+                                <button
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-tdai-navy-200 bg-tdai-navy-50 px-3 py-1.5 text-xs font-medium text-tdai-navy-700 transition-all duration-150 hover:bg-tdai-navy-100 hover:border-tdai-navy-300 hover:shadow-sm"
+                                  onClick={() => startEdit(entry.patient)}
+                                >
+                                  Edit
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -441,13 +464,15 @@ export function ReceptionistDashboard() {
                         <td className="table-cell text-tdai-secondary">{p.phone ?? "—"}</td>
                         <td className="table-cell">
                           <div className="flex items-center gap-2">
-                            <button
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-tdai-navy-200 bg-tdai-navy-50 px-3 py-1.5 text-xs font-medium text-tdai-navy-700 transition-all duration-150 hover:bg-tdai-navy-100 hover:border-tdai-navy-300 hover:shadow-sm"
-                              onClick={() => startEdit(p)}
-                            >
-                              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                              Edit
-                            </button>
+                            {canEditPatient && (
+                              <button
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-tdai-navy-200 bg-tdai-navy-50 px-3 py-1.5 text-xs font-medium text-tdai-navy-700 transition-all duration-150 hover:bg-tdai-navy-100 hover:border-tdai-navy-300 hover:shadow-sm"
+                                onClick={() => startEdit(p)}
+                              >
+                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                                Edit
+                              </button>
+                            )}
                             <button
                               className="btn-primary !rounded-lg !px-3 !py-1.5 text-xs"
                               onClick={() => quickCheckIn(p)}

@@ -5,7 +5,7 @@ import { env } from "../config/env";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { ensureAdmin, ensureAuthenticated } from "../middleware/auth";
 import { EmailService } from "../services/emailService";
-import { StoreService } from "../services/store";
+import { StoreService, StudyRecord } from "../services/store";
 
 const inviteSchema = z.object({
   email: z.string().email(),
@@ -63,27 +63,6 @@ export function adminRouter(store: StoreService, emailService: EmailService): Ro
     });
   }));
 
-  // Dev-only: seed users directly (no auth needed)
-  if (!env.ENABLE_AUTH) {
-    router.post("/users", asyncHandler(async (req, res) => {
-      const body = z.object({
-        id: z.string().min(1),
-        email: z.string().email(),
-        role: z.enum(["super_admin", "admin", "developer", "radiographer", "radiologist", "referring", "billing", "receptionist", "viewer"]),
-        displayName: z.string().optional(),
-      }).parse(req.body);
-      const user = await store.upsertUser({
-        id: body.id,
-        email: body.email.toLowerCase(),
-        role: body.role,
-        displayName: body.displayName,
-        approved: true,
-        requestStatus: "approved",
-        authProvider: "dev-seed",
-      });
-      res.status(201).json(user);
-    }));
-  }
 
   router.get("/users", ensureAuthenticated, asyncHandler(async (req, res) => {
     const users = await store.listUsers();
@@ -160,6 +139,42 @@ export function adminRouter(store: StoreService, emailService: EmailService): Ro
       pendingReports,
       longestTat,
     });
+  }));
+
+  router.get("/admin/analytics/tat-by-radiologist", ensureAuthenticated, ensureAdmin, asyncHandler(async (_req, res) => {
+    const [studies, users] = await Promise.all([store.listStudyRecords({}), store.listUsers()]);
+    const usersById = new Map(users.map((user) => [user.id, user]));
+
+    const byRadiologist = new Map<string, StudyRecord[]>();
+    for (const study of studies) {
+      if (!study.assignedTo) continue;
+      const list = byRadiologist.get(study.assignedTo) ?? [];
+      list.push(study);
+      byRadiologist.set(study.assignedTo, list);
+    }
+
+    const rows = Array.from(byRadiologist.entries()).map(([userId, list]) => {
+      const assignee = usersById.get(userId);
+      const completed = list.filter((study) => study.status === "reported" && typeof study.tatHours === "number");
+      const tatValues = completed.map((study) => study.tatHours as number);
+      const avgTatHours = tatValues.length
+        ? Number((tatValues.reduce((sum, value) => sum + value, 0) / tatValues.length).toFixed(2))
+        : 0;
+      const maxTatHours = tatValues.length ? Number(Math.max(...tatValues).toFixed(2)) : 0;
+
+      return {
+        radiologist_name: assignee?.displayName ?? assignee?.email ?? userId,
+        assigned_count: list.length,
+        completed_count: completed.length,
+        avg_tat_hours: avgTatHours,
+        max_tat_hours: maxTatHours,
+        pending_count: list.filter((study) => study.status === "assigned").length,
+      };
+    });
+
+    rows.sort((a, b) => b.avg_tat_hours - a.avg_tat_hours);
+
+    res.json({ radiologists: rows });
   }));
 
   router.post("/admin/reminder", ensureAuthenticated, ensureAdmin, asyncHandler(async (req, res) => {

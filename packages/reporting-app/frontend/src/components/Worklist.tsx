@@ -1,10 +1,12 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Eye, X } from "lucide-react";
+import { OhifViewerEmbed } from "./OhifViewerEmbed";
 import { ColumnDef, flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { api } from "../api/client";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
-import { WorklistStudy, WorklistUser } from "../types/worklist";
+import { StudyPriority, WorklistStudy, WorklistUser } from "../types/worklist";
 
 async function fetchRadiologists(): Promise<WorklistUser[]> {
   const response = await api.get<WorklistUser[]>("/users").catch(() => ({ data: [] as WorklistUser[] }));
@@ -12,6 +14,65 @@ async function fetchRadiologists(): Promise<WorklistUser[]> {
 }
 
 const EMPTY_DATA: WorklistStudy[] = [];
+
+/**
+ * The `/worklist` endpoint doesn't always populate a top-level `priority`
+ * field (orders.priority lives on the order record, not every study record
+ * gets it copied over yet). Fall back to common metadata keys so the badge
+ * and STAT-on-top sort still work for studies that do carry a priority.
+ */
+function priorityStringFromMetadata(meta: Record<string, unknown> | undefined): string | undefined {
+  if (!meta) return undefined;
+  const keys = [
+    "priority",
+    "Priority",
+    "requestedProcedurePriority",
+    "RequestedProcedurePriority",
+    "studyPriority",
+    "StudyPriority",
+  ];
+  for (const key of keys) {
+    const v = meta[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+function normalizeWorklistPriority(raw: string): StudyPriority | undefined {
+  const n = raw.toLowerCase().replace(/\s+/g, "");
+  if (n === "emergency" || n === "emer") return "emergency";
+  if (n === "stat" || n === "s") return "stat";
+  if (n === "urgent" || n === "u" || n === "high" || n === "asap") return "urgent";
+  if (n === "routine" || n === "normal" || n === "r" || n === "low") return "normal";
+  return undefined;
+}
+
+function getEffectivePriority(study: WorklistStudy): StudyPriority {
+  if (study.priority) return study.priority;
+  const fromMeta = priorityStringFromMetadata(study.metadata as Record<string, unknown> | undefined);
+  return (fromMeta ? normalizeWorklistPriority(fromMeta) : undefined) ?? "normal";
+}
+
+/** Lower rank sorts first — STAT/Emergency always float to the top of the worklist. */
+function priorityRank(priority: StudyPriority): number {
+  switch (priority) {
+    case "emergency":
+      return 0;
+    case "stat":
+      return 1;
+    case "urgent":
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+const PRIORITY_BADGE_CONFIG: Record<StudyPriority, { label: string; classes: string }> = {
+  emergency: { label: "EMERGENCY", classes: "bg-tdai-red-50 text-tdai-red-700 ring-1 ring-tdai-red-200 dark:bg-tdai-red-900/30 dark:text-tdai-red-300 dark:ring-tdai-red-800/50" },
+  stat: { label: "STAT", classes: "bg-tdai-red-50 text-tdai-red-700 ring-1 ring-tdai-red-200 dark:bg-tdai-red-900/30 dark:text-tdai-red-300 dark:ring-tdai-red-800/50" },
+  urgent: { label: "URGENT", classes: "bg-orange-50 text-orange-700 ring-1 ring-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:ring-orange-700/50" },
+  normal: { label: "ROUTINE", classes: "bg-tdai-surface-alt text-tdai-secondary ring-1 ring-tdai-border dark:bg-white/[0.05] dark:text-tdai-gray-400 dark:ring-white/[0.08]" },
+};
 
 function hasViewerLaunchParams(viewerUrl: string): boolean {
   try {
@@ -41,14 +102,15 @@ function pickLaunchableViewerUrl(...candidates: Array<string | null | undefined>
 
 function rewriteViewerUrlForCurrentOrigin(rawViewerUrl: string): string {
   const parsed = new URL(rawViewerUrl);
-  parsed.protocol = window.location.protocol;
 
   const isLocalhost =
     window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 
   if (isLocalhost) {
     parsed.hostname = window.location.hostname;
+    parsed.protocol = window.location.protocol;
   } else {
+    parsed.protocol = window.location.protocol;
     parsed.host = window.location.host;
   }
 
@@ -77,6 +139,7 @@ export function Worklist({
   const [ohifWarning, setOhifWarning] = useState<string | null>(null);
   const [weasisWarning, setWeasisWarning] = useState<string | null>(null);
   const [validatingStudyId, setValidatingStudyId] = useState<string | null>(null);
+  const [activeViewerUrl, setActiveViewerUrl] = useState<string | null>(null);
 
   const handleOhifClick = useCallback(async (
     e: React.MouseEvent<HTMLAnchorElement>,
@@ -109,7 +172,7 @@ export function Worklist({
         return;
       }
       const viewerUrl = rewriteViewerUrlForCurrentOrigin(rawViewerUrl);
-      window.open(viewerUrl, "_blank", "noopener,noreferrer");
+      setActiveViewerUrl(viewerUrl);
     } catch (error) {
       let apiMessage: string | undefined;
       if (error && typeof error === "object" && "response" in error) {
@@ -176,7 +239,55 @@ export function Worklist({
     enabled: !hideAssignment,
   });
 
-  const data = worklistQuery.data ?? EMPTY_DATA;
+  // Radiographer-editable operational fields (modality reassignment, exam room,
+  // repeat-scan tracking, QC pass/fail). Gated by the same flag that controls
+  // assignment UI — both are radiographer/admin-only worklist actions.
+  const canEditFields = !hideAssignment;
+  const [savingField, setSavingField] = useState<string | null>(null);
+
+  async function updateStudyFields(studyId: string, patch: Record<string, unknown>) {
+    setSavingField(studyId);
+    try {
+      await api.patch(`/worklist/${encodeURIComponent(studyId)}/fields`, patch);
+      await queryClient.invalidateQueries({ queryKey: ["worklist"] });
+    } finally {
+      setSavingField(null);
+    }
+  }
+
+  function markRepeat(study: WorklistStudy) {
+    const reason = window.prompt("Reason for repeat scan:", study.repeatReason ?? "");
+    if (reason === null) return;
+    if (!reason.trim()) {
+      window.alert("A reason is required to mark a study as repeat.");
+      return;
+    }
+    void updateStudyFields(study.studyId, { isRepeat: true, repeatReason: reason.trim() });
+  }
+
+  const QC_CYCLE: Record<string, "pending" | "pass" | "fail"> = { pending: "pass", pass: "fail", fail: "pending" };
+  const QC_BADGE: Record<string, string> = {
+    pending: "bg-tdai-surface-alt text-tdai-secondary ring-1 ring-tdai-border dark:bg-white/[0.05] dark:text-tdai-gray-400",
+    pass: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300",
+    fail: "bg-tdai-red-50 text-tdai-red-700 ring-1 ring-tdai-red-200 dark:bg-tdai-red-900/30 dark:text-tdai-red-300",
+  };
+
+  const [showStatOnly, setShowStatOnly] = useState(false);
+
+  const unsortedData = worklistQuery.data ?? EMPTY_DATA;
+  /** STAT/Emergency always shown first; stable sort preserves backend ordering (by study date) within each priority tier. */
+  const sortedData = useMemo(
+    () => [...unsortedData].sort((a, b) => priorityRank(getEffectivePriority(a)) - priorityRank(getEffectivePriority(b))),
+    [unsortedData],
+  );
+  const statOnlyCount = useMemo(
+    () => sortedData.filter((s) => priorityRank(getEffectivePriority(s)) <= 1).length,
+    [sortedData],
+  );
+  const data = useMemo(
+    () => (showStatOnly ? sortedData.filter((s) => priorityRank(getEffectivePriority(s)) <= 1) : sortedData),
+    [sortedData, showStatOnly],
+  );
 
   const selectedRowsRef = useRef(selectedRows);
   selectedRowsRef.current = selectedRows;
@@ -219,6 +330,81 @@ export function Worklist({
       } as ColumnDef<WorklistStudy>] : []),
       { accessorKey: "patientName", header: "Patient Name" },
       {
+        id: "modality",
+        header: "Modality",
+        cell: ({ row }) =>
+          canEditFields ? (
+            <select
+              className="rounded-md border border-tdai-border bg-tdai-navy-700 px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-white shadow-sm disabled:opacity-50"
+              value={row.original.modality ?? "OT"}
+              disabled={savingField === row.original.studyId}
+              onChange={(e) => void updateStudyFields(row.original.studyId, { modality: e.target.value })}
+            >
+              {["CR", "CT", "MR", "US", "XR", "MG", "NM", "PT", "DX", "OT"].map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          ) : (
+            <span className="inline-block rounded-md bg-tdai-navy-700 px-2 py-0.5 text-[10px] font-bold tracking-wider text-white shadow-sm">
+              {row.original.modality ?? "OT"}
+            </span>
+          ),
+      },
+      ...(canEditFields ? [{
+        id: "room",
+        header: "Room",
+        cell: ({ row }: { row: any }) => (
+          <input
+            className="w-20 rounded-md border border-tdai-border bg-transparent px-1.5 py-0.5 text-[11px] dark:border-white/[0.08]"
+            defaultValue={row.original.room ?? ""}
+            placeholder="Room"
+            disabled={savingField === row.original.studyId}
+            onBlur={(e) => {
+              const value = e.target.value.trim();
+              if (value !== (row.original.room ?? "")) void updateStudyFields(row.original.studyId, { room: value });
+            }}
+          />
+        ),
+      } as ColumnDef<WorklistStudy>] : []),
+      ...(canEditFields ? [{
+        id: "repeat",
+        header: "Repeat",
+        cell: ({ row }: { row: any }) =>
+          row.original.isRepeat ? (
+            <span
+              className="badge bg-orange-50 text-orange-700 ring-1 ring-orange-200 dark:bg-orange-950/40 dark:text-orange-300 cursor-help"
+              title={row.original.repeatReason ?? ""}
+            >
+              REPEAT
+            </span>
+          ) : (
+            <button
+              className="btn-ghost !px-2 !py-0.5 text-[10px] !rounded-md ring-1 ring-tdai-border dark:ring-white/[0.08]"
+              disabled={savingField === row.original.studyId}
+              onClick={() => markRepeat(row.original)}
+            >
+              Mark repeat
+            </button>
+          ),
+      } as ColumnDef<WorklistStudy>] : []),
+      ...(canEditFields ? [{
+        id: "qc",
+        header: "QC",
+        cell: ({ row }: { row: any }) => {
+          const status = row.original.qcStatus ?? "pending";
+          return (
+            <button
+              className={`badge ${QC_BADGE[status]}`}
+              disabled={savingField === row.original.studyId}
+              title="Click to cycle: pending → pass → fail"
+              onClick={() => void updateStudyFields(row.original.studyId, { qcStatus: QC_CYCLE[status] })}
+            >
+              {status.toUpperCase()}
+            </button>
+          );
+        },
+      } as ColumnDef<WorklistStudy>] : []),
+      {
         id: "actions",
         header: "Actions",
         cell: ({ row }) => (
@@ -251,6 +437,14 @@ export function Worklist({
                 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-700/50"
                 : "bg-tdai-surface-alt text-tdai-secondary ring-1 ring-tdai-border dark:bg-white/[0.05] dark:text-tdai-gray-400 dark:ring-white/[0.08]";
           return <span className={`badge ${classes}`}>{status}</span>;
+        },
+      },
+      {
+        id: "priority",
+        header: "Priority",
+        cell: ({ row }) => {
+          const config = PRIORITY_BADGE_CONFIG[getEffectivePriority(row.original)];
+          return <span className={`badge ${config.classes}`}>{config.label}</span>;
         },
       },
       {
@@ -317,7 +511,7 @@ export function Worklist({
         ),
       },
     ],
-    [hideAssignment, handleOhifClick, handleWeasisClick, validatingStudyId],
+    [hideAssignment, handleOhifClick, handleWeasisClick, validatingStudyId, canEditFields, savingField],
   );
 
   const table = useReactTable({
@@ -361,17 +555,35 @@ export function Worklist({
           <button className="ml-auto shrink-0 text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200" onClick={() => setWeasisWarning(null)}>&times;</button>
         </div>
       )}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="page-header">Study Worklist</h2>
           <p className="page-subheader mt-1">{data.length} {data.length === 1 ? "study" : "studies"} found</p>
         </div>
-        {worklistQuery.isFetching && !worklistQuery.isLoading && (
-          <div className="flex items-center gap-2 text-xs text-tdai-muted dark:text-tdai-gray-400">
-            <div className="h-3 w-3 animate-spin rounded-full border border-tdai-border border-t-tdai-accent dark:border-white/[0.08] dark:border-t-tdai-teal-400" />
-            Refreshing...
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setShowStatOnly((prev) => !prev)}
+            aria-pressed={showStatOnly}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold ring-1 transition-colors ${
+              showStatOnly
+                ? "bg-tdai-red-50 text-tdai-red-700 ring-tdai-red-200 dark:bg-tdai-red-900/30 dark:text-tdai-red-300 dark:ring-tdai-red-800/50"
+                : "bg-tdai-surface-alt text-tdai-secondary ring-tdai-border hover:bg-tdai-red-50/50 dark:bg-white/[0.05] dark:text-tdai-gray-400 dark:ring-white/[0.08]"
+            }`}
+            title="Filter to STAT and Emergency priority studies only"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            {showStatOnly ? `Showing STAT only (${statOnlyCount})` : "Show STAT only"}
+          </button>
+          {worklistQuery.isFetching && !worklistQuery.isLoading && (
+            <div className="flex items-center gap-2 text-xs text-tdai-muted dark:text-tdai-gray-400">
+              <div className="h-3 w-3 animate-spin rounded-full border border-tdai-border border-t-tdai-accent dark:border-white/[0.08] dark:border-t-tdai-teal-400" />
+              Refreshing...
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
@@ -529,6 +741,31 @@ export function Worklist({
               <p className="mt-1 text-xs text-tdai-muted dark:text-tdai-gray-400">Try adjusting your search filters</p>
             </div>
           )}
+        </div>
+      )}
+
+      {activeViewerUrl && (
+        <div className="fixed inset-0 z-50 bg-tdai-navy-950 flex flex-col">
+          <div className="flex items-center justify-between px-5 py-3 bg-tdai-navy-950 border-b border-white/10">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-tdai-teal-500/20">
+                <Eye className="h-4.5 w-4.5 text-tdai-teal-400" />
+              </div>
+              <span className="text-sm font-bold text-white tracking-wide">
+                DICOM VIEWER
+              </span>
+            </div>
+            <button
+              onClick={() => setActiveViewerUrl(null)}
+              className="flex items-center justify-center h-8 w-8 rounded-lg text-tdai-gray-400 hover:bg-tdai-red-500/20 hover:text-tdai-red-400 transition-all duration-200"
+              title="Close viewer"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <div className="flex-1 relative">
+            <OhifViewerEmbed src={activeViewerUrl} />
+          </div>
         </div>
       )}
     </div>

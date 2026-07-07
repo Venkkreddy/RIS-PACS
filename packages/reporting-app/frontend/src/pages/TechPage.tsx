@@ -1,5 +1,5 @@
-import { TechDashboard } from "../components/TechDashboard";
+import { RadiographerWorkstation } from "../components/RadiographerWorkstation";
 
 export function TechPage() {
-  return <TechDashboard />;
+  return <RadiographerWorkstation />;
 }

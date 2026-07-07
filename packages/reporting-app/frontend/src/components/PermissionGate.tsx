@@ -49,7 +49,7 @@ const ROLE_DEFAULT_PERMISSIONS: Record<Role, Permission[]> = {
     "referring_physicians:view",
   ],
   radiographer: [
-    "dashboard:view", "patients:view", "patients:create", "patients:edit",
+    "dashboard:view", "patients:view",
     "orders:view", "orders:create", "orders:edit", "scheduling:view",
     "worklist:view", "worklist:assign", "worklist:update_status",
     "dicom:upload", "dicom:view", "referring_physicians:view",
@@ -61,7 +61,7 @@ const ROLE_DEFAULT_PERMISSIONS: Record<Role, Permission[]> = {
   ],
   referring: [
     "dashboard:view", "patients:view", "orders:view", "orders:create",
-    "reports:view", "scheduling:view",
+    "reports:view", "scheduling:view", "worklist:view", "dicom:upload", "dicom:view",
   ],
   receptionist: [
     "dashboard:view", "patients:view", "patients:create", "patients:edit",
@@ -109,7 +109,7 @@ export function PermissionGate({
     return <>{children}</>;
   }
 
-  if (auth.permissions.length === 0) {
+  if (auth.permissions.length === 0 && !auth.isCustomized) {
     const roleDefaults = ROLE_DEFAULT_PERMISSIONS[auth.role] ?? [];
     if (require.some((p) => roleDefaults.includes(p))) {
       return <>{children}</>;

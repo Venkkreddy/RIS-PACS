@@ -2,6 +2,8 @@
  * In-memory implementation of StoreService for local development
  * without GCP credentials / Firestore emulator.
  */
+import fs from "fs";
+import path from "path";
 import { v4 as uuid } from "uuid";
 import type {
   AuditVersion,
@@ -35,6 +37,72 @@ export class InMemoryStoreService {
   private billing = new Map<string, BillingRecord>();
   private rolePermissions = new Map<string, RolePermissions>();
 
+  constructor() {
+    this.loadState();
+  }
+
+  private getPersistencePath(): string {
+    const dir = process.env.DICOOGLE_STORAGE_DIR
+      ? path.resolve(process.cwd(), process.env.DICOOGLE_STORAGE_DIR)
+      : path.resolve(process.cwd(), "..", "storage");
+    try {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    } catch {
+      // Ignore
+    }
+    return path.join(dir, "inmemory_store.json");
+  }
+
+  private saveState(): void {
+    try {
+      const filePath = this.getPersistencePath();
+      const state = {
+        templates: Array.from(this.templates.entries()),
+        reports: Array.from(this.reports.entries()),
+        studies: Array.from(this.studies.entries()),
+        users: Array.from(this.users.entries()),
+        invites: Array.from(this.invites.entries()),
+        patients: Array.from(this.patients.entries()),
+        physicians: Array.from(this.physicians.entries()),
+        kvStore: Array.from(this.kvStore.entries()),
+        orders: Array.from(this.orders.entries()),
+        scans: Array.from(this.scans.entries()),
+        billing: Array.from(this.billing.entries()),
+        rolePermissions: Array.from(this.rolePermissions.entries()),
+      };
+      fs.writeFileSync(filePath, JSON.stringify(state, null, 2), "utf8");
+    } catch (err) {
+      console.error("Failed to save InMemoryStoreService state:", err);
+    }
+  }
+
+  private loadState(): void {
+    try {
+      const filePath = this.getPersistencePath();
+      if (!fs.existsSync(filePath)) {
+        return;
+      }
+      const raw = fs.readFileSync(filePath, "utf8");
+      const state = JSON.parse(raw);
+      if (state.templates) this.templates = new Map(state.templates);
+      if (state.reports) this.reports = new Map(state.reports);
+      if (state.studies) this.studies = new Map(state.studies);
+      if (state.users) this.users = new Map(state.users);
+      if (state.invites) this.invites = new Map(state.invites);
+      if (state.patients) this.patients = new Map(state.patients);
+      if (state.physicians) this.physicians = new Map(state.physicians);
+      if (state.kvStore) this.kvStore = new Map(state.kvStore);
+      if (state.orders) this.orders = new Map(state.orders);
+      if (state.scans) this.scans = new Map(state.scans);
+      if (state.billing) this.billing = new Map(state.billing);
+      if (state.rolePermissions) this.rolePermissions = new Map(state.rolePermissions);
+    } catch (err) {
+      console.error("Failed to load InMemoryStoreService state:", err);
+    }
+  }
+
   private id(): string { return uuid(); }
   private now(): string { return new Date().toISOString(); }
 
@@ -43,6 +111,7 @@ export class InMemoryStoreService {
     const n = this.now();
     const t: Template = { id: this.id(), ...payload, createdAt: n, updatedAt: n };
     this.templates.set(t.id, t);
+    this.saveState();
     return t;
   }
 
@@ -64,6 +133,7 @@ export class InMemoryStoreService {
       updatedAt: n,
     };
     this.reports.set(r.id, r);
+    this.saveState();
     return r;
   }
 
@@ -73,11 +143,20 @@ export class InMemoryStoreService {
     const { versions: _v, attachments: _a, id: _id, createdAt: _c, ...safePatch } = patch as Record<string, unknown>;
     const updated: Report = { ...r, ...safePatch, id: r.id, createdAt: r.createdAt, versions: r.versions, attachments: r.attachments, updatedAt: this.now() };
     this.reports.set(reportId, updated);
+    this.saveState();
     return updated;
   }
 
   async listReports(ownerId: string): Promise<Report[]> {
     return [...this.reports.values()].filter((r) => r.ownerId === ownerId);
+  }
+
+  async listReportsForReferringPhysician(referringPhysicianId: string): Promise<Report[]> {
+    const orders = await this.listOrders({ referringPhysicianId });
+    const studyIds = new Set(orders.map((o) => o.studyId).filter((id): id is string => Boolean(id)));
+    return [...this.reports.values()].filter(
+      (r) => studyIds.has(r.studyId) && (r.status === "final" || r.status === "amended"),
+    );
   }
 
   async getReport(reportId: string): Promise<Report | null> {
@@ -93,6 +172,7 @@ export class InMemoryStoreService {
     if (!r) throw new Error("Report not found");
     const updated: Report = { ...r, content: newContent ?? r.content, versions: [...r.versions, version], updatedAt: this.now() };
     this.reports.set(reportId, updated);
+    this.saveState();
     return updated;
   }
 
@@ -102,6 +182,7 @@ export class InMemoryStoreService {
     const v: AuditVersion = { id: this.id(), type: "attachment", content: `Attached image: ${attachmentUrl}`, authorId: userId, createdAt: this.now() };
     const updated: Report = { ...r, attachments: [...r.attachments, attachmentUrl], versions: [...r.versions, v], updatedAt: this.now() };
     this.reports.set(reportId, updated);
+    this.saveState();
     return updated;
   }
 
@@ -110,6 +191,7 @@ export class InMemoryStoreService {
     const existing = this.studies.get(studyId);
     const merged: StudyRecord = { studyId, status: existing?.status ?? "unassigned", ...existing, ...patch, updatedAt: this.now() };
     this.studies.set(studyId, merged);
+    this.saveState();
     return merged;
   }
 
@@ -151,6 +233,7 @@ export class InMemoryStoreService {
     const existing = this.users.get(user.id);
     const merged: UserRecord = { ...(existing ?? {}), ...user, createdAt: existing?.createdAt ?? this.now(), updatedAt: this.now() };
     this.users.set(user.id, merged);
+    this.saveState();
     return merged;
   }
 
@@ -159,6 +242,7 @@ export class InMemoryStoreService {
     if (!existing) throw new Error("User not found");
     const updated: UserRecord = { ...existing, role, approved: true, requestStatus: "approved", displayName: displayName ?? existing.displayName, updatedAt: this.now() };
     this.users.set(userId, updated);
+    this.saveState();
     return updated;
   }
 
@@ -176,6 +260,7 @@ export class InMemoryStoreService {
       updatedAt: this.now(),
     };
     this.users.set(userId, updated);
+    this.saveState();
     return updated;
   }
 
@@ -196,6 +281,7 @@ export class InMemoryStoreService {
     if (!existing) throw new Error("User not found");
     const updated: UserRecord = { ...existing, role: role ?? existing.role, approved: approval === "approved", requestStatus: approval, updatedAt: this.now() };
     this.users.set(userId, updated);
+    this.saveState();
     return updated;
   }
 
@@ -203,6 +289,7 @@ export class InMemoryStoreService {
   async createInvite(payload: Omit<InviteRecord, "id" | "createdAt">): Promise<InviteRecord> {
     const invite: InviteRecord = { id: this.id(), ...payload, createdAt: this.now() };
     this.invites.set(invite.id, invite);
+    this.saveState();
     return invite;
   }
 
@@ -232,6 +319,7 @@ export class InMemoryStoreService {
       updatedAt: n,
     };
     this.patients.set(p.id, p);
+    this.saveState();
     return p;
   }
 
@@ -261,6 +349,7 @@ export class InMemoryStoreService {
       updatedAt: this.now(),
     };
     this.patients.set(patientId, updated);
+    this.saveState();
     return updated;
   }
 
@@ -270,6 +359,7 @@ export class InMemoryStoreService {
     const now = this.now();
     this.patients.set(patientId, { ...existing, isDeleted: true, deletedAt: now, updatedAt: now });
     this.deleteStudyRecordsForPatient(existing.patientId, `${existing.firstName} ${existing.lastName}`);
+    this.saveState();
   }
 
   private deleteStudyRecordsForPatient(patientMrn: string, patientFullName: string): void {
@@ -314,6 +404,7 @@ export class InMemoryStoreService {
     const n = this.now();
     const p: ReferringPhysician = { id: this.id(), ...payload, createdAt: n, updatedAt: n };
     this.physicians.set(p.id, p);
+    this.saveState();
     return p;
   }
 
@@ -326,6 +417,7 @@ export class InMemoryStoreService {
     if (!existing) throw new Error("Referring physician not found");
     const updated: ReferringPhysician = { ...existing, ...patch, updatedAt: this.now() };
     this.physicians.set(id, updated);
+    this.saveState();
     return updated;
   }
 
@@ -343,6 +435,7 @@ export class InMemoryStoreService {
     const n = this.now();
     const o: RadiologyOrder = { id: this.id(), ...payload, createdAt: n, updatedAt: n };
     this.orders.set(o.id, o);
+    this.saveState();
     return o;
   }
 
@@ -355,13 +448,15 @@ export class InMemoryStoreService {
     if (!existing) throw new Error("Order not found");
     const updated: RadiologyOrder = { ...existing, ...patch, updatedAt: this.now() };
     this.orders.set(orderId, updated);
+    this.saveState();
     return updated;
   }
 
-  async listOrders(filters?: { status?: OrderStatus; patientId?: string; date?: string; search?: string }): Promise<RadiologyOrder[]> {
+  async listOrders(filters?: { status?: OrderStatus; patientId?: string; date?: string; search?: string; referringPhysicianId?: string }): Promise<RadiologyOrder[]> {
     let list = [...this.orders.values()];
     if (filters?.status) list = list.filter((o) => o.status === filters.status);
     if (filters?.patientId) list = list.filter((o) => o.patientId === filters.patientId);
+    if (filters?.referringPhysicianId) list = list.filter((o) => o.referringPhysicianId === filters.referringPhysicianId);
     if (filters?.date) list = list.filter((o) => o.scheduledDate.startsWith(filters.date!));
     if (filters?.search) {
       const needle = filters.search.toLowerCase();
@@ -375,6 +470,7 @@ export class InMemoryStoreService {
     const n = this.now();
     const s: Scan = { id: this.id(), ...payload, createdAt: n, updatedAt: n };
     this.scans.set(s.id, s);
+    this.saveState();
     return s;
   }
 
@@ -387,6 +483,7 @@ export class InMemoryStoreService {
     if (!existing) throw new Error("Scan not found");
     const updated: Scan = { ...existing, ...patch, updatedAt: this.now() };
     this.scans.set(scanId, updated);
+    this.saveState();
     return updated;
   }
 
@@ -408,6 +505,7 @@ export class InMemoryStoreService {
     const n = this.now();
     const b: BillingRecord = { id: this.id(), ...payload, createdAt: n, updatedAt: n };
     this.billing.set(b.id, b);
+    this.saveState();
     return b;
   }
 
@@ -420,6 +518,7 @@ export class InMemoryStoreService {
     if (!existing) throw new Error("Billing record not found");
     const updated: BillingRecord = { ...existing, ...patch, updatedAt: this.now() };
     this.billing.set(id, updated);
+    this.saveState();
     return updated;
   }
 
@@ -446,11 +545,13 @@ export class InMemoryStoreService {
   async setRolePermissions(role: UserRole, permissions: Permission[], updatedBy: string): Promise<RolePermissions> {
     const record: RolePermissions = { role, permissions, isCustomized: true, updatedAt: this.now(), updatedBy };
     this.rolePermissions.set(role, record);
+    this.saveState();
     return record;
   }
 
   async resetRolePermissions(role: UserRole): Promise<void> {
     this.rolePermissions.delete(role);
+    this.saveState();
   }
 
   // ── Generic Key-Value Store ────────────────────────────
@@ -460,5 +561,6 @@ export class InMemoryStoreService {
 
   async setKV<T = unknown>(key: string, value: T): Promise<void> {
     this.kvStore.set(key, value);
+    this.saveState();
   }
 }

@@ -83,7 +83,11 @@ export function permissionsRouter(store: StoreService): Router {
       });
     }
     const permissions = resolvePermissions(role, override);
-    res.json({ role, permissions });
+    res.json({
+      role,
+      permissions,
+      isCustomized: override?.isCustomized ?? false,
+    });
   }));
 
   return router;

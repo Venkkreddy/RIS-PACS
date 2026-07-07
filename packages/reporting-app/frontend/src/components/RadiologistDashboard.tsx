@@ -300,14 +300,15 @@ function resolveLaunchableViewerUrl(...candidates: Array<string | null | undefin
 
 function rewriteViewerUrlForCurrentOrigin(rawViewerUrl: string): string {
   const parsed = new URL(rawViewerUrl);
-  parsed.protocol = window.location.protocol;
 
   const isLocalhost =
     window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 
   if (isLocalhost) {
     parsed.hostname = window.location.hostname;
+    parsed.protocol = window.location.protocol;
   } else {
+    parsed.protocol = window.location.protocol;
     // On VM deployments, serve OHIF through the frontend origin to avoid
     // iframe failures caused by the separate self-signed OHIF certificate.
     parsed.host = window.location.host;
@@ -531,6 +532,23 @@ export function RadiologistDashboard() {
     enabled: auth.isAuthenticated && auth.approved,
     refetchInterval: (query) => (query.state.fetchStatus === "fetching" ? false : 10_000),
     staleTime: 5000,
+    retry: 1,
+  });
+
+  const myTatQuery = useQuery({
+    queryKey: ["worklist", "my-tat"],
+    queryFn: async () => {
+      const res = await api.get<{
+        assignedCount: number;
+        completedCount: number;
+        pendingCount: number;
+        avgTatHours: number;
+        maxTatHours: number;
+      }>("/worklist/my-tat");
+      return res.data;
+    },
+    enabled: auth.isAuthenticated && auth.approved,
+    staleTime: 30_000,
     retry: 1,
   });
 
@@ -1094,6 +1112,23 @@ export function RadiologistDashboard() {
           </div>
 
           <div className="flex-1" />
+
+          {myTatQuery.data && (
+            <div
+              className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs ring-1 ${
+                myTatQuery.data.avgTatHours > 24
+                  ? "bg-tdai-red-50 text-tdai-red-700 ring-tdai-red-200 dark:bg-tdai-red-900/30 dark:text-tdai-red-300 dark:ring-tdai-red-800/50"
+                  : myTatQuery.data.avgTatHours > 12
+                    ? "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-800/50"
+                    : "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800/50"
+              }`}
+              title="Your average turnaround time across all completed reports"
+            >
+              <Clock className="h-3.5 w-3.5" />
+              <span className="font-semibold">My avg TAT: {myTatQuery.data.avgTatHours.toFixed(1)}h</span>
+              <span className="opacity-70">({myTatQuery.data.completedCount} completed, {myTatQuery.data.pendingCount} pending)</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1453,7 +1488,7 @@ export function RadiologistDashboard() {
           </div>
         );
         return (
-          <div className="border-t-4 border-tdai-teal-500 bg-tdai-navy-900 shadow-2xl relative z-20 flex flex-col" style={{ height: "60vh", minHeight: "500px" }}>
+          <div className="fixed inset-0 z-40 bg-tdai-navy-950 flex flex-col">
             <div className="flex items-center justify-between px-5 py-3 bg-tdai-navy-950 border-b border-white/10">
               <div className="flex items-center gap-4">
                 <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-tdai-teal-500/20">

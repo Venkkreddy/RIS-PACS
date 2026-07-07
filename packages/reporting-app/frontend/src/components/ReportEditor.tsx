@@ -401,6 +401,7 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
                 editable={!isLocked}
                 autoFocus={activeTab === section.key && section.key === "findings"}
                 sectionTitle={section.title}
+                enableDictation={!isLocked}
               />
             </div>
           </div>

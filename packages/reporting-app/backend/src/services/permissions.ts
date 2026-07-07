@@ -68,7 +68,7 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, Permission[]> = {
 
   radiographer: [
     "dashboard:view",
-    "patients:view", "patients:create", "patients:edit",
+    "patients:view",
     "orders:view", "orders:create", "orders:edit",
     "scheduling:view",
     "worklist:view", "worklist:assign", "worklist:update_status",
@@ -91,6 +91,8 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, Permission[]> = {
     "orders:view", "orders:create",
     "reports:view",
     "scheduling:view",
+    "worklist:view",
+    "dicom:upload", "dicom:view",
   ],
 
   receptionist: [
@@ -131,8 +133,7 @@ export function resolvePermissions(
 ): Permission[] {
   const defaults = DEFAULT_PERMISSIONS[role] ?? [];
   if (override?.isCustomized) {
-    const merged = new Set<Permission>([...defaults, ...override.permissions]);
-    return [...merged];
+    return override.permissions;
   }
   return defaults;
 }

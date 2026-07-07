@@ -49,4 +49,19 @@ export class EmailService {
       text: `This is a reminder that study ${studyId} is pending reporting.`,
     });
   }
+
+  async sendBillingReminderEmail(
+    to: string,
+    params: { patientName: string; invoiceNumber?: string; amount: number },
+  ): Promise<void> {
+    if (!env.SENDGRID_API_KEY) throw new Error("SENDGRID_API_KEY not configured");
+
+    const invoiceLabel = params.invoiceNumber ?? "your invoice";
+    await sendgrid.send({
+      to,
+      from: env.SENDGRID_FROM_EMAIL,
+      subject: `Payment reminder: ${invoiceLabel}`,
+      text: `This is a reminder that ${invoiceLabel} for ${params.patientName}, amount $${params.amount.toFixed(2)}, is overdue. Please arrange payment at your earliest convenience.`,
+    });
+  }
 }

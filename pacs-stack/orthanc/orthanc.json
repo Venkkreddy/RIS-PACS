@@ -40,6 +40,8 @@
     "/usr/local/share/orthanc/plugins"
   ],
 
+  "PythonScript": "/etc/orthanc/worklist.py",
+
   "DicomModalities": {},
   "OrthancPeers": {}
 }

@@ -17,6 +17,8 @@ RUN pip install --no-cache-dir \
 
 COPY . .
 
+ARG HF_TOKEN
+ENV HF_TOKEN=${HF_TOKEN}
 ENV MEDASR_PORT=5001
 ENV MEDASR_MODEL=google/medasr
 ENV VERTEX_AI_ENABLED=false

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import type { Permission } from "@medical-report-system/shared";
+import React from "react";
 
 const apiGetMock = vi.fn();
 const apiPostMock = vi.fn();
@@ -43,12 +44,14 @@ describe("AuthProvider", () => {
     apiGetMock.mockReset();
     apiPostMock.mockReset();
     onAuthStateChangedMock.mockReset();
+    sessionStorage.setItem("tdai_authenticated", "true");
   });
 
   afterEach(() => {
     cleanup();
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
+    sessionStorage.clear();
   });
 
   it("falls back to role-based defaults when permissions request is slow", async () => {
@@ -139,5 +142,49 @@ describe("AuthProvider", () => {
     expect(screen.getByTestId("auth-state")).toHaveAttribute("data-role", "radiographer");
     expect(screen.getByTestId("auth-state")).toHaveAttribute("data-loading", "false");
     expect(screen.getByTestId("auth-state")).toHaveAttribute("data-permissions", String(permissions.length));
+  });
+
+  it("uses empty permissions when role is explicitly customized with no permissions", async () => {
+    apiGetMock.mockImplementation((url: string) => {
+      if (url === "/auth/me") {
+        return Promise.resolve({
+          data: {
+            user: {
+              id: "dev-radiographer",
+              email: "radiographer@example.com",
+              role: "radiographer",
+              approved: true,
+              requestStatus: "approved",
+            },
+          },
+        });
+      }
+      if (url === "/permissions/my-permissions") {
+        return Promise.resolve({
+          data: {
+            role: "radiographer",
+            permissions: [],
+            isCustomized: true,
+          },
+        });
+      }
+      return Promise.reject(new Error(`unexpected url ${url}`));
+    });
+
+    render(
+      <AuthProvider>
+        <AuthStateProbe />
+      </AuthProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("auth-state")).toHaveAttribute("data-authenticated", "true");
+    expect(screen.getByTestId("auth-state")).toHaveAttribute("data-role", "radiographer");
+    expect(screen.getByTestId("auth-state")).toHaveAttribute("data-loading", "false");
+    expect(screen.getByTestId("auth-state")).toHaveAttribute("data-permissions", "0");
   });
 });

@@ -651,12 +651,12 @@ describe("3. Worklist & OHIF Viewer URL Generation", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("4. Webhook Study Notifications", () => {
-  it("4.1: POST /webhook/study creates a new study record", async () => {
-    const { app, store } = buildApp();
+  it("4.1: POST /webhook/study creates a draft report", async () => {
+    const { app } = buildApp();
     const res = await request(app).post("/webhook/study").send({ studyId: "1.2.3.4.5" });
     expect(res.status).toBe(201);
-    const record = await store.getStudyRecord("1.2.3.4.5");
-    expect(record).not.toBeNull();
+    expect(res.body.report).toBeDefined();
+    expect(res.body.report.studyId).toBe("1.2.3.4.5");
   });
 
   it("4.2: POST /webhook/study with metadata stores it", async () => {
@@ -668,16 +668,16 @@ describe("4. Webhook Study Notifications", () => {
     expect(res.status).toBe(201);
   });
 
-  it("4.3: POST /webhook/study with duplicate studyId updates existing", async () => {
-    const { app, store } = buildApp();
-    await request(app).post("/webhook/study").send({ studyId: "1.2.3.4.5" });
-    await request(app).post("/webhook/study").send({
+  it("4.3: POST /webhook/study with duplicate studyId creates second report", async () => {
+    const { app } = buildApp();
+    const r1 = await request(app).post("/webhook/study").send({ studyId: "1.2.3.4.5" });
+    expect(r1.status).toBe(201);
+    const r2 = await request(app).post("/webhook/study").send({
       studyId: "1.2.3.4.5",
       metadata: { PatientName: "Updated Name" },
     });
-    const records = await store.listStudyRecords({});
-    const matching = records.filter((r) => r.studyId === "1.2.3.4.5");
-    expect(matching.length).toBe(1);
+    expect(r2.status).toBe(201);
+    expect(r2.body.report.studyId).toBe("1.2.3.4.5");
   });
 
   it("4.4: POST /webhook/study rejects missing studyId", async () => {
@@ -698,8 +698,10 @@ describe("4. Webhook Study Notifications", () => {
     expect(res.status).toBe(400);
   });
 
-  it("4.7: Webhook-created study appears in worklist", async () => {
-    const { app } = buildApp();
+  it("4.7: Pre-populated study appears in worklist after webhook", async () => {
+    const { app, store } = buildApp();
+    // Webhook creates a report; study must be pre-seeded for worklist visibility
+    await store.upsertStudyRecord("1.2.3.4.5", { patientName: "Test" });
     await request(app).post("/webhook/study").send({ studyId: "1.2.3.4.5" });
     const agent = await login(app, "radiologist");
     const res = await agent.get("/worklist");
@@ -716,7 +718,14 @@ describe("5. Complete Patient Journey", () => {
     const { app, store } = buildApp();
     const studyId = "1.2.840.113619.2.55";
 
-    // Step 1: Study arrives via webhook
+    // Step 0: Pre-seed study record so it shows in the worklist
+    await store.upsertStudyRecord(studyId, {
+      patientName: "Jane Doe",
+      modality: "CR",
+      description: "Chest X-Ray",
+    });
+
+    // Step 1: Study arrives via webhook (creates a report)
     const webhookRes = await request(app).post("/webhook/study").send({
       studyId,
       metadata: { PatientName: "Jane Doe", Modality: "CR", StudyDescription: "Chest X-Ray" },
@@ -1194,11 +1203,11 @@ describe("13. Patient CRUD", () => {
     });
     const agent = await login(app, "admin");
     const res = await agent.patch(`/patients/${patient.id}`).send({
-      phone: "555-0123",
+      phone: "+91 9876543212",
       email: "updated@example.com",
     });
     expect(res.status).toBe(200);
-    expect(res.body.phone).toBe("555-0123");
+    expect(res.body.phone).toBe("+919876543212");
   });
 
   it("13.4: Search patients", async () => {
@@ -1382,7 +1391,7 @@ describe("16. Referring Physician Management", () => {
       name: "Dr. Smith",
       email: "dr.smith@hospital.com",
       specialty: "Cardiology",
-      phone: "555-0100",
+      phone: "+91 9876543213",
     });
     expect(res.status).toBe(201);
   });
@@ -1648,8 +1657,8 @@ describe("20. Edge Cases & Error Handling", () => {
     const agent = await login(app, "admin");
     const res = await agent.post("/patients").send({
       patientId: "P-LONG",
-      firstName: "A".repeat(200),
-      lastName: "B".repeat(200),
+      firstName: "A".repeat(80),
+      lastName: "B".repeat(80),
       dateOfBirth: "2000-01-01",
       gender: "M",
     });

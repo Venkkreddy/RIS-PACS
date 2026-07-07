@@ -71,6 +71,8 @@ export default function App() {
   const auth = useAuthRole();
   const location = useLocation();
   const isPublicRoute = ["/", "/login", "/pending-approval"].includes(location.pathname);
+  const isViewerMode = location.pathname === "/tech" && location.search.includes("study=");
+  const shouldHideNavbar = isPublicRoute || isViewerMode;
   const shouldShowAuthLoader = auth.loading && !isPublicRoute;
   const loginRouteElement = auth.loading
     ? <AuthLoadingScreen />
@@ -90,8 +92,8 @@ export default function App() {
   return (
     <div className="min-h-screen bg-tdai-background">
       <ScrollToTop />
-      {!isPublicRoute ? <InternalNavbar /> : null}
-      <main className={!isPublicRoute ? "animate-fade-in" : ""}>
+      {!shouldHideNavbar ? <InternalNavbar /> : null}
+      <main className={!shouldHideNavbar ? "animate-fade-in" : ""}>
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={loginRouteElement} />

@@ -14,6 +14,7 @@ import { healthRouter } from "./routes/health";
 import { hipaaRouter } from "./routes/hipaa";
 import { reportsRouter } from "./routes/reports";
 import { templatesRouter } from "./routes/templates";
+import { notificationsRouter } from "./routes/notifications";
 
 import { webhookRouter } from "./routes/webhook";
 import { worklistRouter } from "./routes/worklist";
@@ -27,6 +28,8 @@ import { dicomwebRouter } from "./routes/dicomweb";
 import { dicomwebMultiTenantRouter } from "./routes/dicomwebMultiTenant";
 import { permissionsRouter } from "./routes/permissions";
 import { servicesRouter } from "./routes/services";
+import { voiceRouter } from "./routes/voice";
+import { radiographerRouter } from "./routes/radiographer";
 import { tenantAuthRouter } from "./routes/tenantAuth";
 import { tenantAdminRouter } from "./routes/tenantAdminPlatform";
 import { JwtService } from "./services/jwtService";
@@ -34,6 +37,7 @@ import { TenantScopedStore } from "./services/tenantScopedStore";
 import { DicoogleService } from "./services/dicoogleService";
 import { EmailService } from "./services/emailService";
 import { HipaaAuditService } from "./services/hipaaAuditService";
+import { NotificationService } from "./services/notificationService";
 import { PdfService } from "./services/pdfService";
 import { ReportService } from "./services/reportService";
 
@@ -91,6 +95,7 @@ export function createApp(deps?: {
   // ── HIPAA Compliance: audit service ──
   const hipaaAuditService = new HipaaAuditService();
   logger.info({ message: "HIPAA compliance layer initialized — audit logging, session timeout, PHI tracking active" });
+  const notificationService = new NotificationService();
 
   app.set("trust proxy", 1);
 
@@ -134,7 +139,8 @@ export function createApp(deps?: {
   // ── Core application routes (all go through gateway + session auth) ──
   app.use("/", adminRouter(store, emailService));
   app.use("/templates", templatesRouter(store));
-  app.use("/reports", reportsRouter({ store, reportService, storageService, emailService, pdfService }));
+  app.use("/reports", reportsRouter({ store, reportService, storageService, emailService, pdfService, hipaaAuditService, notificationService }));
+  app.use("/notifications", notificationsRouter(notificationService));
   app.use("/ai", aiRouter(monaiService, store));
   app.use("/", worklistRouter(store, dicoogleService, tenantStore));
   app.use("/webhook", webhookRouter(reportService, dicoogleService, monaiService, store as StoreService));
@@ -142,7 +148,7 @@ export function createApp(deps?: {
   app.use("/patients", patientsRouter(store));
   app.use("/orders", ordersRouter(store));
   app.use("/scans", scansRouter(store));
-  app.use("/billing", billingRouter(store));
+  app.use("/billing", billingRouter(store, hipaaAuditService, emailService));
   app.use("/referring-physicians", referringPhysiciansRouter(store));
   app.use("/dicom", dicomUploadRouter(store, serviceRegistry, storageService, tenantStore, monaiService));
   app.use("/dicomweb/weasis/:accessToken", dicomRouter);
@@ -152,6 +158,8 @@ export function createApp(deps?: {
   app.use("/wado/weasis/:accessToken", dicomRouter);
   app.use("/wado", dicomRouter);
   app.use("/permissions", permissionsRouter(store));
+  app.use("/voice", voiceRouter());
+  app.use("/radiographer", radiographerRouter(store));
   app.use("/", servicesRouter(serviceRegistry, store));
 
   // ── HIPAA compliance routes (audit log, emergency access, compliance dashboard) ──

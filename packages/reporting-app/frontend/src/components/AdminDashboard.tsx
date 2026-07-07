@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, Legend, Pie, PieChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
@@ -105,6 +105,43 @@ function groupPermissionsByModule(perms: string[]): Record<string, string[]> {
   return groups;
 }
 
+interface HipaaAuditEntry {
+  id: string;
+  timestamp: string;
+  action: string;
+  severity: string;
+  userId: string;
+  userEmail: string;
+  userRole: string;
+  ipAddress: string;
+  resourceType?: string;
+  resourceId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface TenantAuditLogRow {
+  id: string;
+  user_id?: string;
+  action: string;
+  resource_type?: string;
+  resource_id?: string;
+  ip_address?: string;
+  created_at: string;
+}
+
+interface UnifiedAuditRow {
+  id: string;
+  timestamp: string;
+  user: string;
+  role?: string;
+  action: string;
+  patientAffected?: string;
+  ip?: string;
+  source: "HIPAA" | "Platform";
+}
+
+const AUDIT_PAGE_SIZE = 50;
+
 interface AnalyticsResponse {
   centers: Array<{ name: string; uploads: number }>;
   totalUploads: number;
@@ -114,6 +151,12 @@ interface AnalyticsResponse {
 }
 
 const PIE_COLORS = ["#00B4A6", "#1A2B56", "#3B82F6", "#8B5CF6", "#F59E0B", "#E03C31", "#10B981", "#06B6D4"];
+
+function tatBadgeClass(hours: number): string {
+  if (hours < 4) return "bg-tdai-teal-50 text-tdai-teal-700 ring-1 ring-tdai-teal-200 dark:bg-tdai-teal-900/30 dark:text-tdai-teal-300";
+  if (hours <= 12) return "bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-300";
+  return "bg-tdai-red-50 text-tdai-red-700 ring-1 ring-tdai-red-200 dark:bg-tdai-red-900/30 dark:text-tdai-red-300";
+}
 
 const container = {
   hidden: { opacity: 0 },
@@ -125,7 +168,16 @@ const item = {
   show: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] as const } },
 };
 
-type AdminTab = "overview" | "users" | "approvals" | "permissions" | "audit" | "services";
+type AdminTab = "overview" | "users" | "approvals" | "permissions" | "audit" | "radiologists" | "services";
+
+interface TatByRadiologistRow {
+  radiologist_name: string;
+  assigned_count: number;
+  completed_count: number;
+  avg_tat_hours: number;
+  max_tat_hours: number;
+  pending_count: number;
+}
 
 export function AdminDashboard() {
   const queryClient = useQueryClient();
@@ -148,6 +200,115 @@ export function AdminDashboard() {
     queryKey: ["admin-pending"],
     queryFn: async () => (await api.get<WorklistUser[]>("/admin/user-requests")).data,
   });
+
+  // ── Audit log: merges two independent backend sources.
+  // 1) /hipaa/audit-log — session-authenticated, always reachable for admin/super_admin.
+  // 2) /api/v1/admin/audit-logs — tenant-scoped multi-tenant platform log; only returns
+  //    data when the session also carries a tenant JWT (multi-tenant mode). We swallow
+  //    failures here so a non-multi-tenant deployment still shows the HIPAA log cleanly.
+  const [auditDateFrom, setAuditDateFrom] = useState("");
+  const [auditDateTo, setAuditDateTo] = useState("");
+  const [auditRoleFilter, setAuditRoleFilter] = useState("");
+  const [auditActionFilter, setAuditActionFilter] = useState("");
+  const [auditPage, setAuditPage] = useState(1);
+
+  const hipaaAuditQuery = useQuery({
+    queryKey: ["audit-hipaa"],
+    queryFn: async () => (await api.get<{ entries: HipaaAuditEntry[]; total: number }>("/hipaa/audit-log", { params: { limit: 500 } })).data,
+    enabled: tab === "audit",
+  });
+
+  const tenantAuditQuery = useQuery({
+    queryKey: ["audit-tenant"],
+    queryFn: async () => {
+      try {
+        const res = await api.get<{ auditLogs: TenantAuditLogRow[] }>("/api/v1/admin/audit-logs", { params: { limit: 500 } });
+        return res.data;
+      } catch {
+        // Not in multi-tenant mode, or no tenant JWT on this session — not an error for this view.
+        return { auditLogs: [] as TenantAuditLogRow[] };
+      }
+    },
+    enabled: tab === "audit",
+    retry: false,
+  });
+
+  const tatByRadiologistQuery = useQuery({
+    queryKey: ["analytics-tat-by-radiologist"],
+    queryFn: async () =>
+      (await api.get<{ radiologists: TatByRadiologistRow[] }>("/admin/analytics/tat-by-radiologist")).data,
+    enabled: tab === "radiologists",
+  });
+
+  const unifiedAuditRows = useMemo<UnifiedAuditRow[]>(() => {
+    const fromHipaa: UnifiedAuditRow[] = (hipaaAuditQuery.data?.entries ?? []).map((e) => ({
+      id: e.id,
+      timestamp: e.timestamp,
+      user: e.userEmail || e.userId,
+      role: e.userRole,
+      action: e.action,
+      patientAffected:
+        e.resourceType === "patient"
+          ? e.resourceId
+          : (typeof e.metadata?.patientName === "string" ? (e.metadata.patientName as string) : undefined),
+      ip: e.ipAddress,
+      source: "HIPAA",
+    }));
+    const fromTenant: UnifiedAuditRow[] = (tenantAuditQuery.data?.auditLogs ?? []).map((e) => ({
+      id: e.id,
+      timestamp: e.created_at,
+      user: e.user_id ?? "—",
+      action: e.action,
+      patientAffected: e.resource_type === "patient" ? e.resource_id : undefined,
+      ip: e.ip_address,
+      source: "Platform",
+    }));
+    return [...fromHipaa, ...fromTenant].sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+    );
+  }, [hipaaAuditQuery.data, tenantAuditQuery.data]);
+
+  const filteredAuditRows = useMemo(() => {
+    return unifiedAuditRows.filter((row) => {
+      if (auditDateFrom && row.timestamp < auditDateFrom) return false;
+      if (auditDateTo && row.timestamp > `${auditDateTo}T23:59:59.999Z`) return false;
+      if (auditRoleFilter && row.role !== auditRoleFilter) return false;
+      if (auditActionFilter && !row.action.toLowerCase().includes(auditActionFilter.toLowerCase())) return false;
+      return true;
+    });
+  }, [unifiedAuditRows, auditDateFrom, auditDateTo, auditRoleFilter, auditActionFilter]);
+
+  const auditTotalPages = Math.max(1, Math.ceil(filteredAuditRows.length / AUDIT_PAGE_SIZE));
+  const auditPageClamped = Math.min(auditPage, auditTotalPages);
+  const auditPageRows = filteredAuditRows.slice(
+    (auditPageClamped - 1) * AUDIT_PAGE_SIZE,
+    auditPageClamped * AUDIT_PAGE_SIZE,
+  );
+
+  function exportAuditCsv() {
+    const header = ["Timestamp", "User", "Role", "Action", "Patient Affected", "IP Address", "Source"];
+    const rows = filteredAuditRows.map((r) => [
+      r.timestamp,
+      r.user,
+      r.role ?? "",
+      r.action,
+      r.patientAffected ?? "",
+      r.ip ?? "",
+      r.source,
+    ]);
+    const csv = [header, ...rows]
+      .map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
 
   async function sendReminder(studyId: string) {
     await api.post("/admin/reminder", { studyId });
@@ -274,6 +435,7 @@ export function AdminDashboard() {
     { key: "approvals", label: "Approvals", icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z", badge: pending.length },
     { key: "permissions", label: "Permissions", icon: "M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" },
     { key: "audit", label: "Audit Log", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" },
+    { key: "radiologists", label: "Radiologist Performance", icon: "M3 13h2l3-9 4 18 3-9h6" },
     ...(showServices ? [{ key: "services" as AdminTab, label: "Services", icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z" }] : []),
   ];
 
@@ -985,14 +1147,191 @@ export function AdminDashboard() {
             transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
             className="space-y-4"
           >
-            <h2 className="text-lg font-semibold text-tdai-text dark:text-white">Audit Log</h2>
-            <div className="card py-16 text-center">
-              <svg className="mx-auto h-12 w-12 text-tdai-muted dark:text-tdai-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
-              <p className="mt-3 text-sm text-tdai-secondary dark:text-tdai-gray-400">Audit logging coming soon</p>
-              <p className="mt-1 text-xs text-tdai-muted dark:text-tdai-gray-500">Track all user actions and system events</p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold text-tdai-text dark:text-white">Audit Log</h2>
+              <button
+                type="button"
+                className="btn-secondary !px-3 !py-1.5 text-xs"
+                onClick={exportAuditCsv}
+                disabled={filteredAuditRows.length === 0}
+              >
+                Export CSV
+              </button>
             </div>
+
+            <div className="card grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-tdai-muted dark:text-tdai-gray-400">From</label>
+                <input
+                  type="date"
+                  className="input-field w-full"
+                  value={auditDateFrom}
+                  onChange={(e) => { setAuditDateFrom(e.target.value); setAuditPage(1); }}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-tdai-muted dark:text-tdai-gray-400">To</label>
+                <input
+                  type="date"
+                  className="input-field w-full"
+                  value={auditDateTo}
+                  onChange={(e) => { setAuditDateTo(e.target.value); setAuditPage(1); }}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-tdai-muted dark:text-tdai-gray-400">Role</label>
+                <select
+                  className="select-field w-full"
+                  value={auditRoleFilter}
+                  onChange={(e) => { setAuditRoleFilter(e.target.value); setAuditPage(1); }}
+                >
+                  <option value="">All roles</option>
+                  {ALL_ROLES.map((r) => (
+                    <option key={r} value={r}>{ROLE_LABELS[r] ?? r}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-tdai-muted dark:text-tdai-gray-400">Action contains</label>
+                <input
+                  type="text"
+                  placeholder="e.g. LOGIN, PHI_ACCESS..."
+                  className="input-field w-full"
+                  value={auditActionFilter}
+                  onChange={(e) => { setAuditActionFilter(e.target.value); setAuditPage(1); }}
+                />
+              </div>
+            </div>
+
+            {(hipaaAuditQuery.isLoading || tenantAuditQuery.isLoading) ? (
+              <div className="flex items-center justify-center py-16">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-tdai-border border-t-tdai-accent dark:border-white/20 dark:border-t-tdai-teal-400" />
+              </div>
+            ) : filteredAuditRows.length === 0 ? (
+              <div className="card py-16 text-center">
+                <svg className="mx-auto h-12 w-12 text-tdai-muted dark:text-tdai-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                <p className="mt-3 text-sm text-tdai-secondary dark:text-tdai-gray-400">No audit entries match these filters</p>
+                <p className="mt-1 text-xs text-tdai-muted dark:text-tdai-gray-500">Try widening the date range or clearing filters</p>
+              </div>
+            ) : (
+              <>
+                <div className="table-wrap">
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[900px] text-sm">
+                      <thead className="table-header">
+                        <tr>
+                          <th>Timestamp</th>
+                          <th>User</th>
+                          <th>Role</th>
+                          <th>Action</th>
+                          <th>Patient Affected</th>
+                          <th>Source</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-tdai-border-light dark:divide-white/[0.08]">
+                        {auditPageRows.map((row) => (
+                          <tr key={`${row.source}-${row.id}`} className="table-row-hover">
+                            <td className="table-cell whitespace-nowrap text-xs">{new Date(row.timestamp).toLocaleString()}</td>
+                            <td className="table-cell text-xs">{row.user}</td>
+                            <td className="table-cell text-xs">{row.role ? (ROLE_LABELS[row.role] ?? row.role) : "—"}</td>
+                            <td className="table-cell text-xs font-medium">{row.action}</td>
+                            <td className="table-cell text-xs">{row.patientAffected ?? "—"}</td>
+                            <td className="table-cell text-xs">
+                              <span className={`badge ${row.source === "HIPAA" ? "bg-tdai-navy-50 text-tdai-navy-700 ring-1 ring-tdai-navy-200 dark:bg-tdai-navy-900/30 dark:text-tdai-navy-300" : "bg-tdai-teal-50 text-tdai-teal-700 ring-1 ring-tdai-teal-200 dark:bg-tdai-teal-900/30 dark:text-tdai-teal-300"}`}>
+                                {row.source}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between text-xs text-tdai-secondary dark:text-tdai-gray-400">
+                  <span>
+                    Showing {(auditPageClamped - 1) * AUDIT_PAGE_SIZE + 1}
+                    –{Math.min(auditPageClamped * AUDIT_PAGE_SIZE, filteredAuditRows.length)} of {filteredAuditRows.length}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="btn-secondary !px-3 !py-1 text-xs"
+                      disabled={auditPageClamped <= 1}
+                      onClick={() => setAuditPage((p) => Math.max(1, p - 1))}
+                    >
+                      Previous
+                    </button>
+                    <span>Page {auditPageClamped} of {auditTotalPages}</span>
+                    <button
+                      type="button"
+                      className="btn-secondary !px-3 !py-1 text-xs"
+                      disabled={auditPageClamped >= auditTotalPages}
+                      onClick={() => setAuditPage((p) => Math.min(auditTotalPages, p + 1))}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </motion.div>
+        )}
+
+        {/* ════════════════════════════ RADIOLOGIST PERFORMANCE TAB ═══════════════════ */}
+        {tab === "radiologists" && (
+          <motion.div
+            key="radiologists-panel"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            className="space-y-4"
+          >
+            <h2 className="text-lg font-semibold text-tdai-text dark:text-white">Radiologist Performance</h2>
+
+            {tatByRadiologistQuery.isLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-tdai-border border-t-tdai-accent dark:border-white/20 dark:border-t-tdai-teal-400" />
+              </div>
+            ) : (tatByRadiologistQuery.data?.radiologists ?? []).length === 0 ? (
+              <div className="card py-16 text-center">
+                <p className="text-sm text-tdai-secondary dark:text-tdai-gray-400">No assigned studies yet</p>
+              </div>
+            ) : (
+              <div className="table-wrap">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[700px] text-sm">
+                    <thead className="table-header">
+                      <tr>
+                        <th>Radiologist</th>
+                        <th>Assigned</th>
+                        <th>Completed</th>
+                        <th>Avg TAT</th>
+                        <th>Max TAT</th>
+                        <th>Pending</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-tdai-border-light dark:divide-white/[0.08]">
+                      {(tatByRadiologistQuery.data?.radiologists ?? []).map((row) => (
+                        <motion.tr key={row.radiologist_name} className="table-row-hover">
+                          <td className="table-cell text-sm font-medium">{row.radiologist_name}</td>
+                          <td className="table-cell text-sm">{row.assigned_count}</td>
+                          <td className="table-cell text-sm">{row.completed_count}</td>
+                          <td className="table-cell text-sm">
+                            <span className={`badge ${tatBadgeClass(row.avg_tat_hours)}`}>{row.avg_tat_hours.toFixed(1)}h</span>
+                          </td>
+                          <td className="table-cell text-sm">
+                            <span className={`badge ${tatBadgeClass(row.max_tat_hours)}`}>{row.max_tat_hours.toFixed(1)}h</span>
+                          </td>
+                          <td className="table-cell text-sm">{row.pending_count}</td>
+                        </motion.tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </motion.div>
         )}
 

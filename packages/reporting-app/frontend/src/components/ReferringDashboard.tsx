@@ -1,8 +1,88 @@
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api/client";
 import { useAuthRole } from "../hooks/useAuthRole";
 import { motion } from "framer-motion";
-import type { RadiologyOrder } from "@medical-report-system/shared";
+import type { Modality, RadiologyOrder } from "@medical-report-system/shared";
+
+const MODALITIES: Modality[] = ["CR", "CT", "MR", "US", "XR", "MG", "NM", "PT", "DX", "OT"];
+
+function NewOrderModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [patientId, setPatientId] = useState("");
+  const [patientName, setPatientName] = useState("");
+  const [modality, setModality] = useState<Modality>("CT");
+  const [bodyPart, setBodyPart] = useState("");
+  const [priority, setPriority] = useState<"routine" | "urgent" | "stat">("routine");
+  const [scheduledDate, setScheduledDate] = useState(new Date().toISOString().slice(0, 10));
+  const [clinicalHistory, setClinicalHistory] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      await api.post("/orders", {
+        patientId,
+        patientName,
+        modality,
+        bodyPart,
+        priority,
+        status: "scheduled",
+        scheduledDate,
+        clinicalHistory: clinicalHistory || undefined,
+      });
+      onCreated();
+      onClose();
+    } catch (err: any) {
+      setError(err?.response?.data?.error ?? "Failed to create order");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="card w-full max-w-lg p-6">
+        <h2 className="text-lg font-bold text-tdai-text dark:text-tdai-gray-100">New Imaging Order</h2>
+        <form onSubmit={submit} className="mt-4 space-y-3">
+          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-900/20 dark:text-red-300">{error}</p>}
+          <div className="grid grid-cols-2 gap-3">
+            <input className="input-field" placeholder="Patient ID" value={patientId} onChange={(e) => setPatientId(e.target.value)} required />
+            <input className="input-field" placeholder="Patient Name" value={patientName} onChange={(e) => setPatientName(e.target.value)} required />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <select className="input-field" value={modality} onChange={(e) => setModality(e.target.value as Modality)}>
+              {MODALITIES.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <input className="input-field" placeholder="Body Part" value={bodyPart} onChange={(e) => setBodyPart(e.target.value)} required />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <select className="input-field" value={priority} onChange={(e) => setPriority(e.target.value as typeof priority)}>
+              <option value="routine">Routine</option>
+              <option value="urgent">Urgent</option>
+              <option value="stat">STAT</option>
+            </select>
+            <input className="input-field" type="date" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} required />
+          </div>
+          <textarea
+            className="input-field"
+            placeholder="Clinical history (optional)"
+            value={clinicalHistory}
+            onChange={(e) => setClinicalHistory(e.target.value)}
+            rows={3}
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" className="btn-secondary !rounded-lg !px-4 !py-2 text-xs" onClick={onClose}>Cancel</button>
+            <button type="submit" disabled={submitting} className="btn-primary !rounded-lg !px-4 !py-2 text-xs">
+              {submitting ? "Creating..." : "Create Order"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 const statusBadge: Record<string, string> = {
   scheduled:
@@ -19,6 +99,7 @@ export function ReferringDashboard() {
   const [orders, setOrders] = useState<RadiologyOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [showNewOrder, setShowNewOrder] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -113,7 +194,17 @@ export function ReferringDashboard() {
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
             Refresh
           </button>
+          {auth.hasPermission("orders:create") && (
+            <button className="btn-primary !rounded-lg !px-4 !py-2.5 text-xs" onClick={() => setShowNewOrder(true)}>
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+              New Order
+            </button>
+          )}
         </div>
+
+        {showNewOrder && (
+          <NewOrderModal onClose={() => setShowNewOrder(false)} onCreated={() => void load()} />
+        )}
 
         {/* ── Loading ─────────────────── */}
         {loading && (

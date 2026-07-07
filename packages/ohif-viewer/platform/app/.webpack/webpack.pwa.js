@@ -85,6 +85,10 @@ module.exports = (env, argv) => {
     plugins: [
       // For debugging re-renders
       // MillionLint.webpack(),
+      new webpack.DefinePlugin({
+        __filename: JSON.stringify(''),
+        __dirname: JSON.stringify(''),
+      }),
       new Dotenv(),
       // Clean output.path
       new CleanWebpackPlugin(),

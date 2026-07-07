@@ -44,8 +44,8 @@ async function login(app: any, role: string) {
 describe("M1. GET Endpoints per Role", () => {
   const roles = ["admin", "radiographer", "radiologist", "viewer", "referring", "billing"];
 
-  const worklistAllowed = ["admin", "radiographer", "radiologist", "viewer"];
-  const worklistDenied = ["referring", "billing"];
+  const worklistAllowed = ["admin", "radiographer", "radiologist", "viewer", "referring"];
+  const worklistDenied = ["billing"];
 
   worklistAllowed.forEach((role) => {
     it(`M1: ${role} → GET /worklist → 200`, async () => {
@@ -353,9 +353,9 @@ describe("M7. Patient CRUD Edge Cases", () => {
   it("M7.1: create with all optional fields", async () => {
     const { app } = buildApp();
     const a = await login(app, "admin");
-    const r = await a.post("/patients").send({ patientId: "P1", firstName: "A", lastName: "B", dateOfBirth: "2000-01-01", gender: "M", phone: "555", email: "a@b.com", address: "123 Main St" });
+    const r = await a.post("/patients").send({ patientId: "P1", firstName: "A", lastName: "B", dateOfBirth: "2000-01-01", gender: "M", phone: "+91 9876543210", email: "a@b.com", address: "123 Main St" });
     expect(r.status).toBe(201);
-    expect(r.body.phone).toBe("555");
+    expect(r.body.phone).toBe("+919876543210");
     expect(r.body.email).toBe("a@b.com");
     expect(r.body.address).toBe("123 Main St");
   });
@@ -364,8 +364,8 @@ describe("M7. Patient CRUD Edge Cases", () => {
     const { app, store } = buildApp();
     const p = await store.createPatient({ patientId: "P1", firstName: "A", lastName: "B", dateOfBirth: "2000-01-01", gender: "M" });
     const a = await login(app, "admin");
-    const r = await a.patch(`/patients/${p.id}`).send({ phone: "555-1234" });
-    expect(r.body.phone).toBe("555-1234");
+    const r = await a.patch(`/patients/${p.id}`).send({ phone: "+91 9876543210" });
+    expect(r.body.phone).toBe("+919876543210");
     expect(r.body.firstName).toBe("A");
   });
 
@@ -550,7 +550,7 @@ describe("M10. Physician CRUD", () => {
   it("M10.1: create with all fields", async () => {
     const { app } = buildApp();
     const a = await login(app, "admin");
-    const r = await a.post("/referring-physicians").send({ name: "Dr X", specialty: "Cardiology", phone: "555", email: "dr@h.com", hospital: "General" });
+    const r = await a.post("/referring-physicians").send({ name: "Dr X", specialty: "Cardiology", phone: "+91 9876543210", email: "dr@h.com", hospital: "General" });
     expect(r.status).toBe(201);
     expect(r.body.specialty).toBe("Cardiology");
     expect(r.body.hospital).toBe("General");

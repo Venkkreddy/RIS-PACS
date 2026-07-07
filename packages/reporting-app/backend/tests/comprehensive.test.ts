@@ -187,11 +187,12 @@ describe("A. Auth & Session Security", () => {
     expect(me.body.user.role).toBe("referring");
   });
 
-  it("A32b: referring CANNOT view worklist (no worklist:view)", async () => {
+  it("A32b: referring CAN view worklist, scoped to their own studies", async () => {
     const { app } = buildApp();
     const agent = await login(app, "referring");
     const res = await agent.get("/worklist");
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]); // no orders placed by this physician, so nothing visible yet
   });
 
   it("A33: billing session preserved", async () => {
@@ -573,7 +574,7 @@ describe("B. Input Validation", () => {
   it("B43: physician accepts valid data", async () => {
     const { app } = buildApp();
     const agent = await login(app, "admin");
-    const res = await agent.post("/referring-physicians").send({ name: "Dr X", email: "dr@hospital.com", specialty: "Neuro", phone: "555-0000" });
+    const res = await agent.post("/referring-physicians").send({ name: "Dr X", email: "dr@hospital.com", specialty: "Neuro", phone: "+91 9876543214" });
     expect(res.status).toBe(201);
   });
 
@@ -938,7 +939,7 @@ describe("E. Data Integrity", () => {
   it("E3: updatePatient always updates updatedAt", async () => {
     const p = await store.createPatient({ patientId: "P1", firstName: "A", lastName: "B", dateOfBirth: "2000-01-01", gender: "M" });
     await new Promise((res) => setTimeout(res, 20));
-    const upd = await store.updatePatient(p.id, { phone: "555" });
+    const upd = await store.updatePatient(p.id, { phone: "+91 9876543210" });
     expect(new Date(upd.updatedAt).getTime()).toBeGreaterThan(new Date(p.updatedAt).getTime());
   });
 
@@ -1135,9 +1136,9 @@ describe("F. CRUD Routes", () => {
     const { app, store } = buildApp();
     const p = await store.createPatient({ patientId: "P1", firstName: "A", lastName: "B", dateOfBirth: "2000-01-01", gender: "M" });
     const agent = await login(app, "admin");
-    const res = await agent.patch(`/patients/${p.id}`).send({ phone: "555" });
+    const res = await agent.patch(`/patients/${p.id}`).send({ phone: "+91 9876543210" });
     expect(res.status).toBe(200);
-    expect(res.body.phone).toBe("555");
+    expect(res.body.phone).toBe("+919876543210");
   });
 
   it("F4: list patients with search", async () => {
@@ -1324,7 +1325,7 @@ describe("G. Error Handling", () => {
   it("G4: PATCH non-existent patient returns 404", async () => {
     const { app } = buildApp();
     const agent = await login(app, "admin");
-    const res = await agent.patch("/patients/nope").send({ phone: "555" });
+    const res = await agent.patch("/patients/nope").send({ phone: "+91 9876543210" });
     expect(res.status).toBe(404);
   });
 

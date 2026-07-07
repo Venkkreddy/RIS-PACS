@@ -12,6 +12,7 @@ import TableHeader from "@tiptap/extension-table-header";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import CharacterCount from "@tiptap/extension-character-count";
+import { useVoiceDictation } from "../hooks/useVoiceDictation";
 
 interface TipTapEditorProps {
   content: string;
@@ -21,6 +22,8 @@ interface TipTapEditorProps {
   autoFocus?: boolean;
   sectionTitle?: string;
   macros?: MacroItem[];
+  /** Shows a microphone toggle in the toolbar that dictates directly into this editor. */
+  enableDictation?: boolean;
 }
 
 export interface MacroItem {
@@ -54,6 +57,7 @@ export function TipTapEditor({
   autoFocus = false,
   sectionTitle,
   macros = RADIOLOGY_MACROS,
+  enableDictation = false,
 }: TipTapEditorProps) {
   const [showMacros, setShowMacros] = useState(false);
   const [macroSearch, setMacroSearch] = useState("");
@@ -134,7 +138,13 @@ export function TipTapEditor({
 
   return (
     <div className="tiptap-wrapper rounded-xl border border-tdai-gray-200 bg-white shadow-tdai-sm">
-      {editable && <Toolbar editor={editor} onMacroToggle={() => setShowMacros(!showMacros)} />}
+      {editable && (
+        <Toolbar
+          editor={editor}
+          onMacroToggle={() => setShowMacros(!showMacros)}
+          enableDictation={enableDictation}
+        />
+      )}
 
       {sectionTitle && (
         <div className="border-b border-tdai-gray-100 bg-tdai-gray-50/50 px-4 py-1.5">
@@ -200,7 +210,18 @@ export function TipTapEditor({
   );
 }
 
-function Toolbar({ editor, onMacroToggle }: { editor: Editor; onMacroToggle: () => void }) {
+function Toolbar({ editor, onMacroToggle, enableDictation = false }: { editor: Editor; onMacroToggle: () => void; enableDictation?: boolean }) {
+  const insertDictatedText = useCallback(
+    (text: string) => {
+      if (!editor) return;
+      editor.chain().focus().insertContent(text).run();
+    },
+    [editor],
+  );
+
+  const { isSupported, isListening, isTranscribing, statusText, start, stop, error } =
+    useVoiceDictation(insertDictatedText);
+
   const btn = (active: boolean, onClick: () => void, children: React.ReactNode, title: string) => (
     <button
       type="button"
@@ -282,6 +303,44 @@ function Toolbar({ editor, onMacroToggle }: { editor: Editor; onMacroToggle: () 
         <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
         Macros
       </button>
+
+      {/* ── MedASR Voice Dictation Button ── */}
+      {enableDictation && isSupported && (
+        <>
+          <button
+            type="button"
+            title={isListening ? "Stop recording" : isTranscribing ? "Transcribing..." : "Voice dictation (MedASR)"}
+            disabled={isTranscribing}
+            onClick={isListening ? stop : start}
+            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-all duration-200 ${
+              isListening
+                ? "bg-red-100 text-red-700 shadow-sm animate-pulse"
+                : isTranscribing
+                  ? "bg-amber-100 text-amber-700 cursor-wait"
+                  : "bg-tdai-teal-50 text-tdai-teal-700 hover:bg-tdai-teal-100"
+            }`}
+          >
+            {isListening ? (
+              /* Stop icon (square) */
+              <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+            ) : isTranscribing ? (
+              /* Spinner */
+              <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10" strokeDasharray="31.416" strokeDashoffset="10" strokeLinecap="round" /></svg>
+            ) : (
+              /* Mic icon */
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            )}
+            {isListening ? "Stop" : isTranscribing ? "Transcribing..." : "Dictate"}
+          </button>
+          {(statusText || error) && (
+            <span className={`text-[10px] max-w-[180px] truncate ${
+              error ? "text-red-600" : "text-tdai-gray-500"
+            }`}>
+              {error || statusText}
+            </span>
+          )}
+        </>
+      )}
     </div>
   );
 }

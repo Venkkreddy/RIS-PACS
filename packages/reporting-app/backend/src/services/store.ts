@@ -19,6 +19,8 @@ import { getFirestore } from "./firebaseAdmin";
 
 export type StudyStatus = "unassigned" | "assigned" | "reported";
 
+export type QcStatus = "pending" | "pass" | "fail";
+
 export interface StudyRecord {
   studyId: string;
   patientName?: string;
@@ -27,12 +29,16 @@ export interface StudyRecord {
   description?: string;
   bodyPart?: string;
   location?: string;
+  room?: string;
   uploaderId?: string;
   status: StudyStatus;
   assignedTo?: string;
   assignedAt?: string;
   reportedAt?: string;
   tatHours?: number;
+  isRepeat?: boolean;
+  repeatReason?: string;
+  qcStatus?: QcStatus;
   metadata?: Record<string, unknown>;
   updatedAt: string;
 }
@@ -144,6 +150,23 @@ export class StoreService {
   async listReports(ownerId: string): Promise<Report[]> {
     const snapshot = await this.firestore.collection("reports").where("ownerId", "==", ownerId).get();
     return snapshot.docs.map((doc) => doc.data() as Report);
+  }
+
+  // Completed reports for studies linked to this referring physician's own orders —
+  // lets a doctor see finalized reports on their patients without exposing everyone else's.
+  async listReportsForReferringPhysician(referringPhysicianId: string): Promise<Report[]> {
+    const orders = await this.listOrders({ referringPhysicianId });
+    const studyIds = new Set(orders.map((o) => o.studyId).filter((id): id is string => Boolean(id)));
+    if (studyIds.size === 0) return [];
+
+    const reports: Report[] = [];
+    for (const studyId of studyIds) {
+      const report = await this.getReportByStudyId(studyId);
+      if (report && (report.status === "final" || report.status === "amended")) {
+        reports.push(report);
+      }
+    }
+    return reports;
   }
 
   async getReport(reportId: string): Promise<Report | null> {
@@ -613,10 +636,12 @@ export class StoreService {
     patientId?: string;
     date?: string;
     search?: string;
+    referringPhysicianId?: string;
   }): Promise<RadiologyOrder[]> {
     let query: any = this.firestore.collection("orders");
     if (filters?.status) query = query.where("status", "==", filters.status);
     if (filters?.patientId) query = query.where("patientId", "==", filters.patientId);
+    if (filters?.referringPhysicianId) query = query.where("referringPhysicianId", "==", filters.referringPhysicianId);
 
     const snapshot = await query.get();
     let orders = snapshot.docs.map((doc: { data: () => unknown }) => doc.data() as RadiologyOrder);

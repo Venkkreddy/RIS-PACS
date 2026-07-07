@@ -28,6 +28,7 @@ import {
   addTool,
   annotation,
   ReferenceLinesTool,
+  ScaleOverlayTool,
   TrackballRotateTool,
   AdvancedMagnifyTool,
   UltrasoundDirectionalTool,
@@ -96,6 +97,7 @@ export default function initCornerstoneTools(configuration = {}) {
   addTool(BrushTool);
   addTool(PaintFillTool);
   addTool(ReferenceLinesTool);
+  addTool(ScaleOverlayTool);
   addTool(CalibrationLineTool);
   addTool(TrackballRotateTool);
   addTool(ImageOverlayViewerTool);
@@ -155,6 +157,7 @@ const toolNames = {
   Brush: BrushTool.toolName,
   PaintFill: PaintFillTool.toolName,
   ReferenceLines: ReferenceLinesTool.toolName,
+  ScaleOverlay: ScaleOverlayTool.toolName,
   CalibrationLine: CalibrationLineTool.toolName,
   TrackballRotateTool: TrackballRotateTool.toolName,
   CircleScissors: CircleScissorsTool.toolName,

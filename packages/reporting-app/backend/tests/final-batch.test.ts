@@ -38,13 +38,14 @@ async function login(app: any, role: string) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// F1. EVERY ROLE × PATIENT CRUD (permission-based: patients:view all, patients:create/edit admin/radiographer/receptionist)
+// F1. EVERY ROLE × PATIENT CRUD (permission-based: patients:view all, patients:create/edit admin/receptionist/radiologist)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("F1. Patient CRUD per Role", () => {
   const allRoles = ["admin", "radiographer", "radiologist", "viewer", "referring", "billing", "receptionist"];
-  const patientCreateEditRoles = ["admin", "radiographer", "receptionist"];
-  const patientViewOnlyRoles = ["radiologist", "viewer", "referring", "billing"];
+  // Radiographers are not responsible for patient registration/edits — see project plan ("not their job").
+  const patientCreateEditRoles = ["admin", "receptionist", "radiologist"];
+  const patientViewOnlyRoles = ["viewer", "referring", "billing", "radiographer"];
 
   allRoles.forEach((role) => {
     it(`F1: ${role} can GET /patients`, async () => {
@@ -73,7 +74,7 @@ describe("F1. Patient CRUD per Role", () => {
       const { app, store } = buildApp();
       const p = await store.createPatient({ patientId: "P1", firstName: "A", lastName: "B", dateOfBirth: "2000-01-01", gender: "M" });
       const a = await login(app, role);
-      expect((await a.patch(`/patients/${p.id}`).send({ phone: "555" })).status).toBe(200);
+      expect((await a.patch(`/patients/${p.id}`).send({ phone: "+91 9876543210" })).status).toBe(200);
     });
   });
 
@@ -89,7 +90,7 @@ describe("F1. Patient CRUD per Role", () => {
       const { app, store } = buildApp();
       const p = await store.createPatient({ patientId: "P1", firstName: "A", lastName: "B", dateOfBirth: "2000-01-01", gender: "M" });
       const a = await login(app, role);
-      expect((await a.patch(`/patients/${p.id}`).send({ phone: "555" })).status).toBe(403);
+      expect((await a.patch(`/patients/${p.id}`).send({ phone: "+91 9876543210" })).status).toBe(403);
     });
   });
 });
@@ -176,7 +177,18 @@ describe("F3. Order Read per Role", () => {
 
     it(`F3: ${role} can GET /orders/:id`, async () => {
       const { app, store } = buildApp();
-      const o = await store.createOrder({ patientId: "p", patientName: "n", modality: "CT", bodyPart: "H", priority: "routine", status: "scheduled", scheduledDate: "2026-01-01", createdBy: "u" });
+      // Referring physicians are scoped to their own orders only, so attribute the order to them.
+      const o = await store.createOrder({
+        patientId: "p",
+        patientName: "n",
+        modality: "CT",
+        bodyPart: "H",
+        priority: "routine",
+        status: "scheduled",
+        scheduledDate: "2026-01-01",
+        createdBy: "u",
+        ...(role === "referring" ? { referringPhysicianId: `dev-${role}` } : {}),
+      });
       const a = await login(app, role);
       expect((await a.get(`/orders/${o.id}`)).status).toBe(200);
     });
@@ -206,9 +218,9 @@ describe("F3. Order Read per Role", () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("F4. Billing CRUD per Role", () => {
-  const billingViewRoles = ["admin", "billing", "viewer"];
+  const billingViewRoles = ["admin", "billing", "viewer", "radiologist"];
   const billingCreateEditRoles = ["admin", "billing"];
-  const billingViewDeniedRoles = ["radiographer", "radiologist", "referring"];
+  const billingViewDeniedRoles = ["radiographer", "referring"];
   const billingCreateEditDeniedRoles = ["radiographer", "radiologist", "viewer", "referring"];
 
   billingViewRoles.forEach((role) => {
@@ -273,7 +285,7 @@ describe("F5. Stress: Rapid Requests", () => {
 
   it("F5.2: 50 POST /patients with unique IDs", async () => {
     const { app } = buildApp();
-    const agent = await login(app, "radiographer");
+    const agent = await login(app, "radiologist");
     const results = [];
     for (let i = 0; i < 50; i++) {
       results.push(await agent.post("/patients").send({ patientId: `P-${i}`, firstName: `F${i}`, lastName: `L${i}`, dateOfBirth: "2000-01-01", gender: "M" }));
@@ -309,7 +321,7 @@ describe("F5. Stress: Rapid Requests", () => {
 describe("F6. Non-existent Resource Updates", () => {
   it("F6.1: PATCH /patients/none → 404", async () => {
     const { app } = buildApp(); const a = await login(app, "admin");
-    expect((await a.patch("/patients/none").send({ phone: "x" })).status).toBe(404);
+    expect((await a.patch("/patients/none").send({ firstName: "X" })).status).toBe(404);
   });
   it("F6.2: GET /patients/none → 404", async () => {
     const { app } = buildApp(); const a = await login(app, "admin");
@@ -385,7 +397,7 @@ describe("F7. Malformed Bodies", () => {
 
   it("F7.3: patient with empty JSON", async () => {
     const { app } = buildApp();
-    const a = await login(app, "radiographer");
+    const a = await login(app, "radiologist");
     const r = await a.post("/patients").send({});
     expect(r.status).toBe(400);
   });

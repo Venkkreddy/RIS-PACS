@@ -5,6 +5,8 @@ import fs from "fs";
 import path from "path";
 import { randomUUID } from "node:crypto";
 import dicomParser from "dicom-parser";
+import AdmZip from "adm-zip";
+import { createExtractorFromData } from "node-unrar-js";
 import { env } from "../config/env";
 import { asyncHandler } from "../middleware/asyncHandler";
 import { ensureAuthenticated, ensurePermission } from "../middleware/auth";
@@ -51,11 +53,69 @@ function hasKnownDicomExtension(filename: string): boolean {
   );
 }
 
+function archiveKind(filename: string): "zip" | "rar" | null {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".zip")) return "zip";
+  if (lower.endsWith(".rar")) return "rar";
+  return null;
+}
+
+/** Only DICOM-looking entries are imported from an archive — anything else (READMEs, etc.) is skipped. */
+function isImportableArchiveEntry(entryName: string): boolean {
+  const base = path.basename(entryName);
+  if (!base || base.startsWith(".")) return false;
+  return hasKnownDicomExtension(base) || !path.extname(base);
+}
+
+interface ExtractedArchiveFile {
+  path: string;
+  originalname: string;
+  size: number;
+}
+
+/**
+ * Extracts a previously-uploaded .zip/.rar to disk, keeping only DICOM-looking
+ * entries, and writes them into DICOOGLE_STORAGE_DIR using the same stored-filename
+ * convention as a normal multer upload — so callers can treat the result exactly
+ * like `req.files` from a regular multi-file upload.
+ */
+async function extractArchiveToStorage(archivePath: string, kind: "zip" | "rar"): Promise<ExtractedArchiveFile[]> {
+  const extracted: ExtractedArchiveFile[] = [];
+
+  if (kind === "zip") {
+    const zip = new AdmZip(archivePath);
+    for (const entry of zip.getEntries()) {
+      if (entry.isDirectory || !isImportableArchiveEntry(entry.entryName)) continue;
+      const data = entry.getData();
+      const storedName = buildStoredFilename(path.basename(entry.entryName));
+      const storedPath = path.join(DICOOGLE_STORAGE_DIR, storedName);
+      fs.writeFileSync(storedPath, data);
+      extracted.push({ path: storedPath, originalname: path.basename(entry.entryName), size: data.length });
+    }
+    return extracted;
+  }
+
+  // RAR — node-unrar-js (pure WASM, no system `unrar` binary required)
+  const buf = fs.readFileSync(archivePath);
+  const arrayBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  const extractor = await createExtractorFromData({ data: arrayBuffer });
+  const { files } = extractor.extract();
+  for (const file of files) {
+    if (file.fileHeader.flags.directory || !file.extraction || !isImportableArchiveEntry(file.fileHeader.name)) continue;
+    const data = Buffer.from(file.extraction);
+    const storedName = buildStoredFilename(path.basename(file.fileHeader.name));
+    const storedPath = path.join(DICOOGLE_STORAGE_DIR, storedName);
+    fs.writeFileSync(storedPath, data);
+    extracted.push({ path: storedPath, originalname: path.basename(file.fileHeader.name), size: data.length });
+  }
+  return extracted;
+}
+
 function buildStoredFilename(originalName: string): string {
   const safeName = sanitizeFilename(originalName);
   const stamp = Date.now();
   const randomSuffix = Math.random().toString(36).slice(2, 8);
-  const normalizedName = hasKnownDicomExtension(safeName) ? safeName : `${safeName}.dcm`;
+  const normalizedName = hasKnownDicomExtension(safeName) || archiveKind(safeName) ? safeName : `${safeName}.dcm`;
   return `${stamp}-${randomSuffix}-${normalizedName}`;
 }
 
@@ -386,18 +446,70 @@ const upload = multer({
   }),
   limits: { fileSize: MAX_UPLOAD_FILE_SIZE_BYTES }, // 500 MB per file
   fileFilter: (_req, file, cb) => {
-    const allowed = ["application/dicom", "application/octet-stream"];
+    const allowed = [
+      "application/dicom",
+      "application/octet-stream",
+      "application/zip",
+      "application/x-zip-compressed",
+      "application/x-rar-compressed",
+      "application/vnd.rar",
+      "application/x-rar",
+    ];
     if (
       allowed.includes(file.mimetype) ||
       hasKnownDicomExtension(file.originalname) ||
+      archiveKind(file.originalname) ||
       !path.extname(file.originalname)
     ) {
       cb(null, true);
     } else {
-      cb(new Error("Only DICOM (.dcm) files are allowed"));
+      cb(new Error("Only DICOM (.dcm) files or .zip/.rar archives are allowed"));
     }
   },
 });
+
+/**
+ * Runs after multer. Any uploaded .zip/.rar archives are extracted in place —
+ * their DICOM entries replace the archive in `req.files` (as synthetic
+ * Express.Multer.File-like entries) so the existing per-file ingest loop below
+ * needs no changes to support archive uploads from radiographer or referring roles.
+ */
+async function expandArchives(req: import("express").Request, res: import("express").Response, next: import("express").NextFunction): Promise<void> {
+  const files = req.files as Express.Multer.File[] | undefined;
+  if (!files || files.length === 0) {
+    next();
+    return;
+  }
+
+  const expanded: Express.Multer.File[] = [];
+  for (const file of files) {
+    const kind = archiveKind(file.originalname);
+    if (!kind) {
+      expanded.push(file);
+      continue;
+    }
+    try {
+      const entries = await extractArchiveToStorage(file.path, kind);
+      for (const entry of entries) {
+        expanded.push({
+          ...file,
+          path: entry.path,
+          filename: path.basename(entry.path),
+          originalname: entry.originalname,
+          size: entry.size,
+          mimetype: "application/dicom",
+        });
+      }
+    } catch (err) {
+      logger.warn({ message: "Failed to extract uploaded archive", filename: file.originalname, error: String(err) });
+    } finally {
+      fs.unlink(file.path, () => {});
+    }
+  }
+
+  req.files = expanded;
+  next();
+}
 
 const AI_OUTPUT_DIR = path.join(STORAGE_ROOT, "ai-sr");
 
@@ -714,6 +826,7 @@ export function dicomUploadRouter(
     ensureAuthenticated,
     ensurePermission(store, "dicom:upload"),
     upload.array("files", 50),
+    asyncHandler(expandArchives),
     asyncHandler(async (req, res) => {
       const files = req.files as Express.Multer.File[] | undefined;
       if (!files || files.length === 0) {
@@ -807,18 +920,39 @@ export function dicomUploadRouter(
         });
       }
 
-      // Always normalize each upload batch into one fresh Study/Series UID pair.
-      // This prevents cross-patient collisions when source DICOM headers reuse
-      // non-unique StudyInstanceUID values.
-      const shouldNormalizeBatchStudySeries = storedCount > 0;
-      const batchStudyUid = shouldNormalizeBatchStudySeries ? newDicomUid() : undefined;
-      const batchSeriesUid = shouldNormalizeBatchStudySeries ? newDicomUid() : undefined;
-      if (shouldNormalizeBatchStudySeries && batchStudyUid && batchSeriesUid) {
+      // Group uploaded files by their original StudyInstanceUID so that files
+      // from different studies (e.g. knee vs. chest) remain separate.
+      // Each group gets a fresh Study+Series UID pair to prevent cross-patient
+      // collisions while keeping multi-slice scans together.
+      const originalStudyGroups = new Map<string, string[]>();
+      for (let i = 0; i < files.length; i++) {
+        if (results[i]?.status !== "stored") continue;
+        const file = files[i];
+        if (!file.path || !fs.existsSync(file.path)) continue;
+        const dataSet = readDicomHeaderDataSet(file.path);
+        const originalStudyUid = normalizeDicomUid(dataSet?.string("x0020000d")) ?? `unknown-${i}`;
+        const group = originalStudyGroups.get(originalStudyUid) ?? [];
+        group.push(file.path);
+        originalStudyGroups.set(originalStudyUid, group);
+      }
+
+      // Assign a fresh Study+Series UID pair per original-study group.
+      const fileToNewStudyUid = new Map<string, string>();
+      const fileToNewSeriesUid = new Map<string, string>();
+      for (const [_originalUid, filePaths] of originalStudyGroups) {
+        const groupStudyUid = newDicomUid();
+        const groupSeriesUid = newDicomUid();
+        for (const fp of filePaths) {
+          fileToNewStudyUid.set(fp, groupStudyUid);
+          fileToNewSeriesUid.set(fp, groupSeriesUid);
+        }
+      }
+
+      if (originalStudyGroups.size > 0) {
         logger.info({
-          message: "DICOM upload: assigning fresh Study/Series UIDs",
+          message: "DICOM upload: assigning fresh Study/Series UIDs per original study group",
           fileCount: storedCount,
-          studyInstanceUID: batchStudyUid,
-          seriesInstanceUID: batchSeriesUid,
+          studyGroupCount: originalStudyGroups.size,
           patientId: effectiveUploadPatientId,
         });
       }
@@ -828,12 +962,14 @@ export function dicomUploadRouter(
         if (results[i]?.status !== "stored") continue;
         const file = files[i];
         if (!file.path || !fs.existsSync(file.path)) continue;
+        const newStudyUid = fileToNewStudyUid.get(file.path);
+        const newSeriesUid = fileToNewSeriesUid.get(file.path);
         const rewriteApplied = rewriteDicomUploadTags(file.path, {
           patientId: effectiveUploadPatientId,
           ...(formPatientName ? { patientName: formPatientName } : {}),
           sopInstanceUid: newSopInstanceUid(),
-          ...(shouldNormalizeBatchStudySeries && batchStudyUid && batchSeriesUid
-            ? { studyInstanceUid: batchStudyUid, seriesInstanceUid: batchSeriesUid }
+          ...(newStudyUid && newSeriesUid
+            ? { studyInstanceUid: newStudyUid, seriesInstanceUid: newSeriesUid }
             : {}),
         });
         filePatientIds.set(file.path, effectiveUploadPatientId);
@@ -842,13 +978,12 @@ export function dicomUploadRouter(
         }
       }
 
-      if (shouldNormalizeBatchStudySeries && batchStudyUid && batchSeriesUid) {
+      if (originalStudyGroups.size > 0) {
         logger.info({
           message: "DICOM upload: completed patient + UID normalization",
           fileCount: storedCount,
           rewriteAppliedCount,
-          studyInstanceUID: batchStudyUid,
-          seriesInstanceUID: batchSeriesUid,
+          studyGroupCount: originalStudyGroups.size,
           patientId: effectiveUploadPatientId,
         });
       }
@@ -927,11 +1062,47 @@ export function dicomUploadRouter(
             fs.renameSync(originalPath, newPath);
             resolvedPath = newPath;
           } catch {
-            // File stays in flat directory — still visible to filesystem scanner
+            // File stays in flat directory
           }
         }
         file.path = resolvedPath;
         if (fs.existsSync(resolvedPath)) finalStoredPaths.push(resolvedPath);
+      }
+
+      // Forward uploaded DICOM files to Orthanc PACS server
+      if (env.ORTHANC_BASE_URL) {
+        const orthancBase = env.ORTHANC_BASE_URL.replace(/\/+$/, "");
+        const orthancAuth = env.ORTHANC_AUTH
+          ? { Authorization: `Basic ${Buffer.from(env.ORTHANC_AUTH).toString("base64")}` }
+          : {};
+
+        logger.info({
+          message: "Forwarding uploaded DICOM files to Orthanc",
+          orthancBase,
+          fileCount: finalStoredPaths.length,
+        });
+
+        for (const filePath of finalStoredPaths) {
+          try {
+            const fileBuffer = fs.readFileSync(filePath);
+            await axios.post(`${orthancBase}/instances`, fileBuffer, {
+              headers: {
+                ...orthancAuth,
+                "Content-Type": "application/octet-stream",
+              },
+              maxContentLength: 100_000_000,
+              maxBodyLength: 100_000_000,
+              timeout: 30_000,
+            });
+            logger.debug({ message: "Successfully uploaded DICOM to Orthanc", file: path.basename(filePath) });
+          } catch (err: any) {
+            logger.error({
+              message: "Failed to upload DICOM file to Orthanc",
+              file: path.basename(filePath),
+              error: err.response?.data ? JSON.stringify(err.response.data) : err.message,
+            });
+          }
+        }
       }
 
       let cloudUploadedCount = 0;
@@ -1073,8 +1244,9 @@ export function dicomUploadRouter(
       } else if (storedCount > 0) {
         // Fallback: no StudyInstanceUID readable after processing (rare if batch UIDs were written).
         // Prefer a real DICOM UID so viewer launch remains possible.
+        const firstGroupStudyUid = fileToNewStudyUid.values().next().value;
         const studyId =
-          batchStudyUid ??
+          firstGroupStudyUid ??
           newDicomUid();
         const fallbackPayload = {
           patientName: formPatientName ?? `Patient ${fallbackPatientId ?? "Unknown"}`,
@@ -1086,7 +1258,7 @@ export function dicomUploadRouter(
           metadata: {
             patientId: fallbackPatientId,
             fileCount: storedCount,
-            syntheticStudy: !batchStudyUid,
+            syntheticStudy: !firstGroupStudyUid,
             StudyInstanceUID: studyId,
             ...linkedRegistryPatientMeta(fallbackPatientId),
           },

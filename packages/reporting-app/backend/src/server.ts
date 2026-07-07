@@ -4,6 +4,8 @@ import { seedDevData } from "./config/seedDevData";
 import { logger } from "./services/logger";
 
 const { app, store } = createApp();
+// Trigger reload after freeing port 8081
+
 
 app.listen(env.PORT, () => {
   logger.info({ message: `Backend listening on port ${env.PORT}` });

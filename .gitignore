@@ -68,3 +68,14 @@ monai-models/
 dicoogle-local/
 dicoogle-index/
 storage/
+
+# Large files & local installers
+*.zip
+*.tar
+TDAI-RIS-PACS/
+.temp_installers/
+.turbo/
+.maven/
+demo-dicoms/
+*test_output.txt
+

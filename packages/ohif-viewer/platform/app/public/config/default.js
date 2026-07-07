@@ -27,7 +27,7 @@ window.config = {
     '@ohif/extension-cornerstone-dicom-seg',
   ],
   modes: [
-    '@ohif/mode-longitudinal',
+    '@ohif/mode-basic',
     '@ohif/mode-segmentation',
   ],
   reporting: {

@@ -15,6 +15,7 @@
     "@google-cloud/storage": "^7.14.0",
     "@medical-report-system/shared": "*",
     "@sendgrid/mail": "^8.1.5",
+    "adm-zip": "^0.5.17",
     "axios": "^1.8.4",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
@@ -29,6 +30,7 @@
     "jpeg-lossless-decoder-js": "^2.1.2",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
+    "node-unrar-js": "^2.0.2",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "pdf-lib": "^1.17.1",
@@ -38,6 +40,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",

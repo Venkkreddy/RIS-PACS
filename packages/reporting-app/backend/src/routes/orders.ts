@@ -46,23 +46,50 @@ const resolveParam = (v: string | string[]): string => (Array.isArray(v) ? v[0] 
 export function ordersRouter(store: StoreService): Router {
   const router = Router();
 
+  // Public/internal endpoint for Modality Worklist (MWL) C-FIND bridge
+  router.get("/worklist/mwl", asyncHandler(async (req, res) => {
+    // Return all scheduled and in-progress orders
+    const orders1 = await store.listOrders({ status: "scheduled" });
+    const orders2 = await store.listOrders({ status: "in-progress" });
+    res.json([...orders1, ...orders2]);
+  }));
+
+  // Public/internal endpoint for MPPS status updates
+  router.patch("/worklist/mpps/:id", asyncHandler(async (req, res) => {
+    const status = z.enum(["scheduled", "in-progress", "completed", "cancelled"]).parse(req.body.status);
+    const order = await store.updateOrder(resolveParam(req.params.id), { status });
+    res.json(order);
+  }));
+
   router.get("/", ensureAuthenticated, ensurePermission(store, "orders:view"), asyncHandler(async (req, res) => {
     const query = listQuerySchema.parse(req.query);
-    const orders = await store.listOrders(query);
+    const user = req.session.user;
+    const referringPhysicianId = user?.role === "referring" ? user.id : undefined;
+    const orders = await store.listOrders({ ...query, referringPhysicianId });
     res.json(orders);
   }));
 
   router.get("/:id", ensureAuthenticated, ensurePermission(store, "orders:view"), asyncHandler(async (req, res) => {
     const order = await store.getOrder(resolveParam(req.params.id));
     if (!order) { res.status(404).json({ error: "Order not found" }); return; }
+    const user = req.session.user;
+    if (user?.role === "referring" && order.referringPhysicianId !== user.id) {
+      res.status(403).json({ error: "Not authorized to view this order" });
+      return;
+    }
     res.json(order);
   }));
 
   router.post("/", ensureAuthenticated, ensurePermission(store, "orders:create"), asyncHandler(async (req, res) => {
     const body = createOrderSchema.parse(req.body);
+    const user = req.session.user;
     const order = await store.createOrder({
       ...body,
-      createdBy: req.session.user?.id ?? "unknown",
+      // Referring physicians can only create orders under their own name — prevents spoofing another doctor.
+      ...(user?.role === "referring"
+        ? { referringPhysicianId: user.id, referringPhysicianName: user.displayName }
+        : {}),
+      createdBy: user?.id ?? "unknown",
     });
     res.status(201).json(order);
   }));

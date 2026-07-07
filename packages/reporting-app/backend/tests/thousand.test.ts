@@ -385,7 +385,7 @@ describe("T5. Report Sections & Priority", () => {
 // T6. PDF EXPORT
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe("T6. PDF via Share (no dedicated PDF route)", () => {
+describe("T6. PDF generation", () => {
   it("T6.1: share triggers pdfService.buildReportPdf", async () => {
     const { app, store, deps } = buildApp();
     const r = await store.createReport(mkR({ studyId: "s-1", content: "x", ownerId: "dev-radiologist" }));
@@ -394,11 +394,13 @@ describe("T6. PDF via Share (no dedicated PDF route)", () => {
     expect((deps.pdfService as any).buildReportPdf).toHaveBeenCalled();
   });
 
-  it("T6.2: no dedicated /reports/:id/pdf route (returns 404)", async () => {
+  it("T6.2: GET /reports/:id/pdf downloads the PDF directly", async () => {
     const { app, store } = buildApp();
     const r = await store.createReport(mkR({ studyId: "s-1", content: "x", ownerId: "dev-radiologist" }));
     const a = await login(app, "radiologist");
-    expect((await a.get(`/reports/${r.id}/pdf`)).status).toBe(404);
+    const res = await a.get(`/reports/${r.id}/pdf`);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("application/pdf");
   });
 });
 
@@ -534,8 +536,8 @@ describe("T8. Special Chars in IDs", () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("T9. Permission Matrix", () => {
-  const writeRoles = ["admin", "radiographer"];
-  const noPatientWrite = ["radiologist", "viewer", "referring", "billing"];
+  const writeRoles = ["admin", "radiologist"];
+  const noPatientWrite = ["viewer", "referring", "billing", "radiographer"];
 
   noPatientWrite.forEach((role) => {
     it(`T9: ${role} cannot POST /patients`, async () => {
@@ -546,7 +548,7 @@ describe("T9. Permission Matrix", () => {
       const { app, store } = buildApp();
       const p = await store.createPatient({ patientId: "P1", firstName: "A", lastName: "B", dateOfBirth: "2000-01-01", gender: "M" });
       const a = await login(app, role);
-      expect((await a.patch(`/patients/${p.id}`).send({ phone: "x" })).status).toBe(403);
+      expect((await a.patch(`/patients/${p.id}`).send({ firstName: "X" })).status).toBe(403);
     });
   });
 
@@ -559,12 +561,12 @@ describe("T9. Permission Matrix", () => {
       const { app, store } = buildApp();
       const p = await store.createPatient({ patientId: "P1", firstName: "A", lastName: "B", dateOfBirth: "2000-01-01", gender: "M" });
       const a = await login(app, role);
-      expect((await a.patch(`/patients/${p.id}`).send({ phone: "x" })).status).toBe(200);
+      expect((await a.patch(`/patients/${p.id}`).send({ firstName: "X" })).status).toBe(200);
     });
   });
 
   const orderWriteAllowed = ["admin", "radiographer"];
-  const orderWriteDenied = ["radiologist", "viewer", "billing"];
+  const orderWriteDenied = ["viewer", "billing"];
 
   orderWriteAllowed.forEach((role) => {
     it(`T9: ${role} CAN POST /orders`, async () => {
@@ -608,8 +610,8 @@ describe("T9. Permission Matrix", () => {
     });
   });
 
-  const billingViewAllowed = ["admin", "billing", "viewer"];
-  const billingViewDenied = ["radiographer", "radiologist", "referring"];
+  const billingViewAllowed = ["admin", "billing", "viewer", "radiologist"];
+  const billingViewDenied = ["radiographer", "referring"];
 
   billingViewAllowed.forEach((role) => {
     it(`T9: ${role} CAN GET /billing`, async () => {

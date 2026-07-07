@@ -78,6 +78,49 @@ function App({
     run();
   }, []);
 
+  useEffect(() => {
+    const handleMessage = (event: any) => {
+      if (!init) {
+        return;
+      }
+      if (!event.data || typeof event.data !== 'object') {
+        return;
+      }
+      const { source, action, toolName, commandName, commandOptions } = event.data;
+      if (source !== 'tdai-workstation') {
+        return;
+      }
+      console.log('OHIF Viewer: Received workstation message:', event.data);
+
+      try {
+        if (action === 'setToolActive') {
+          if (commandsManager) {
+            commandsManager.runCommand('setToolActiveToolbar', {
+              toolName,
+              toolGroupIds: ['default', 'mpr', 'SRToolGroup', 'volume3d'],
+            });
+          }
+        } else if (action === 'runCommand') {
+          if (commandsManager) {
+            commandsManager.runCommand(commandName, commandOptions || {});
+          }
+        } else if (action === 'toggleOverlays') {
+          const overlays = document.getElementsByClassName('viewport-overlay');
+          for (let i = 0; i < overlays.length; i++) {
+            overlays.item(i).classList.toggle('hidden');
+          }
+        }
+      } catch (err) {
+        console.error('OHIF Viewer: Failed to execute workstation tool action:', err);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [init]);
+
   if (!init) {
     return null;
   }

@@ -21,6 +21,7 @@ export interface AuthState {
   createdAt?: string;
   landingPath: string;
   permissions: Permission[];
+  isCustomized?: boolean;
   hasPermission: (perm: Permission) => boolean;
   hasAnyPermission: (perms: Permission[]) => boolean;
   refreshPermissions: () => Promise<void>;
@@ -99,10 +100,16 @@ const ROLE_DEFAULT_PERMISSIONS: Record<string, Permission[]> = {
     "referring_physicians:view",
   ] as Permission[],
   radiographer: [
-    "dashboard:view", "patients:view", "patients:create", "patients:edit",
+    "dashboard:view", "patients:view",
     "orders:view", "orders:create", "orders:edit", "scheduling:view",
     "worklist:view", "worklist:assign", "worklist:update_status",
     "dicom:upload", "dicom:view", "referring_physicians:view",
+  ] as Permission[],
+  referring: [
+    "dashboard:view", "patients:view",
+    "orders:view", "orders:create",
+    "reports:view", "scheduling:view",
+    "worklist:view", "dicom:upload", "dicom:view",
   ] as Permission[],
   viewer: [
     "dashboard:view", "patients:view", "orders:view", "scans:view", "scheduling:view",
@@ -110,12 +117,20 @@ const ROLE_DEFAULT_PERMISSIONS: Record<string, Permission[]> = {
   ] as Permission[],
 };
 
-async function fetchPermissions(): Promise<Permission[]> {
+interface FetchPermissionsResult {
+  permissions: Permission[];
+  isCustomized: boolean;
+}
+
+async function fetchPermissions(): Promise<FetchPermissionsResult> {
   try {
-    const res = await api.get<{ role: string; permissions: Permission[] }>("/permissions/my-permissions");
-    return res.data.permissions;
+    const res = await api.get<{ role: string; permissions: Permission[]; isCustomized?: boolean }>("/permissions/my-permissions");
+    return {
+      permissions: res.data.permissions,
+      isCustomized: res.data.isCustomized ?? false,
+    };
   } catch {
-    return [];
+    return { permissions: [], isCustomized: false };
   }
 }
 
@@ -125,10 +140,10 @@ async function fetchPermissionsWithTimeout() {
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([
-      fetchPermissions().then((permissions) => ({ permissions, timedOut: false })),
-      new Promise<{ permissions: Permission[]; timedOut: true }>((resolve) => {
+      fetchPermissions().then((res) => ({ ...res, timedOut: false })),
+      new Promise<{ permissions: Permission[]; isCustomized: boolean; timedOut: true }>((resolve) => {
         timeoutHandle = setTimeout(
-          () => resolve({ permissions: [], timedOut: true }),
+          () => resolve({ permissions: [], isCustomized: false, timedOut: true }),
           PERMISSIONS_FETCH_TIMEOUT_MS,
         );
       }),
@@ -158,10 +173,11 @@ function buildAuthState(
   permissions: Permission[],
   refreshPermissions: () => Promise<void>,
   refreshProfile: () => Promise<void>,
+  isCustomized?: boolean,
 ): AuthState {
   const approved = user.approved ?? false;
   const requestStatus = user.requestStatus ?? (approved ? "approved" : "pending");
-  const effectivePermissions = permissions.length > 0
+  const effectivePermissions = (permissions.length > 0 || isCustomized)
     ? permissions
     : (ROLE_DEFAULT_PERMISSIONS[user.role] ?? []);
   const hasPerm = (p: Permission) => effectivePermissions.includes(p);
@@ -179,6 +195,7 @@ function buildAuthState(
     createdAt: user.createdAt,
     landingPath: approved ? landingPathForRole(user.role) : "/pending-approval",
     permissions: effectivePermissions,
+    isCustomized,
     hasPermission: hasPerm,
     hasAnyPermission: (perms: Permission[]) => perms.some(hasPerm),
     refreshPermissions,
@@ -195,6 +212,7 @@ function unauthenticatedState(refreshPermissions: () => Promise<void>, refreshPr
     role: "viewer",
     landingPath: "/login",
     permissions: [],
+    isCustomized: false,
     hasPermission: noopHasPerm,
     hasAnyPermission: noopHasPerm,
     refreshPermissions,
@@ -232,13 +250,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>(defaultAuth);
 
   const refreshPermissions = useCallback(async () => {
-    const perms = await fetchPermissions();
-    setState((prev) => ({
-      ...prev,
-      permissions: perms,
-      hasPermission: (p: Permission) => perms.includes(p),
-      hasAnyPermission: (ps: Permission[]) => ps.some((p) => perms.includes(p)),
-    }));
+    const { permissions: perms, isCustomized } = await fetchPermissions();
+    setState((prev) => {
+      const effectivePermissions = (perms.length > 0 || isCustomized)
+        ? perms
+        : (ROLE_DEFAULT_PERMISSIONS[prev.role] ?? []);
+      return {
+        ...prev,
+        permissions: effectivePermissions,
+        hasPermission: (p: Permission) => effectivePermissions.includes(p),
+        hasAnyPermission: (ps: Permission[]) => ps.some((p) => effectivePermissions.includes(p)),
+      };
+    });
   }, []);
 
   const refreshProfile = useCallback(async () => {
@@ -285,7 +308,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           resolved = true;
           const permissionResult = await fetchPermissionsWithTimeout();
           if (!cancelled) {
-            setState(buildAuthState(meRes.data.user, permissionResult.permissions, refreshPermissions, refreshProfile));
+            setState(buildAuthState(meRes.data.user, permissionResult.permissions, refreshPermissions, refreshProfile, permissionResult.isCustomized));
             if (permissionResult.timedOut) {
               void refreshPermissions();
             }
@@ -336,7 +359,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             resolved = true;
             const permissionResult = await fetchPermissionsWithTimeout();
             if (!cancelled) {
-              setState(buildAuthState(loginResponse.data.user, permissionResult.permissions, refreshPermissions, refreshProfile));
+              setState(buildAuthState(loginResponse.data.user, permissionResult.permissions, refreshPermissions, refreshProfile, permissionResult.isCustomized));
               if (permissionResult.timedOut) {
                 void refreshPermissions();
               }

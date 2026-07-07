@@ -6,6 +6,7 @@ import { BrandLogo } from "./BrandLogo";
 import { useAuthRole, landingPathForRole, clearExplicitSession } from "../hooks/useAuthRole";
 import { useState } from "react";
 import type { Permission } from "@medical-report-system/shared";
+import { NotificationBell } from "./NotificationBell";
 
 interface NavItem {
   to: string;
@@ -68,6 +69,8 @@ export function InternalNavbar() {
     return item.permissions.some((p) => auth.hasPermission(p));
   });
 
+  const canSeeNotifications = auth.role === "admin" || auth.role === "super_admin" || auth.role === "radiologist";
+
   async function logout() {
     clearExplicitSession();
     if (firebaseAuth) {
@@ -103,7 +106,7 @@ export function InternalNavbar() {
             <div className="overflow-x-auto pr-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5">
               <div className="flex min-w-max items-center justify-end gap-2 lg:gap-2.5">
               {/* Role-specific dashboard link */}
-              {dashboardPath !== "/worklist" && (
+              {dashboardPath !== "/worklist" && (auth.hasPermission("dashboard:view") || auth.role === "admin" || auth.role === "super_admin") && (
                 <Link
                   to={dashboardPath}
                   title={dashboardLabel}
@@ -146,6 +149,7 @@ export function InternalNavbar() {
           <div className="mx-1.5 h-8 w-px flex-shrink-0 bg-tdai-gray-200" />
 
           <div className="relative z-10 flex flex-shrink-0 items-center gap-2.5">
+            {canSeeNotifications && <NotificationBell />}
             <Link
               to="/profile"
               className="group flex items-center gap-2 rounded-xl px-1.5 py-1 transition-colors hover:bg-tdai-gray-50"
@@ -182,6 +186,7 @@ export function InternalNavbar() {
         </nav>
 
         <div className="flex items-center gap-1.5 lg:hidden">
+          {canSeeNotifications && <NotificationBell />}
           <button
             className="rounded-xl p-2.5 text-tdai-gray-500 transition-colors hover:bg-tdai-red-50 hover:text-tdai-red-600"
             type="button"
@@ -213,7 +218,7 @@ export function InternalNavbar() {
       {mobileOpen && (
         <div className="animate-slide-down border-t border-tdai-gray-100 bg-white px-4 pb-5 pt-3 lg:hidden">
           <div className="space-y-1">
-            {dashboardPath !== "/worklist" && (
+            {dashboardPath !== "/worklist" && (auth.hasPermission("dashboard:view") || auth.role === "admin" || auth.role === "super_admin") && (
               <Link
                 to={dashboardPath}
                 onClick={() => setMobileOpen(false)}

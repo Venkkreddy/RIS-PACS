@@ -706,9 +706,14 @@ export default class ToolbarService extends PubSubService {
         const evaluateFunction = this._evaluateFunction[evaluatorName];
 
         if (!evaluateFunction) {
-          throw new Error(
-            `Evaluate function not found for name: ${evaluatorName}, you can register an evaluate function with the getToolbarModule in your extensions`
+          // If an evaluate function is not registered yet, warn and use a no-op evaluator
+          // to avoid crashing the toolbar initialization. Extensions should register
+          // evaluate functions via getToolbarModule.
+          // eslint-disable-next-line no-console
+          console.warn(
+            `Evaluate function not found for name: ${evaluatorName}. Using no-op evaluator.`
           );
+          return () => ({});
         }
 
         if (isObject) {
@@ -752,9 +757,11 @@ export default class ToolbarService extends PubSubService {
         return;
       }
 
-      throw new Error(
-        `Evaluate function not found for name: ${evaluate}, you can register an evaluate function with the getToolbarModule in your extensions`
-      );
+      // If missing, warn and set a safe no-op evaluate function
+      // eslint-disable-next-line no-console
+      console.warn(`Evaluate function not found for name: ${evaluate}. Using no-op evaluator.`);
+      props.evaluate = () => ({});
+      return;
     }
 
     if (typeof evaluate === 'object') {
@@ -767,9 +774,12 @@ export default class ToolbarService extends PubSubService {
         return;
       }
 
-      throw new Error(
-        `Evaluate function not found for name: ${name}, you can register an evaluate function with the getToolbarModule in your extensions`
-      );
+      // If missing, warn and use a safe no-op evaluate function
+      // eslint-disable-next-line no-console
+      console.warn(`Evaluate function not found for name: ${name}. Using no-op evaluator.`);
+      props.evaluate = () => ({});
+      props.evaluateProps = props.evaluate;
+      return;
     }
   };
 

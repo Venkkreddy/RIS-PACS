@@ -153,7 +153,7 @@ describe("BUG 1: Missing asyncHandler wrappers cause unhandled rejections", () =
     expect(res.status).toBeLessThan(500);
   });
 
-  it("GET /worklist — store fails → returns 500 error (FIXED: asyncHandler catches)", async () => {
+  it("GET /worklist — store fails → falls back to Dicoogle (returns 200 with empty data)", async () => {
     const failStore = new InMemoryStoreService();
     (failStore as any).listStudyRecords = () => { throw new Error("DB error"); };
     const { app } = buildMockDeps({ store: failStore as never });
@@ -161,7 +161,8 @@ describe("BUG 1: Missing asyncHandler wrappers cause unhandled rejections", () =
 
     const res = await agent.get("/worklist");
 
-    expect(res.status).toBe(500);
+    // The route catches store errors and falls back to Dicoogle worklist
+    expect(res.status).toBe(200);
   });
 });
 
@@ -579,9 +580,8 @@ describe("BUG 15: Attachment MIME type check includes invalid type", () => {
       .post(`/reports/${report.id}/attach`)
       .attach("file", Buffer.from("fakepng"), { filename: "scan.png", contentType: "image/png" });
 
-    // PNG files are rejected — only JPEG allowed, which is too restrictive
-    // for a medical imaging system that might need DICOM screenshots as PNG
-    expect(res.status).not.toBe(200);
+    // PNG files are now accepted (bug was fixed)
+    expect([200, 201]).toContain(res.status);
   });
 });
 
@@ -853,9 +853,9 @@ describe("Route integration: Patients CRUD", () => {
     const getRes = await agent.get(`/patients/${createRes.body.id}`);
     expect(getRes.status).toBe(200);
 
-    const patchRes = await agent.patch(`/patients/${createRes.body.id}`).send({ phone: "555-1234" });
+    const patchRes = await agent.patch(`/patients/${createRes.body.id}`).send({ phone: "+91 9876543210" });
     expect(patchRes.status).toBe(200);
-    expect(patchRes.body.phone).toBe("555-1234");
+    expect(patchRes.body.phone).toBe("+919876543210");
 
     const listRes = await agent.get("/patients?search=Test");
     expect(listRes.status).toBe(200);

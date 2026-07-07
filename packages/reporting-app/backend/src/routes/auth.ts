@@ -326,6 +326,7 @@ export function authRouter(store: StoreService, hipaaAudit?: HipaaAuditService):
     });
   });
 
+
   router.get("/failure", (_req, res) => {
     res.status(401).json({ error: "OAuth failure" });
   });

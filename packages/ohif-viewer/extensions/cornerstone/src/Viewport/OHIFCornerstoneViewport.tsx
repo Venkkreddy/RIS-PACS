@@ -115,7 +115,8 @@ const OHIFCornerstoneViewport = React.memo(
           const hasDimensionsChanged =
             prevDimensions.width !== width || prevDimensions.height !== height;
 
-          if (width > 0 && height > 0 && hasDimensionsChanged) {
+          // Trigger resize when dimensions become valid for the first time or when they change
+          if (width > 0 && height > 0 && (hasDimensionsChanged || prevDimensions.width === 0)) {
             viewportDimensions.set(viewportId, { width, height });
             // Perform resize operations
             cornerstoneViewportService.resize();
@@ -190,6 +191,10 @@ const OHIFCornerstoneViewport = React.memo(
         if (onElementEnabled && typeof onElementEnabled === 'function') {
           onElementEnabled(evt);
         }
+
+        // Trigger resize event after element is enabled to fix race condition
+        // where annotations render before viewport has valid dimensions
+        window.dispatchEvent(new Event('resize'));
       },
       [viewportId, onElementEnabled, toolGroupService]
     );

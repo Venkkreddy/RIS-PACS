@@ -31,7 +31,9 @@ export type AuditAction =
   | "REPORT_ADDENDUM"
   | "USER_APPROVAL"
   | "USER_REJECTION"
-  | "ENCRYPTION_FAILURE";
+  | "ENCRYPTION_FAILURE"
+  | "BILLING_REMINDER_SENT"
+  | "CRITICAL_FINDING_FLAGGED";
 
 export type AuditSeverity = "info" | "warning" | "critical";
 

@@ -1,12 +1,59 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, RefreshCw, Terminal, ExternalLink, WifiOff } from "lucide-react";
 
 type ViewerStatus = "available" | "unavailable" | "error";
 
-export function OhifViewerEmbed({ src }: { src: string }) {
+export function OhifViewerEmbed({
+  src,
+  studyRecord,
+  onWorkflowPatch,
+  onAction,
+}: {
+  src: string;
+  studyRecord?: any;
+  onWorkflowPatch?: (patch: any) => void;
+  onAction?: (action: string, payload?: any) => void;
+}) {
   const [status, setStatus] = useState<ViewerStatus>(src.trim() ? "available" : "unavailable");
   const [iframeLoaded, setIframeLoaded] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (data && typeof data === "object") {
+        if (data.type === "TDAI_TOOLBAR_READY") {
+          if (iframeRef.current && studyRecord) {
+            iframeRef.current.contentWindow?.postMessage(
+              {
+                type: "TDAI_STUDY_UPDATE",
+                studyRecord,
+              },
+              "*"
+            );
+          }
+        } else if (data.type === "TDAI_WORKFLOW_PATCH" && onWorkflowPatch) {
+          onWorkflowPatch(data.patch);
+        } else if (data.type === "TDAI_ACTION" && onAction) {
+          onAction(data.action, data.payload);
+        }
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [onWorkflowPatch, onAction, studyRecord]);
+
+  useEffect(() => {
+    if (iframeLoaded && iframeRef.current && studyRecord) {
+      iframeRef.current.contentWindow?.postMessage(
+        {
+          type: "TDAI_STUDY_UPDATE",
+          studyRecord,
+        },
+        "*"
+      );
+    }
+  }, [iframeLoaded, studyRecord]);
 
   const handleRetry = () => {
     setIframeLoaded(false);

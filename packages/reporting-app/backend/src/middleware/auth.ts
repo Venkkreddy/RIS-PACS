@@ -8,22 +8,6 @@ import type { StoreService } from "../services/store";
 import type { InMemoryStoreService } from "../services/inMemoryStore";
 
 export function ensureAuthenticated(req: Request, res: Response, next: NextFunction): void {
-  if (!env.ENABLE_AUTH) {
-    if (!req.session.user) {
-      req.session.user = {
-        id: `dev-${env.DEFAULT_DEV_ROLE}`,
-        email: `${env.DEFAULT_DEV_ROLE}@example.com`,
-        role: env.DEFAULT_DEV_ROLE,
-        approved: true,
-        requestStatus: "approved",
-        displayName: `Local ${env.DEFAULT_DEV_ROLE}`,
-      };
-    }
-    (req.session as any).lastActivity = Date.now();
-    next();
-    return;
-  }
-
   if (!req.session.user) {
     res.status(401).json({ error: "Unauthorized" });
     return;

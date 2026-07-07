@@ -15,6 +15,12 @@ class CalibrationLineTool extends LengthTool {
 
   renderAnnotation = (enabledElement, svgDrawingHelper) => {
     const { viewport } = enabledElement;
+
+    // Guard: Check if viewport has valid dimensions to prevent race condition crash
+    if (!viewport || !viewport.element || viewport.element.clientWidth === 0 || viewport.element.clientHeight === 0) {
+      return;
+    }
+
     this._renderingViewport = viewport;
     return this._lengthToolRenderAnnotation(enabledElement, svgDrawingHelper);
   };

@@ -32,6 +32,10 @@ COPY src/custom-webhook.lua /opt/dicoogle/Plugins/lua/custom-webhook.lua
 # provider, file-storage, and the correct DICOM port (104).
 COPY confs/server.xml /opt/dicoogle/confs/server.xml
 
+# Pre-create persistent directories for storage and index data.
+# These are expected to be backed by Docker volumes in production.
+RUN mkdir -p /var/dicoogle/storage /var/dicoogle/index
+
 EXPOSE 8080 104
 
 CMD ["java", "-jar", "/opt/dicoogle/dicoogle.jar", "-s"]

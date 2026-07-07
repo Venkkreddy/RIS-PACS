@@ -274,33 +274,10 @@ const ErrorBoundary = ({
 
   // Add error event listener to window
   useEffect(() => {
-    let errorTimeout: NodeJS.Timeout;
-
-    const handleError = (event: ErrorEvent) => {
-      clearTimeout(errorTimeout);
-      errorTimeout = setTimeout(() => {
-        setError(event.error);
-        onErrorHandler(event.error, null);
-      }, 100);
-    };
-
-    const handleRejection = (event: PromiseRejectionEvent) => {
-      event.preventDefault();
-      clearTimeout(errorTimeout);
-      errorTimeout = setTimeout(() => {
-        setError(event.reason || event);
-        onErrorHandler(event.reason || event, null);
-      }, 100);
-    };
-
-    window.addEventListener('error', handleError);
-    window.addEventListener('unhandledrejection', handleRejection);
-
-    return () => {
-      clearTimeout(errorTimeout);
-      window.removeEventListener('error', handleError);
-      window.removeEventListener('unhandledrejection', handleRejection);
-    };
+    // Disabled global window error/unhandledrejection listeners to prevent non-critical background
+    // or external script errors from triggering the "something went wrong" modal.
+    // The standard ReactErrorBoundary component wrapper below remains fully active for any react crashes.
+    return;
   }, []);
 
   const onErrorHandler = (

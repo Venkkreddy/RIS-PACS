@@ -4,12 +4,28 @@ import { formatInr } from "../lib/currency";
 import type { BillingRecord, BillingStatus } from "@medical-report-system/shared";
 import { animate, motion } from "framer-motion";
 import {
+  AlertTriangle,
+  Bell,
   CheckCircle2,
   Clock,
   FileText,
   IndianRupee,
   Tag,
 } from "lucide-react";
+
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+/** Records have no dedicated `invoicedDate` field — `updatedAt` is set whenever the
+ *  record transitions to "invoiced", so it's the closest available proxy for that date. */
+function daysOverdue(record: BillingRecord): number {
+  const invoiced = new Date(record.updatedAt).getTime();
+  return Math.floor((Date.now() - invoiced) / MS_PER_DAY);
+}
+
+function overdueBadgeClass(days: number): string {
+  if (days > 60) return "bg-tdai-red-50 text-tdai-red-700 ring-1 ring-tdai-red-200 dark:bg-tdai-red-900/30 dark:text-tdai-red-300";
+  return "bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:ring-amber-700/40";
+}
 
 const container = {
   hidden: { opacity: 0 },
@@ -64,7 +80,7 @@ function AnimatedMoney({ value }: { value: number }) {
   return <span>{formatInr(display)}</span>;
 }
 
-type BillingTab = "queue" | "coded" | "submitted";
+type BillingTab = "queue" | "coded" | "submitted" | "overdue";
 
 export function BillingDashboard() {
   const [records, setRecords] = useState<BillingRecord[]>([]);
@@ -74,6 +90,8 @@ export function BillingDashboard() {
   const [editId, setEditId] = useState<string | null>(null);
   const [cptCode, setCptCode] = useState("");
   const [icdCode, setIcdCode] = useState("");
+  const [remindedIds, setRemindedIds] = useState<Set<string>>(new Set());
+  const [reminderStatus, setReminderStatus] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -89,7 +107,10 @@ export function BillingDashboard() {
   const coded = records.filter((r) => r.status === "invoiced");
   const submitted = records.filter((r) => r.status === "paid");
 
-  const displayRecords = tab === "queue" ? queue : tab === "coded" ? coded : submitted;
+  /** Invoiced more than 30 days ago and still unpaid. */
+  const overdue = coded.filter((r) => daysOverdue(r) > 30).sort((a, b) => daysOverdue(b) - daysOverdue(a));
+
+  const displayRecords = tab === "queue" ? queue : tab === "coded" ? coded : tab === "submitted" ? submitted : overdue;
   const filtered = search
     ? displayRecords.filter((r) => r.patientName?.toLowerCase().includes(search.toLowerCase()) || r.description?.toLowerCase().includes(search.toLowerCase()))
     : displayRecords;
@@ -98,6 +119,16 @@ export function BillingDashboard() {
   const totalPending = queue.reduce((s, r) => s + r.amount, 0);
   const totalInvoiced = coded.reduce((s, r) => s + r.amount, 0);
   const totalPaid = submitted.reduce((s, r) => s + r.amount, 0);
+  const totalOverdue = overdue.reduce((s, r) => s + r.amount, 0);
+
+  async function sendReminder(id: string) {
+    const response = await api.post<{ message: string; emailSent: boolean }>(
+      `/billing/${encodeURIComponent(id)}/remind`,
+    );
+    setRemindedIds((prev) => new Set(prev).add(id));
+    setReminderStatus(response.data.message);
+    setTimeout(() => setReminderStatus(null), 3000);
+  }
 
   async function submitCode(recordId: string, e: FormEvent) {
     e.preventDefault();
@@ -117,6 +148,7 @@ export function BillingDashboard() {
     { key: "queue", label: "Coding Queue", count: queue.length, color: "bg-amber-500" },
     { key: "coded", label: "Coded / Invoiced", count: coded.length, color: "bg-tdai-teal-500" },
     { key: "submitted", label: "Paid / Settled", count: submitted.length, color: "bg-emerald-500" },
+    { key: "overdue", label: "Overdue", count: overdue.length, color: "bg-tdai-red-500" },
   ];
 
   return (
@@ -259,6 +291,32 @@ export function BillingDashboard() {
             </div>
           </motion.div>
 
+          {/* ── Overdue total banner ─────── */}
+          {tab === "overdue" && !loading && (
+            <motion.div
+              variants={item}
+              className="flex items-center justify-between rounded-xl border border-tdai-red-200 bg-tdai-red-50 px-5 py-4 dark:border-tdai-red-700/40 dark:bg-tdai-red-900/15"
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-tdai-red-200 dark:bg-tdai-gray-900 dark:ring-tdai-red-700/40">
+                  <AlertTriangle className="h-5 w-5 text-tdai-red-600 dark:text-tdai-red-400" strokeWidth={1.75} />
+                </div>
+                <div>
+                  <p className="text-[10px] font-medium uppercase tracking-wider text-tdai-red-600 dark:text-tdai-red-400">Total Overdue</p>
+                  <p className="text-xs text-tdai-secondary dark:text-tdai-gray-400">Invoiced 30+ days ago, still unpaid &middot; {overdue.length} invoices</p>
+                </div>
+              </div>
+              <p className="text-2xl font-bold text-tdai-red-700 dark:text-tdai-red-300">
+                <AnimatedMoney value={totalOverdue} />
+              </p>
+            </motion.div>
+          )}
+          {reminderStatus && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-xs font-medium text-tdai-teal-600 dark:text-tdai-teal-400">
+              {reminderStatus}
+            </motion.div>
+          )}
+
           {/* ── Loading ─────────────────── */}
           {loading && (
             <motion.div variants={item} className="flex items-center justify-center py-20">
@@ -274,8 +332,74 @@ export function BillingDashboard() {
             </motion.div>
           )}
 
+          {/* ── Overdue table ────────────── */}
+          {!loading && tab === "overdue" && filtered.length > 0 && (
+            <motion.div variants={item} className="table-wrap">
+              <table className="w-full min-w-[700px] text-sm">
+                <thead className="table-header">
+                  <tr>
+                    <th>Patient</th>
+                    <th>Amount</th>
+                    <th>Invoice Date</th>
+                    <th>Days Overdue</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-tdai-border-light dark:divide-white/[0.08]">
+                  {filtered.map((r, i) => {
+                    const overdueDays = daysOverdue(r);
+                    return (
+                      <motion.tr
+                        key={r.id}
+                        custom={i}
+                        variants={rowVariants}
+                        initial="hidden"
+                        animate="show"
+                        className="table-row-hover"
+                      >
+                        <td className="table-cell">
+                          <div>
+                            <p className="font-medium text-tdai-text dark:text-tdai-gray-100">{r.patientName ?? "Unknown"}</p>
+                            <p className="font-mono text-[10px] text-tdai-accent dark:text-tdai-teal-400">MRN: {r.patientId}</p>
+                          </div>
+                        </td>
+                        <td className="table-cell font-semibold dark:text-tdai-gray-100">
+                          <AnimatedMoney value={r.amount} />
+                        </td>
+                        <td className="table-cell text-tdai-secondary dark:text-tdai-gray-400">
+                          {new Date(r.updatedAt).toLocaleDateString()}
+                        </td>
+                        <td className="table-cell">
+                          <span className={`badge ${overdueBadgeClass(overdueDays)}`}>{overdueDays} days</span>
+                        </td>
+                        <td className="table-cell">
+                          {remindedIds.has(r.id) ? (
+                            <span className="flex items-center gap-1 text-xs text-tdai-secondary dark:text-tdai-gray-400">
+                              <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2} />
+                              Reminder logged
+                            </span>
+                          ) : (
+                            <motion.button
+                              type="button"
+                              whileTap={{ scale: 0.97 }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-tdai-red-200 bg-tdai-red-50 px-3 py-1.5 text-xs font-medium text-tdai-red-700 transition-all duration-150 hover:bg-tdai-red-100 hover:border-tdai-red-300 hover:shadow-sm dark:border-tdai-red-700/40 dark:bg-tdai-red-900/20 dark:text-tdai-red-300 dark:hover:bg-tdai-red-800/30"
+                              onClick={() => void sendReminder(r.id)}
+                            >
+                              <Bell className="h-3.5 w-3.5" strokeWidth={2} />
+                              Send Reminder
+                            </motion.button>
+                          )}
+                        </td>
+                      </motion.tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </motion.div>
+          )}
+
           {/* ── Records table ───────────── */}
-          {!loading && filtered.length > 0 && (
+          {!loading && tab !== "overdue" && filtered.length > 0 && (
             <motion.div variants={item} className="table-wrap">
               <div className="border-b border-tdai-border-light bg-tdai-surface-alt/50 px-4 py-3 dark:border-white/[0.08] dark:bg-tdai-gray-800/50">
                 <div className="flex items-start gap-2.5">

@@ -70,6 +70,19 @@ const statusLabel: Record<OrderStatus, string> = {
   cancelled: "Cancelled",
 };
 
+/** orders.priority: STAT = red, URGENT = orange, ROUTINE = gray */
+const ORDER_PRIORITY_STYLE: Record<RadiologyOrder["priority"], string> = {
+  stat: "bg-tdai-red-50 text-tdai-red-700 ring-1 ring-tdai-red-200 dark:bg-tdai-red-900/30 dark:text-tdai-red-300 dark:ring-tdai-red-800/50",
+  urgent: "bg-orange-50 text-orange-700 ring-1 ring-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:ring-orange-700/50",
+  routine: "bg-tdai-surface-alt text-tdai-secondary ring-1 ring-tdai-border dark:bg-white/[0.05] dark:text-tdai-gray-400 dark:ring-white/[0.08]",
+};
+
+const ORDER_PRIORITY_LABEL: Record<RadiologyOrder["priority"], string> = {
+  stat: "STAT",
+  urgent: "URGENT",
+  routine: "ROUTINE",
+};
+
 function toTimeStr(d: Date) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
@@ -79,14 +92,25 @@ export function TechDashboard() {
   const queryClient = useQueryClient();
   const [orders, setOrders] = useState<RadiologyOrder[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"today" | "upcoming" | "worklist" | "patients">("today");
+
+  const isAdmin = auth.role === "admin" || auth.role === "super_admin";
+  const hasOrders = auth.hasPermission("orders:view") || isAdmin;
+  const hasWorklist = auth.hasPermission("worklist:view") || isAdmin;
+  const hasPatients = auth.hasPermission("patients:view") || isAdmin;
+
+  const [tab, setTab] = useState<"today" | "upcoming" | "worklist" | "patients">(() => {
+    if (hasOrders) return "today";
+    if (hasWorklist) return "worklist";
+    if (hasPatients) return "patients";
+    return "today";
+  });
+
   const [patientSearch, setPatientSearch] = useState("");
   const debouncedPatientSearch = useDebouncedValue(patientSearch, 400);
   const [deleteTarget, setDeleteTarget] = useState<Patient | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const isAdmin = auth.role === "admin" || auth.role === "super_admin";
   const canDelete = isAdmin || auth.hasPermission("patients:delete");
 
   const patientsQuery = useQuery({
@@ -95,7 +119,7 @@ export function TechDashboard() {
       const res = await api.get<Patient[]>("/patients", { params: debouncedPatientSearch ? { search: debouncedPatientSearch } : {} });
       return res.data;
     },
-    enabled: tab === "patients",
+    enabled: tab === "patients" && hasPatients,
     staleTime: 5000,
     retry: 1,
   });
@@ -119,15 +143,39 @@ export function TechDashboard() {
   }
 
   async function load() {
+    if (!hasOrders) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
-    const res = await api.get<RadiologyOrder[]>("/orders", { params: { status: "scheduled" } });
-    setOrders(res.data);
-    setLoading(false);
+    try {
+      const res = await api.get<RadiologyOrder[]>("/orders", { params: { status: "scheduled" } });
+      setOrders(res.data);
+    } catch {
+      // Ignore
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
+    if (auth.loading) return;
+    const permittedTabs: Array<"today" | "upcoming" | "worklist" | "patients"> = [];
+    if (hasOrders) {
+      permittedTabs.push("today");
+      permittedTabs.push("upcoming");
+    }
+    if (hasWorklist) permittedTabs.push("worklist");
+    if (hasPatients) permittedTabs.push("patients");
+
+    if (permittedTabs.length > 0 && !permittedTabs.includes(tab)) {
+      setTab(permittedTabs[0]);
+    }
+  }, [auth.loading, hasOrders, hasWorklist, hasPatients, tab]);
+
+  useEffect(() => {
     void load();
-  }, []);
+  }, [hasOrders]);
 
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
@@ -137,10 +185,14 @@ export function TechDashboard() {
 
   const displayOrders = tab === "today" ? todayOrders : tab === "upcoming" ? upcomingOrders : [];
 
-  /* Sort by time */
-  const sorted = [...displayOrders].sort(
-    (a, b) => new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime(),
-  );
+  /* STAT always floats to the top; within the same priority tier, sort by scheduled time */
+  const priorityRank = (priority: RadiologyOrder["priority"]): number =>
+    priority === "stat" ? 0 : priority === "urgent" ? 1 : 2;
+  const sorted = [...displayOrders].sort((a, b) => {
+    const rankDiff = priorityRank(a.priority) - priorityRank(b.priority);
+    if (rankDiff !== 0) return rankDiff;
+    return new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime();
+  });
 
   /* Next patient */
   const nextPatient = todayOrders.find(
@@ -193,184 +245,196 @@ export function TechDashboard() {
 
       <div className="dashboard-inner">
         {/* ── KPI summary ────────────── */}
-        <motion.div
-          className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
-          variants={container}
-          initial="hidden"
-          animate="show"
-        >
-          {/* Today's total */}
+        {hasOrders && (
           <motion.div
-            variants={item}
-            whileHover={{ y: -3 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="group relative overflow-hidden card-hover px-5 py-5"
+            className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
+            variants={container}
+            initial="hidden"
+            animate="show"
           >
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-tdai-teal-500/10 via-tdai-teal-400/5 to-tdai-navy-600/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100 dark:from-tdai-teal-500/5 dark:via-tdai-teal-400/[0.03] dark:to-tdai-navy-600/5" />
-            <div className="relative z-10 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-wider text-tdai-secondary dark:text-tdai-gray-400">
-                  Today's Exams
-                </p>
-                <p className="mt-1 text-3xl font-bold text-tdai-text dark:text-tdai-gray-100">
-                  <AnimatedCounter value={totalToday} />
-                </p>
-              </div>
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-tdai-teal-50 dark:bg-tdai-teal-900/20">
-                <Calendar className="h-5 w-5 text-tdai-teal-500 dark:text-tdai-teal-400" strokeWidth={1.75} />
-              </div>
-            </div>
-          </motion.div>
-          {/* Completed */}
-          <motion.div
-            variants={item}
-            whileHover={{ y: -3 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="group relative overflow-hidden card-hover px-5 py-5"
-          >
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-emerald-500/10 via-emerald-400/5 to-tdai-navy-600/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100 dark:from-emerald-500/5 dark:via-emerald-400/[0.03] dark:to-tdai-navy-600/5" />
-            <div className="relative z-10 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-wider text-tdai-secondary dark:text-tdai-gray-400">Completed</p>
-                <p className="mt-1 text-3xl font-bold text-emerald-600 dark:text-emerald-400">
-                  <AnimatedCounter value={completedToday} />
-                </p>
-              </div>
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 dark:bg-emerald-900/20">
-                <CheckCircle2 className="h-5 w-5 text-emerald-500 dark:text-emerald-400" strokeWidth={1.75} />
-              </div>
-            </div>
-          </motion.div>
-          {/* In progress */}
-          <motion.div
-            variants={item}
-            whileHover={{ y: -3 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="group relative overflow-hidden card-hover px-5 py-5"
-          >
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-amber-500/10 via-amber-400/5 to-tdai-navy-600/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100 dark:from-amber-500/5 dark:via-amber-400/[0.03] dark:to-tdai-navy-600/5" />
-            <div className="relative z-10 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-wider text-tdai-secondary dark:text-tdai-gray-400">In Progress</p>
-                <p className="mt-1 text-3xl font-bold text-amber-600 dark:text-amber-400">
-                  <AnimatedCounter value={inProgress} />
-                </p>
-              </div>
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 dark:bg-amber-900/20">
-                <Zap className="h-5 w-5 text-amber-500 dark:text-amber-400" strokeWidth={1.75} />
-              </div>
-            </div>
-          </motion.div>
-          {/* Next patient */}
-          <motion.div
-            variants={item}
-            whileHover={{ y: -3 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="group relative overflow-hidden card-hover border-l-4 border-l-tdai-teal-500 px-5 py-5 dark:border-l-tdai-teal-400"
-          >
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-tdai-teal-500/10 via-transparent to-tdai-navy-600/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100 dark:from-tdai-teal-500/5 dark:to-tdai-navy-600/5" />
-            <div className="relative z-10">
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-[10px] font-medium uppercase tracking-wider text-tdai-secondary dark:text-tdai-gray-400">Next Patient</p>
-                <User className="h-4 w-4 shrink-0 text-tdai-teal-500 dark:text-tdai-teal-400" strokeWidth={1.75} />
-              </div>
-              {nextPatient ? (
-                <>
-                  <p className="mt-1 text-lg font-bold text-tdai-text dark:text-tdai-gray-100">{nextPatient.patientName ?? "Unknown"}</p>
-                  <p className="mt-0.5 text-xs font-medium text-tdai-teal-600 dark:text-tdai-teal-400">
-                    {toTimeStr(new Date(nextPatient.scheduledDate))} — {nextPatient.modality}
+            {/* Today's total */}
+            <motion.div
+              variants={item}
+              whileHover={{ y: -3 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="group relative overflow-hidden card-hover px-5 py-5"
+            >
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-tdai-teal-500/10 via-tdai-teal-400/5 to-tdai-navy-600/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100 dark:from-tdai-teal-500/5 dark:via-tdai-teal-400/[0.03] dark:to-tdai-navy-600/5" />
+              <div className="relative z-10 flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-medium uppercase tracking-wider text-tdai-secondary dark:text-tdai-gray-400">
+                    Today's Exams
                   </p>
-                </>
-              ) : (
-                <p className="mt-1 text-sm text-tdai-muted dark:text-tdai-gray-400">No more patients today</p>
-              )}
-            </div>
+                  <p className="mt-1 text-3xl font-bold text-tdai-text dark:text-tdai-gray-100">
+                    <AnimatedCounter value={totalToday} />
+                  </p>
+                </div>
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-tdai-teal-50 dark:bg-tdai-teal-900/20">
+                  <Calendar className="h-5 w-5 text-tdai-teal-500 dark:text-tdai-teal-400" strokeWidth={1.75} />
+                </div>
+              </div>
+            </motion.div>
+            {/* Completed */}
+            <motion.div
+              variants={item}
+              whileHover={{ y: -3 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="group relative overflow-hidden card-hover px-5 py-5"
+            >
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-emerald-500/10 via-emerald-400/5 to-tdai-navy-600/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100 dark:from-emerald-500/5 dark:via-emerald-400/[0.03] dark:to-tdai-navy-600/5" />
+              <div className="relative z-10 flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-medium uppercase tracking-wider text-tdai-secondary dark:text-tdai-gray-400">Completed</p>
+                  <p className="mt-1 text-3xl font-bold text-emerald-600 dark:text-emerald-400">
+                    <AnimatedCounter value={completedToday} />
+                  </p>
+                </div>
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 dark:bg-emerald-900/20">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-500 dark:text-emerald-400" strokeWidth={1.75} />
+                </div>
+              </div>
+            </motion.div>
+            {/* In progress */}
+            <motion.div
+              variants={item}
+              whileHover={{ y: -3 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="group relative overflow-hidden card-hover px-5 py-5"
+            >
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-amber-500/10 via-amber-400/5 to-tdai-navy-600/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100 dark:from-amber-500/5 dark:via-amber-400/[0.03] dark:to-tdai-navy-600/5" />
+              <div className="relative z-10 flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-medium uppercase tracking-wider text-tdai-secondary dark:text-tdai-gray-400">In Progress</p>
+                  <p className="mt-1 text-3xl font-bold text-amber-600 dark:text-amber-400">
+                    <AnimatedCounter value={inProgress} />
+                  </p>
+                </div>
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 dark:bg-amber-900/20">
+                  <Zap className="h-5 w-5 text-amber-500 dark:text-amber-400" strokeWidth={1.75} />
+                </div>
+              </div>
+            </motion.div>
+            {/* Next patient */}
+            <motion.div
+              variants={item}
+              whileHover={{ y: -3 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="group relative overflow-hidden card-hover border-l-4 border-l-tdai-teal-500 px-5 py-5 dark:border-l-tdai-teal-400"
+            >
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-tdai-teal-500/10 via-transparent to-tdai-navy-600/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100 dark:from-tdai-teal-500/5 dark:to-tdai-navy-600/5" />
+              <div className="relative z-10">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-[10px] font-medium uppercase tracking-wider text-tdai-secondary dark:text-tdai-gray-400">Next Patient</p>
+                  <User className="h-4 w-4 shrink-0 text-tdai-teal-500 dark:text-tdai-teal-400" strokeWidth={1.75} />
+                </div>
+                {nextPatient ? (
+                  <>
+                    <p className="mt-1 text-lg font-bold text-tdai-text dark:text-tdai-gray-100">{nextPatient.patientName ?? "Unknown"}</p>
+                    <p className="mt-0.5 text-xs font-medium text-tdai-teal-600 dark:text-tdai-teal-400">
+                      {toTimeStr(new Date(nextPatient.scheduledDate))} — {nextPatient.modality}
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-1 text-sm text-tdai-muted dark:text-tdai-gray-400">No more patients today</p>
+                )}
+              </div>
+            </motion.div>
           </motion.div>
-        </motion.div>
+        )}
 
         {/* ── Tab toggle ─────────────── */}
         <div className="mb-4 flex items-center gap-2">
-          <motion.button
-            type="button"
-            whileTap={{ scale: 0.97 }}
-            transition={{ duration: 0.15 }}
-            onClick={() => setTab("today")}
-            className={`rounded-lg px-4 py-2 text-xs font-medium transition-all ${
-              tab === "today"
-                ? "bg-tdai-navy-700 text-white dark:bg-tdai-navy-600"
-                : "border border-tdai-border bg-white text-tdai-secondary hover:bg-tdai-surface-alt dark:border-white/[0.08] dark:bg-tdai-gray-900 dark:text-tdai-gray-400 dark:hover:bg-white/[0.06]"
-            }`}
-          >
-            Today's Schedule
-            <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] dark:bg-white/20">
-              {totalToday}
-            </span>
-          </motion.button>
-          <motion.button
-            type="button"
-            whileTap={{ scale: 0.97 }}
-            transition={{ duration: 0.15 }}
-            onClick={() => setTab("upcoming")}
-            className={`rounded-lg px-4 py-2 text-xs font-medium transition-all ${
-              tab === "upcoming"
-                ? "bg-tdai-navy-700 text-white dark:bg-tdai-navy-600"
-                : "border border-tdai-border bg-white text-tdai-secondary hover:bg-tdai-surface-alt dark:border-white/[0.08] dark:bg-tdai-gray-900 dark:text-tdai-gray-400 dark:hover:bg-white/[0.06]"
-            }`}
-          >
-            Upcoming
-            <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] dark:bg-white/20">
-              {upcomingOrders.length}
-            </span>
-          </motion.button>
-          <motion.button
-            type="button"
-            whileTap={{ scale: 0.97 }}
-            transition={{ duration: 0.15 }}
-            onClick={() => setTab("worklist")}
-            className={`rounded-lg px-4 py-2 text-xs font-medium transition-all ${
-              tab === "worklist"
-                ? "bg-tdai-navy-700 text-white dark:bg-tdai-navy-600"
-                : "border border-tdai-border bg-white text-tdai-secondary hover:bg-tdai-surface-alt dark:border-white/[0.08] dark:bg-tdai-gray-900 dark:text-tdai-gray-400 dark:hover:bg-white/[0.06]"
-            }`}
-          >
-            Study Worklist
-          </motion.button>
-          <motion.button
-            type="button"
-            whileTap={{ scale: 0.97 }}
-            transition={{ duration: 0.15 }}
-            onClick={() => setTab("patients")}
-            className={`rounded-lg px-4 py-2 text-xs font-medium transition-all ${
-              tab === "patients"
-                ? "bg-tdai-navy-700 text-white dark:bg-tdai-navy-600"
-                : "border border-tdai-border bg-white text-tdai-secondary hover:bg-tdai-surface-alt dark:border-white/[0.08] dark:bg-tdai-gray-900 dark:text-tdai-gray-400 dark:hover:bg-white/[0.06]"
-            }`}
-          >
-            <Users className="mr-1 inline h-3.5 w-3.5" />
-            Patients
-            {patients.length > 0 && (
-              <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] dark:bg-white/20">
-                {patients.length}
-              </span>
-            )}
-          </motion.button>
+          {hasOrders && (
+            <>
+              <motion.button
+                type="button"
+                whileTap={{ scale: 0.97 }}
+                transition={{ duration: 0.15 }}
+                onClick={() => setTab("today")}
+                className={`rounded-lg px-4 py-2 text-xs font-medium transition-all ${
+                  tab === "today"
+                    ? "bg-tdai-navy-700 text-white dark:bg-tdai-navy-600"
+                    : "border border-tdai-border bg-white text-tdai-secondary hover:bg-tdai-surface-alt dark:border-white/[0.08] dark:bg-tdai-gray-900 dark:text-tdai-gray-400 dark:hover:bg-white/[0.06]"
+                }`}
+              >
+                Today's Schedule
+                <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] dark:bg-white/20">
+                  {totalToday}
+                </span>
+              </motion.button>
+              <motion.button
+                type="button"
+                whileTap={{ scale: 0.97 }}
+                transition={{ duration: 0.15 }}
+                onClick={() => setTab("upcoming")}
+                className={`rounded-lg px-4 py-2 text-xs font-medium transition-all ${
+                  tab === "upcoming"
+                    ? "bg-tdai-navy-700 text-white dark:bg-tdai-navy-600"
+                    : "border border-tdai-border bg-white text-tdai-secondary hover:bg-tdai-surface-alt dark:border-white/[0.08] dark:bg-tdai-gray-900 dark:text-tdai-gray-400 dark:hover:bg-white/[0.06]"
+                }`}
+              >
+                Upcoming
+                <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] dark:bg-white/20">
+                  {upcomingOrders.length}
+                </span>
+              </motion.button>
+            </>
+          )}
+          {hasWorklist && (
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.97 }}
+              transition={{ duration: 0.15 }}
+              onClick={() => setTab("worklist")}
+              className={`rounded-lg px-4 py-2 text-xs font-medium transition-all ${
+                tab === "worklist"
+                  ? "bg-tdai-navy-700 text-white dark:bg-tdai-navy-600"
+                  : "border border-tdai-border bg-white text-tdai-secondary hover:bg-tdai-surface-alt dark:border-white/[0.08] dark:bg-tdai-gray-900 dark:text-tdai-gray-400 dark:hover:bg-white/[0.06]"
+              }`}
+            >
+              Study Worklist
+            </motion.button>
+          )}
+          {hasPatients && (
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.97 }}
+              transition={{ duration: 0.15 }}
+              onClick={() => setTab("patients")}
+              className={`rounded-lg px-4 py-2 text-xs font-medium transition-all ${
+                tab === "patients"
+                  ? "bg-tdai-navy-700 text-white dark:bg-tdai-navy-600"
+                  : "border border-tdai-border bg-white text-tdai-secondary hover:bg-tdai-surface-alt dark:border-white/[0.08] dark:bg-tdai-gray-900 dark:text-tdai-gray-400 dark:hover:bg-white/[0.06]"
+              }`}
+            >
+              <Users className="mr-1 inline h-3.5 w-3.5" />
+              Patients
+              {patients.length > 0 && (
+                <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] dark:bg-white/20">
+                  {patients.length}
+                </span>
+              )}
+            </motion.button>
+          )}
           <div className="flex-1" />
-          <motion.button
-            type="button"
-            whileTap={{ scale: 0.97 }}
-            transition={{ duration: 0.15 }}
-            className="btn-ghost !py-1.5 text-xs"
-            onClick={() => void load()}
-          >
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
-            Refresh
-          </motion.button>
+          {hasOrders && (
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.97 }}
+              transition={{ duration: 0.15 }}
+              className="btn-ghost !py-1.5 text-xs"
+              onClick={() => void load()}
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+              Refresh
+            </motion.button>
+          )}
         </div>
 
         {/* ── Tab panels (layout + height-friendly transitions) ─ */}
@@ -380,7 +444,7 @@ export function TechDashboard() {
           transition={{ layout: { duration: 0.4, ease: [0.16, 1, 0.3, 1] } }}
         >
           <AnimatePresence mode="wait" initial={false}>
-            {tab === "worklist" && (
+            {tab === "worklist" && hasWorklist && (
               <motion.div
                 key="worklist"
                 layout
@@ -393,7 +457,7 @@ export function TechDashboard() {
               </motion.div>
             )}
 
-            {tab === "patients" && (
+            {tab === "patients" && hasPatients && (
               <motion.div
                 key="patients"
                 layout
@@ -496,7 +560,7 @@ export function TechDashboard() {
               </motion.div>
             )}
 
-            {tab !== "worklist" && tab !== "patients" && loading && (
+            {tab !== "worklist" && tab !== "patients" && hasOrders && loading && (
               <motion.div
                 key="loading"
                 layout
@@ -510,7 +574,7 @@ export function TechDashboard() {
               </motion.div>
             )}
 
-            {tab !== "worklist" && tab !== "patients" && !loading && sorted.length === 0 && (
+            {tab !== "worklist" && tab !== "patients" && hasOrders && !loading && sorted.length === 0 && (
               <motion.div
                 key="empty"
                 layout
@@ -529,7 +593,7 @@ export function TechDashboard() {
               </motion.div>
             )}
 
-            {tab !== "worklist" && tab !== "patients" && !loading && sorted.length > 0 && (
+            {tab !== "worklist" && tab !== "patients" && hasOrders && !loading && sorted.length > 0 && (
               <motion.div
                 key={`list-${tab}`}
                 layout
@@ -580,6 +644,9 @@ export function TechDashboard() {
                               </p>
                               <span className={`badge text-[10px] ${statusStyle[order.status]}`}>
                                 {statusLabel[order.status]}
+                              </span>
+                              <span className={`badge text-[10px] ${ORDER_PRIORITY_STYLE[order.priority]}`}>
+                                {ORDER_PRIORITY_LABEL[order.priority]}
                               </span>
                             </div>
                             <div className="mt-1 flex items-center gap-3 text-xs text-tdai-secondary dark:text-tdai-gray-400">

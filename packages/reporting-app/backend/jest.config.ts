@@ -7,6 +7,7 @@ const config: Config = {
   moduleFileExtensions: ["ts", "js"],
   collectCoverageFrom: ["src/**/*.ts"],
   testTimeout: 15000,
+  setupFiles: ["<rootDir>/tests/setup.ts"],
 };
 
 export default config;

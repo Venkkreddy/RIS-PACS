@@ -33,7 +33,14 @@ export function getFirebaseAuth(): admin.auth.Auth {
   return admin.auth();
 }
 
+let dbInstance: admin.firestore.Firestore | undefined;
+
 export function getFirestore(): admin.firestore.Firestore {
   ensureInitialized();
-  return admin.firestore();
+  if (!dbInstance) {
+    dbInstance = admin.firestore();
+    dbInstance.settings({ ignoreUndefinedProperties: true });
+  }
+  return dbInstance;
 }
+

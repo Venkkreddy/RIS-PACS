@@ -51,6 +51,8 @@ export interface DicomViewerValidation {
   validatedAt?: string;
 }
 
+export type QcStatus = "pending" | "pass" | "fail";
+
 export interface WorklistStudy {
   studyId: string;
   patientName?: string;
@@ -59,6 +61,10 @@ export interface WorklistStudy {
   description?: string;
   bodyPart?: string;
   location?: string;
+  room?: string;
+  isRepeat?: boolean;
+  repeatReason?: string;
+  qcStatus?: QcStatus;
   metadata?: Record<string, unknown>;
   status: StudyStatus;
   priority?: StudyPriority;

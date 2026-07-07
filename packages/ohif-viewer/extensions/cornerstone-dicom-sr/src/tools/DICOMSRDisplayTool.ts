@@ -45,6 +45,11 @@ export default class DICOMSRDisplayTool extends AnnotationTool {
     const { viewport } = enabledElement;
     const { element } = viewport;
 
+    // Guard: Check if viewport has valid dimensions to prevent race condition crash
+    if (!element || element.clientWidth === 0 || element.clientHeight === 0) {
+      return;
+    }
+
     let annotations = annotation.state.getAnnotations(this.getToolName(), element);
 
     // Todo: We don't need this anymore, filtering happens in triggerAnnotationRender

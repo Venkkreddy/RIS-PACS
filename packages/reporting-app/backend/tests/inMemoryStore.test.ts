@@ -333,15 +333,15 @@ describe("Patients", () => {
 
   it("updates patient fields", async () => {
     const created = await store.createPatient(payload);
-    const updated = await store.updatePatient(created.id, { phone: "555-1234" });
+    const updated = await store.updatePatient(created.id, { phone: "+91 9876543210" });
 
-    expect(updated.phone).toBe("555-1234");
+    expect(updated.phone).toBe("+91 9876543210");
     expect(updated.firstName).toBe("Jane");
     expect(updated.updatedAt).toBeDefined();
   });
 
   it("throws when updating nonexistent patient", async () => {
-    await expect(store.updatePatient("bad", { phone: "555" })).rejects.toThrow("Patient not found");
+    await expect(store.updatePatient("bad", { phone: "+91 9876543210" })).rejects.toThrow("Patient not found");
   });
 
   it("lists patients sorted by updatedAt descending", async () => {
@@ -377,7 +377,7 @@ describe("Patients", () => {
 
 // ── Referring Physicians ─────────────────────────────────────────────────────
 describe("Referring Physicians", () => {
-  const payload = { name: "Dr. House", specialty: "Diagnostics", phone: "555-0000", email: "house@hospital.com", hospital: "Princeton-Plainsboro" };
+  const payload = { name: "Dr. House", specialty: "Diagnostics", phone: "+91 9876543214", email: "house@hospital.com", hospital: "Princeton-Plainsboro" };
 
   it("creates a referring physician", async () => {
     const p = await store.createReferringPhysician(payload);

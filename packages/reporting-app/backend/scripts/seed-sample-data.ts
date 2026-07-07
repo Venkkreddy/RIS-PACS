@@ -6,7 +6,7 @@
  * Usage:  npx ts-node scripts/seed-sample-data.ts
  */
 
-const BASE = process.env.API_BASE ?? "http://localhost:8080";
+const BASE = process.env.API_BASE ?? "http://localhost:8081";
 
 interface ApiResponse {
   id?: string;

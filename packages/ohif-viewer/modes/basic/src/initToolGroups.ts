@@ -85,6 +85,7 @@ function initDefaultToolGroup(extensionManager, toolGroupService, commandsManage
     enabled: [
       { toolName: toolNames.ImageOverlayViewer },
       { toolName: toolNames.ReferenceLines },
+      { toolName: toolNames.ScaleOverlay },
     ],
     disabled: [
       {

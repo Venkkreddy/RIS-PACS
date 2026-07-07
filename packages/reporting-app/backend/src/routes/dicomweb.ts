@@ -1284,6 +1284,134 @@ export async function validateStudyAvailability({
   maxAttempts?: number;
   retryDelayMs?: number;
 }): Promise<DicomwebStudyValidationResult> {
+  if (env.ORTHANC_BASE_URL) {
+    const orthancBase = env.ORTHANC_BASE_URL.replace(/\/+$/, "");
+    const orthancAuth = env.ORTHANC_AUTH
+      ? { Authorization: `Basic ${Buffer.from(env.ORTHANC_AUTH).toString("base64")}` }
+      : {};
+
+    const qidoStudies = `${orthancBase}/dicom-web/studies?StudyInstanceUID=${encodeURIComponent(studyInstanceUID)}`;
+    const qidoSeries = `${orthancBase}/dicom-web/studies/${studyInstanceUID}/series`;
+
+    let lastFailure: DicomwebStudyValidationResult | null = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const studiesRes = await axios.get(qidoStudies, {
+          headers: { ...orthancAuth, Accept: "application/dicom+json" },
+          timeout: 10000,
+        });
+        const studies = studiesRes.data || [];
+        if (!Array.isArray(studies) || studies.length === 0) {
+          lastFailure = {
+            studyInstanceUID,
+            isValid: false,
+            reason: "STUDY_NOT_FOUND",
+            message: "Study not found in Orthanc",
+            attempts: attempt,
+            endpointUrls: { qidoStudies, qidoSeries },
+            responseStatus: { qidoStudies: studiesRes.status },
+          };
+          if (attempt < maxAttempts) {
+            await delay(retryDelayMs);
+            continue;
+          }
+          break;
+        }
+
+        const seriesRes = await axios.get(qidoSeries, {
+          headers: { ...orthancAuth, Accept: "application/dicom+json" },
+          timeout: 10000,
+        });
+        const seriesList = seriesRes.data || [];
+        if (!Array.isArray(seriesList) || seriesList.length === 0) {
+          lastFailure = {
+            studyInstanceUID,
+            isValid: false,
+            reason: "NO_SERIES",
+            message: "Study has no series in Orthanc",
+            attempts: attempt,
+            endpointUrls: { qidoStudies, qidoSeries },
+            responseStatus: { qidoStudies: 200, qidoSeries: seriesRes.status },
+          };
+          if (attempt < maxAttempts) {
+            await delay(retryDelayMs);
+            continue;
+          }
+          break;
+        }
+
+        const firstSeriesUID = seriesList[0]["0020000E"]?.Value?.[0];
+        if (!firstSeriesUID) {
+          lastFailure = {
+            studyInstanceUID,
+            isValid: false,
+            reason: "NO_SERIES",
+            message: "Study series UID is missing in Orthanc",
+            attempts: attempt,
+            endpointUrls: { qidoStudies, qidoSeries },
+            responseStatus: { qidoStudies: 200, qidoSeries: 200 },
+          };
+          if (attempt < maxAttempts) {
+            await delay(retryDelayMs);
+            continue;
+          }
+          break;
+        }
+
+        const qidoInstances = `${orthancBase}/dicom-web/studies/${studyInstanceUID}/series/${firstSeriesUID}/instances`;
+        const instancesRes = await axios.get(qidoInstances, {
+          headers: { ...orthancAuth, Accept: "application/dicom+json" },
+          timeout: 10000,
+        });
+        const instances = instancesRes.data || [];
+        if (!Array.isArray(instances) || instances.length === 0) {
+          lastFailure = {
+            studyInstanceUID,
+            isValid: false,
+            reason: "NO_INSTANCES",
+            message: "Study series has no instances in Orthanc",
+            attempts: attempt,
+            endpointUrls: { qidoStudies, qidoSeries, qidoInstances },
+            responseStatus: { qidoStudies: 200, qidoSeries: 200, qidoInstances: instancesRes.status },
+          };
+          if (attempt < maxAttempts) {
+            await delay(retryDelayMs);
+            continue;
+          }
+          break;
+        }
+
+        return {
+          studyInstanceUID,
+          isValid: true,
+          message: "Study, series, and instances validated in Orthanc",
+          attempts: attempt,
+          endpointUrls: { qidoStudies, qidoSeries, qidoInstances },
+          responseStatus: { qidoStudies: 200, qidoSeries: 200, qidoInstances: 200 },
+          seriesInstanceUID: firstSeriesUID,
+          sopInstanceUID: instances[0]["00080018"]?.Value?.[0],
+        };
+
+      } catch (err: any) {
+        lastFailure = {
+          studyInstanceUID,
+          isValid: false,
+          reason: "VALIDATION_ERROR",
+          message: `Orthanc validation failed: ${err.message}`,
+          attempts: attempt,
+          endpointUrls: { qidoStudies, qidoSeries },
+          responseStatus: { qidoStudies: err.response?.status || 500 },
+        };
+        if (attempt < maxAttempts) {
+          await delay(retryDelayMs);
+          continue;
+        }
+      }
+    }
+    return lastFailure!;
+  }
+
   const baseUrl = dicomwebBaseUrl.replace(/\/+$/, "");
   const endpointUrls: DicomwebStudyValidationResult["endpointUrls"] = {
     qidoStudies: `${baseUrl}/studies?StudyInstanceUID=${encodeURIComponent(studyInstanceUID)}`,
@@ -2235,10 +2363,13 @@ export function dicomwebRouter(): Router {
 
   router.use(ensureDicomwebAccess);
 
-  // Pre-warm the DIM cache on startup (non-blocking)
-  setTimeout(() => {
-    queryDicoogleDIM().catch(() => {});
-  }, 3000);
+  // Pre-warm the DIM cache on startup (non-blocking).
+  // Skip during tests to avoid "import after environment torn down" errors.
+  if (process.env.NODE_ENV !== "test") {
+    setTimeout(() => {
+      queryDicoogleDIM().catch(() => {});
+    }, 3000);
+  }
 
   // Cache warm endpoint — called after upload to pre-load DIM data
   router.post("/warm", ensureAuthenticated, async (req: Request, res: Response) => {

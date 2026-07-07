@@ -33,6 +33,7 @@ export const cornerstone = {
   contourSegmentationPanel:
     '@ohif/extension-cornerstone.panelModule.panelSegmentationWithToolsContour',
   segmentation: '@ohif/extension-cornerstone.panelModule.panelSegmentation',
+  workstationTools: '@ohif/extension-cornerstone.panelModule.panelWorkstationTools',
   viewport: '@ohif/extension-cornerstone.viewportModule.cornerstone',
 };
 
@@ -218,33 +219,32 @@ export const toolbarSections = {
     'MeasurementTools',
     'Zoom',
     'Pan',
-    'TrackballRotate',
     'WindowLevel',
-    'Capture',
+    'Reset',
     'Layout',
-    'Crosshairs',
     'MoreTools',
   ],
 
-  [TOOLBAR_SECTIONS.viewportActionMenu.topLeft]: ['orientationMenu', 'dataOverlayMenu'],
-
-  [TOOLBAR_SECTIONS.viewportActionMenu.bottomMiddle]: ['AdvancedRenderingControls'],
-
-  AdvancedRenderingControls: [
+  [TOOLBAR_SECTIONS.viewportActionMenu.topLeft]: [
     'windowLevelMenuEmbedded',
-    'voiManualControlMenu',
-    'Colorbar',
-    'opacityMenu',
-    'thresholdMenu',
+    'orientationMenu',
+    'dataOverlayMenu',
   ],
 
   [TOOLBAR_SECTIONS.viewportActionMenu.topRight]: [
-    'modalityLoadBadge',
-    'trackingStatus',
-    'navigationComponent',
+    'Capture',
+    'WorkstationSettings',
   ],
 
-  [TOOLBAR_SECTIONS.viewportActionMenu.bottomLeft]: ['windowLevelMenu'],
+  [TOOLBAR_SECTIONS.viewportActionMenu.bottomMiddle]: [
+    'ImageOverlayViewer',
+    'ReferenceLines',
+    'ImageSliceSync',
+  ],
+
+  [TOOLBAR_SECTIONS.viewportActionMenu.rightMiddle]: [],
+
+  [TOOLBAR_SECTIONS.viewportActionMenu.bottomLeft]: [],
 
   MeasurementTools: [
     'Length',
@@ -253,19 +253,14 @@ export const toolbarSections = {
     'EllipticalROI',
     'RectangleROI',
     'CircleROI',
-    'PlanarFreehandROI',
     'SplineROI',
     'LivewireContour',
   ],
 
   MoreTools: [
-    'Reset',
     'rotate-right',
     'flipHorizontal',
-    'ImageSliceSync',
-    'ReferenceLines',
-    'ImageOverlayViewer',
-    'StackScroll',
+    'flipVertical',
     'invert',
     'Probe',
     'Cine',
@@ -275,9 +270,80 @@ export const toolbarSections = {
     'CalibrationLine',
     'TagBrowser',
     'AdvancedMagnify',
-    'UltrasoundDirectionalTool',
+    'WindowLevelRegion',
+    'ImageSliceSync',
+    'ReferenceLines',
+    'ImageOverlayViewer',
+    'StackScroll',
+    'Capture',
+    'Autostitch',
+    'Stitch',
+  ],
+
+  workstationTools: [
+    'WorkstationToolsGroup',
+  ],
+
+  WorkstationToolsGroup: [
+    'Zoom',
+    'Pan',
+    'WindowLevel',
+    'Reset',
+    'rotate-right',
+    'flipHorizontal',
+    'flipVertical',
+    'invert',
+    'Probe',
+    'Cine',
+    'Length',
+    'Bidirectional',
+    'ArrowAnnotate',
+    'EllipticalROI',
+    'RectangleROI',
+    'CircleROI',
+    'PlanarFreehandROI',
+    'SplineROI',
+    'LivewireContour',
+    'Angle',
+    'CobbAngle',
+    'Magnify',
+    'CalibrationLine',
+    'TagBrowser',
+    'AdvancedMagnify',
     'WindowLevelRegion',
     'SegmentLabelTool',
+    'Crop',
+    'Shutter',
+    'Autostitch',
+    'Stitch',
+    'DICOMPrint',
+    'SideMarkerStamp',
+    'InfoBox',
+    'SelectCursor',
+    'CropX',
+    'ExportCD',
+    'RemoveSelected',
+    'ImageFilter',
+    'Overlay',
+    'WorkstationSettings',
+    'Capture',
+    'Layout',
+  ],
+  SideMarkerStamp: [
+    'SideMarker_R',
+    'SideMarker_L',
+    'SideMarker_AP',
+    'SideMarker_PA',
+    'SideMarker_Standing',
+    'SideMarker_Supine',
+  ],
+  Crop: [
+    'Crop_Draw',
+    'Crop_Apply',
+  ],
+  Shutter: [
+    'Shutter_Draw',
+    'Shutter_Apply',
   ],
 };
 
@@ -285,9 +351,12 @@ export const basicLayout = {
   id: ohif.layout,
   props: {
     leftPanels: [ohif.thumbnailList],
+    leftPanelClosed: false,
     leftPanelResizable: true,
-    rightPanels: [cornerstone.segmentation, cornerstone.measurements],
-    rightPanelClosed: true,
+    rightPanels: [
+      cornerstone.workstationTools,
+    ],
+    rightPanelClosed: false,
     rightPanelResizable: true,
     viewports: [
       {
@@ -337,7 +406,7 @@ export const modeInstance = {
   // TODO: We're using this as a route segment
   // We should not be.
   id,
-  routeName: 'basic',
+  routeName: 'viewer',
   // Don't hide this by default - see the registration later to hide the basic
   // instance by default.
   hide: false,

@@ -120,8 +120,8 @@ describe("I. Full RBAC Matrix", () => {
   // Billing: billing:create = admin, billing; billing:view = admin, billing, viewer
   const billingCreateAllowed = ["admin", "billing"];
   const billingCreateDenied = ["radiographer", "radiologist", "viewer", "referring"];
-  const billingViewAllowed = ["admin", "billing", "viewer"];
-  const billingViewDenied = ["radiographer", "radiologist", "referring"];
+  const billingViewAllowed = ["admin", "billing", "viewer", "radiologist"];
+  const billingViewDenied = ["radiographer", "referring"];
 
   billingCreateDenied.forEach((role) => {
     it(`I: POST /billing denied for ${role}`, async () => {
@@ -153,9 +153,9 @@ describe("I. Full RBAC Matrix", () => {
     });
   });
 
-  // Orders: orders:create = admin, radiographer, referring (NOT radiologist)
-  const orderCreateAllowed = ["admin", "radiographer", "referring"];
-  const orderCreateDenied = ["radiologist", "viewer", "billing"];
+  // Orders: orders:create = admin, radiographer, referring, radiologist, receptionist
+  const orderCreateAllowed = ["admin", "radiographer", "referring", "radiologist", "receptionist"];
+  const orderCreateDenied = ["viewer", "billing"];
 
   orderCreateDenied.forEach((role) => {
     it(`I: POST /orders denied for ${role}`, async () => {
@@ -231,9 +231,9 @@ describe("I. Full RBAC Matrix", () => {
     });
   });
 
-  // Worklist: worklist:view = admin, radiologist, radiographer, receptionist, viewer (NOT referring, billing)
-  const worklistAllowed = ["admin", "radiologist", "radiographer", "receptionist", "viewer"];
-  const worklistDenied = ["referring", "billing"];
+  // Worklist: worklist:view = admin, radiologist, radiographer, receptionist, viewer, referring (scoped to own studies) (NOT billing)
+  const worklistAllowed = ["admin", "radiologist", "radiographer", "receptionist", "viewer", "referring"];
+  const worklistDenied = ["billing"];
 
   worklistAllowed.forEach((role) => {
     it(`I: GET /worklist allowed for ${role}`, async () => {
@@ -250,9 +250,9 @@ describe("I. Full RBAC Matrix", () => {
     });
   });
 
-  // Patients: patients:create = admin, radiographer, receptionist (NOT radiologist, viewer, referring, billing)
-  const patientCreateAllowed = ["admin", "radiographer", "receptionist"];
-  const patientCreateDenied = ["radiologist", "viewer", "referring", "billing"];
+  // Patients: patients:create = admin, receptionist, radiologist (radiographer removed — not their job)
+  const patientCreateAllowed = ["admin", "receptionist", "radiologist"];
+  const patientCreateDenied = ["viewer", "referring", "billing", "radiographer"];
   patientCreateDenied.forEach((role) => {
     it(`I: POST /patients denied for ${role}`, async () => {
       const { app } = buildApp();
@@ -325,13 +325,13 @@ describe("III. Validation Boundaries", () => {
   // String length limits
   it("III.1: patient firstName empty is rejected", async () => {
     const { app } = buildApp();
-    const a = await login(app, "radiographer");
+    const a = await login(app, "radiologist");
     expect((await a.post("/patients").send({ patientId: "P1", firstName: "", lastName: "B", dateOfBirth: "2000-01-01", gender: "M" })).status).toBe(400);
   });
 
   it("III.2: patient lastName empty is rejected", async () => {
     const { app } = buildApp();
-    const a = await login(app, "radiographer");
+    const a = await login(app, "radiologist");
     expect((await a.post("/patients").send({ patientId: "P1", firstName: "A", lastName: "", dateOfBirth: "2000-01-01", gender: "M" })).status).toBe(400);
   });
 
@@ -1041,7 +1041,7 @@ describe("XIII. Sorting", () => {
 describe("XIV. Unicode & Encoding", () => {
   it("XIV.1: Chinese patient name", async () => {
     const { app } = buildApp();
-    const a = await login(app, "radiographer");
+    const a = await login(app, "radiologist");
     const r = await a.post("/patients").send({ patientId: "P-ZH", firstName: "张", lastName: "伟", dateOfBirth: "1990-01-01", gender: "M" });
     expect(r.status).toBe(201);
     expect(r.body.firstName).toBe("张");
@@ -1049,7 +1049,7 @@ describe("XIV. Unicode & Encoding", () => {
 
   it("XIV.2: Arabic patient name", async () => {
     const { app } = buildApp();
-    const a = await login(app, "radiographer");
+    const a = await login(app, "radiologist");
     const r = await a.post("/patients").send({ patientId: "P-AR", firstName: "محمد", lastName: "علي", dateOfBirth: "1990-01-01", gender: "M" });
     expect(r.status).toBe(201);
     expect(r.body.firstName).toBe("محمد");
@@ -1310,7 +1310,7 @@ describe("XVIII. Store Edge Cases", () => {
   it("XVIII.10: updatedAt refreshed on every updatePatient", async () => {
     const p = await store.createPatient({ patientId: "P1", firstName: "A", lastName: "B", dateOfBirth: "2000-01-01", gender: "M" });
     await new Promise((r) => setTimeout(r, 10));
-    const u1 = await store.updatePatient(p.id, { phone: "555" });
+    const u1 = await store.updatePatient(p.id, { phone: "+91 9876543210" });
     await new Promise((r) => setTimeout(r, 10));
     const u2 = await store.updatePatient(p.id, { email: "a@b.com" });
     expect(new Date(u2.updatedAt).getTime()).toBeGreaterThan(new Date(u1.updatedAt).getTime());

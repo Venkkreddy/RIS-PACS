@@ -385,7 +385,7 @@ export default class ExtensionManager extends PubSubService {
   };
 
   getActiveDataSource = () => {
-    return this.dataSourceMap[this._activeDataSourceName];
+    return this.dataSourceMap[this._activeDataSourceName] || [];
   };
 
   getActiveDataSourceOrNull = () => {

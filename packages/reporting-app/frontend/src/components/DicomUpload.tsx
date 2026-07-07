@@ -138,20 +138,21 @@ export function DicomUpload({ patientId, patientName, onUploaded }: DicomUploadP
       const name = f.name.toLowerCase();
       const ext = name.includes(".") ? name.split(".").pop() : "";
       const isDicomExt = ["dcm", "dicom", "ima", "img"].includes(ext ?? "");
+      const isArchiveExt = ["zip", "rar"].includes(ext ?? "");
       const isDicomMime = f.type === "application/dicom" || f.type === "application/octet-stream";
       const hasNoExtension = !name.includes(".");
       const hasNoMime = f.type === "";
-      return isDicomExt || isDicomMime || hasNoExtension || hasNoMime;
+      return isDicomExt || isArchiveExt || isDicomMime || hasNoExtension || hasNoMime;
     });
 
     setFilterWarning(null);
     if (dcmFiles.length === 0 && allFiles.length > 0) {
-      setFilterWarning(`${allFiles.length} file${allFiles.length > 1 ? "s" : ""} rejected — only DICOM files (.dcm, .ima, .img) are accepted.`);
+      setFilterWarning(`${allFiles.length} file${allFiles.length > 1 ? "s" : ""} rejected — only DICOM files (.dcm, .ima, .img) or .zip/.rar archives are accepted.`);
       return;
     }
     if (dcmFiles.length < allFiles.length) {
       const skipped = allFiles.length - dcmFiles.length;
-      setFilterWarning(`${skipped} non-DICOM file${skipped > 1 ? "s" : ""} skipped. ${dcmFiles.length} DICOM file${dcmFiles.length > 1 ? "s" : ""} added.`);
+      setFilterWarning(`${skipped} non-DICOM file${skipped > 1 ? "s" : ""} skipped. ${dcmFiles.length} file${dcmFiles.length > 1 ? "s" : ""} added.`);
     }
 
     uploadMutation.reset();
@@ -340,13 +341,13 @@ export function DicomUpload({ patientId, patientName, onUploaded }: DicomUploadP
           />
         </svg>
         <span className="text-sm text-tdai-gray-500">
-          {dragActive ? "Drop files here" : "Click or drag DICOM (.dcm) files here"}
+          {dragActive ? "Drop files here" : "Click or drag DICOM (.dcm) files or a .zip/.rar archive here"}
         </span>
         <input
           ref={inputRef}
           type="file"
           className="hidden"
-          accept=".dcm,.dicom,.ima,.img,application/dicom,application/octet-stream,*/*"
+          accept=".dcm,.dicom,.ima,.img,.zip,.rar,application/dicom,application/octet-stream,*/*"
           multiple
           onChange={(e) => {
             addFiles(e.target.files);

@@ -142,7 +142,13 @@ function getWeasisBaseUrl(req: Request, studyId: string, tenantSlug?: string): s
     try {
       const requestUrl = new URL(requestOrigin);
       if (isLoopbackHostname(requestUrl.hostname)) {
-        dicomwebBaseUrl = `http://${formatHostForUrl(requestUrl.hostname)}:8081/dicom-web`;
+        // Use the backend URL from env config instead of hardcoding a port
+        try {
+          const backendUrl = new URL(env.BACKEND_URL);
+          dicomwebBaseUrl = `http://${formatHostForUrl(requestUrl.hostname)}:${backendUrl.port || '8081'}/dicom-web`;
+        } catch {
+          dicomwebBaseUrl = `http://${formatHostForUrl(requestUrl.hostname)}:8081/dicom-web`;
+        }
       }
     } catch {
       // Fallback to configured/public bases below.
@@ -290,7 +296,7 @@ function buildViewerUrl(studyInstanceUids: string | string[]): string | null {
     viewerSegmentIndex >= 0 && normalizedSegments[viewerSegmentIndex + 1]
       ? normalizedSegments[viewerSegmentIndex + 1]
       : null;
-  const dataSourceName = explicitDataSource || "dicoogle";
+  const dataSourceName = explicitDataSource || (env.ORTHANC_BASE_URL ? "orthanc" : "dicoogle");
 
   ohifUrl.pathname = `/${[...prefixSegments, "viewer", dataSourceName].join("/")}`;
   ohifUrl.search = "";
@@ -565,7 +571,7 @@ export function worklistRouter(
     // Fire-and-forget Dicoogle sync — never block the response.
     // The sync updates local records in the background; the user sees
     // whatever is already cached and gets fresh data on next poll.
-    if (env.ENABLE_AUTH) {
+    {
       const searchText = query.search ?? query.name;
       syncStudiesFromDicoogle(store, dicoogle, searchText).catch((err) => {
         logger.warn({ message: "Background Dicoogle sync failed", error: String(err) });
@@ -1107,6 +1113,65 @@ export function worklistRouter(
         validation,
       });
     }),
+  );
+
+  router.patch(
+    "/worklist/:studyId/fields",
+    ensureAuthenticated,
+    asyncHandler(async (req, res) => {
+      const studyId = String(req.params.studyId ?? "");
+      const patch = req.body || {};
+
+      const gwReq = req as GatewayRequest;
+      const tenantId = gwReq.tenantId;
+
+      if (env.MULTI_TENANT_ENABLED && tenantId && tenantStore) {
+        const existing = await tenantStore.getStudy(tenantId, studyId);
+        if (!existing) {
+          res.status(404).json({ error: "Study not found" });
+          return;
+        }
+
+        const existingMeta = (existing.metadata as Record<string, unknown> | undefined) ?? {};
+        const updatedMeta = {
+          ...existingMeta,
+          ...patch,
+        };
+
+        const updated = await tenantStore.upsertStudy(tenantId, {
+          studyInstanceUid: existing.study_instance_uid,
+          patientName: existing.patient_name,
+          studyDate: existing.study_date,
+          modality: existing.modality,
+          description: existing.description,
+          status: (patch.status as StudyStatus) ?? existing.status,
+          uploaderId: existing.uploader_id,
+          metadata: updatedMeta,
+        });
+        res.json(updated);
+        return;
+      }
+
+      const existing = await store.getStudyRecord(studyId);
+      const existingMeta = (existing?.metadata as Record<string, unknown> | undefined) ?? {};
+      const mergedMetadata = {
+        ...existingMeta,
+        ...patch,
+      };
+
+      const rootUpdate: Partial<StudyRecord> = {};
+      if (typeof patch.isRepeat === "boolean") rootUpdate.isRepeat = patch.isRepeat;
+      if (typeof patch.repeatReason === "string") rootUpdate.repeatReason = patch.repeatReason;
+      if (typeof patch.qcStatus === "string") rootUpdate.qcStatus = patch.qcStatus as QcStatus;
+      if (patch.status) rootUpdate.status = patch.status as StudyStatus;
+
+      const updated = await store.upsertStudyRecord(studyId, {
+        ...rootUpdate,
+        metadata: mergedMetadata,
+      });
+
+      res.json(updated);
+    })
   );
 
   router.post("/assign", ensureAuthenticated, ensurePermission(store, "worklist:assign"), asyncHandler(async (req, res) => {

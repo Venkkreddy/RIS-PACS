@@ -405,7 +405,7 @@ class CornerstoneViewportService extends PubSubService implements IViewportServi
     // if not valid viewportData then return early
     if (viewportData.viewportType === csEnums.ViewportType.STACK) {
       // check if imageIds is valid
-      if (!viewportData.data[0].imageIds?.length) {
+      if (!viewportData?.data?.length || !viewportData.data[0]?.imageIds?.length) {
         return;
       }
     }
@@ -608,23 +608,29 @@ class CornerstoneViewportService extends PubSubService implements IViewportServi
     const inPlaneVector1 = planeRestriction?.inPlaneVector1;
     const inPlaneVector2 = planeRestriction?.inPlaneVector2;
 
+    const isValidVec3 = v => Array.isArray(v) && v.length >= 3 && v.every(n => typeof n === 'number');
+
     for (const id of this.viewportsById.keys()) {
       const viewport = this.getCornerstoneViewport(id);
-      const { viewPlaneNormal } = viewport.getCamera();
+      if (!viewport) {
+        continue;
+      }
 
-      if (!viewPlaneNormal) {
+      const { viewPlaneNormal } = viewport.getCamera() || {};
+
+      if (!isValidVec3(viewPlaneNormal)) {
         continue;
       }
       let alignmentScore = 0;
-      if (inPlaneVector1 || inPlaneVector2) {
-        const inPlane1Score = inPlaneVector1
+      if (isValidVec3(inPlaneVector1) || isValidVec3(inPlaneVector2)) {
+        const inPlane1Score = isValidVec3(inPlaneVector1)
           ? -Math.abs(vec3.dot(viewPlaneNormal, inPlaneVector1))
           : 0;
-        const inPlane2Score = inPlaneVector2
+        const inPlane2Score = isValidVec3(inPlaneVector2)
           ? -Math.abs(vec3.dot(viewPlaneNormal, inPlaneVector2))
           : 0;
         alignmentScore = inPlane1Score + inPlane2Score;
-      } else if (refViewPlaneNormal) {
+      } else if (isValidVec3(refViewPlaneNormal)) {
         alignmentScore = Math.abs(vec3.dot(viewPlaneNormal, refViewPlaneNormal));
       }
       viewportAlignmentData.push({ viewportId: id, alignmentScore });
@@ -811,6 +817,10 @@ class CornerstoneViewportService extends PubSubService implements IViewportServi
     viewportInfo: ViewportInfo,
     presentations: Presentations = {}
   ): Promise<void> {
+    if (!viewportData?.data?.length || !viewportData.data[0]?.imageIds?.length) {
+      console.warn('[CornerstoneViewportService] _setStackViewport called with invalid viewportData', viewport?.id);
+      return;
+    }
     const displaySetOptions = viewportInfo.getDisplaySetOptions();
 
     const displaySetInstanceUIDs = viewportData.data.map(data => data.displaySetInstanceUID);
@@ -1390,9 +1400,31 @@ class CornerstoneViewportService extends PubSubService implements IViewportServi
       // Reset the camera for all viewports using position presentation to maintain relative size/position
       // which means only those viewports that have a zoom level of 1.
       this.beforeResizePositionPresentations.forEach((positionPresentation, viewportId) => {
-        this.setPresentations(viewportId, {
-          positionPresentation,
-        });
+        try {
+          // Defensive: ensure viewReference vectors are valid arrays before applying
+          const safePositionPresentation = { ...positionPresentation } as any;
+          const vr = safePositionPresentation.viewReference;
+
+          if (vr) {
+            if (vr.viewPlaneNormal && (!Array.isArray(vr.viewPlaneNormal) || vr.viewPlaneNormal.length < 3)) {
+              delete vr.viewPlaneNormal;
+            }
+            if (vr.inPlaneVector1 && (!Array.isArray(vr.inPlaneVector1) || vr.inPlaneVector1.length < 3)) {
+              delete vr.inPlaneVector1;
+            }
+            if (vr.inPlaneVector2 && (!Array.isArray(vr.inPlaneVector2) || vr.inPlaneVector2.length < 3)) {
+              delete vr.inPlaneVector2;
+            }
+          }
+
+          this.setPresentations(viewportId, {
+            positionPresentation: safePositionPresentation,
+          });
+        } catch (err) {
+          // Log and continue; avoid crashing the whole resize due to malformed viewReference
+          // eslint-disable-next-line no-console
+          console.warn('Skipping presentation apply on resize due to invalid viewReference', viewportId, err);
+        }
       });
 
       // Resize and render the rendering engine again.

@@ -282,7 +282,15 @@ const getInstanceNumber = (viewportData, viewportId, imageIndex, cornerstoneView
 };
 
 function _getInstanceNumberFromStack(viewportData, imageIndex) {
+  if (!viewportData?.data?.length || !viewportData.data[0]) {
+    return;
+  }
+
   const imageIds = viewportData.data[0].imageIds;
+  if (!imageIds || !imageIds.length) {
+    return;
+  }
+
   const imageId = imageIds[imageIndex];
 
   if (!imageId) {
@@ -312,12 +320,12 @@ function _getInstanceNumberFromVolume(
 ) {
   const volumes = viewportData.data;
 
-  if (!volumes) {
+  if (!volumes || !volumes.length || !volumes[0]) {
     return;
   }
 
   // Todo: support fusion of acquisition plane which has instanceNumber
-  const { volume } = volumes[0];
+  const { volume } = volumes[0] || {};
 
   if (!volume) {
     return;
@@ -332,10 +340,17 @@ function _getInstanceNumberFromVolume(
   }
 
   const camera = cornerstoneViewport.getCamera();
-  const { viewPlaneNormal } = camera;
-  // checking if camera is looking at the acquisition plane (defined by the direction on the volume)
+  const { viewPlaneNormal } = camera || {};
 
+  // checking if camera is looking at the acquisition plane (defined by the direction on the volume)
   const scanAxisNormal = direction.slice(6, 9);
+
+  // Validate vectors before doing math
+  const isValidVec3 = v => Array.isArray(v) && v.length >= 3 && v.every(n => typeof n === 'number');
+
+  if (!isValidVec3(viewPlaneNormal) || !isValidVec3(scanAxisNormal)) {
+    return;
+  }
 
   // check if viewPlaneNormal is parallel to scanAxisNormal
   const cross = vec3.cross(vec3.create(), viewPlaneNormal, scanAxisNormal);

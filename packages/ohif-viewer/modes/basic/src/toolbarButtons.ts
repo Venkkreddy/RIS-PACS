@@ -677,32 +677,427 @@ const toolbarButtons: Button[] = [
       ],
     },
   },
-  // {
-  //   id: 'Undo',
-  //   uiType: 'ohif.toolButton',
-  //   props: {
-  //     type: 'tool',
-  //     icon: 'prev-arrow',
-  //     label: 'Undo',
-  //     commands: {
-  //       commandName: 'undo',
-  //     },
-  //     evaluate: 'evaluate.action',
-  //   },
-  // },
-  // {
-  //   id: 'Redo',
-  //   uiType: 'ohif.toolButton',
-  //   props: {
-  //     type: 'tool',
-  //     icon: 'next-arrow',
-  //     label: 'Redo',
-  //     commands: {
-  //       commandName: 'redo',
-  //     },
-  //     evaluate: 'evaluate.action',
-  //   },
-  // },
+  {
+    id: 'Undo',
+    uiType: 'ohif.toolButton',
+    props: {
+      type: 'tool',
+      icon: 'prev-arrow',
+      label: i18n.t('Buttons:Undo'),
+      tooltip: i18n.t('Buttons:Undo'),
+      commands: {
+        commandName: 'undo',
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'Redo',
+    uiType: 'ohif.toolButton',
+    props: {
+      type: 'tool',
+      icon: 'next-arrow',
+      label: i18n.t('Buttons:Redo'),
+      tooltip: i18n.t('Buttons:Redo'),
+      commands: {
+        commandName: 'redo',
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'PreviousImage',
+    uiType: 'ohif.toolButton',
+    props: {
+      type: 'tool',
+      icon: 'prev-arrow',
+      label: i18n.t('Buttons:Previous Image'),
+      tooltip: i18n.t('Buttons:Previous Image'),
+      commands: {
+        commandName: 'previousImage',
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'NextImage',
+    uiType: 'ohif.toolButton',
+    props: {
+      type: 'tool',
+      icon: 'next-arrow',
+      label: i18n.t('Buttons:Next Image'),
+      tooltip: i18n.t('Buttons:Next Image'),
+      commands: {
+        commandName: 'nextImage',
+      },
+    },
+  },
+  {
+    id: 'WorkstationToolsGroup',
+    uiType: 'ohif.toolBoxButtonGroup',
+    props: {
+      buttonSection: true,
+    },
+  },
+  {
+    id: 'flipVertical',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-flip-vertical',
+      label: i18n.t('Buttons:Flip Vertical'),
+      tooltip: i18n.t('Buttons:Flip Vertically'),
+      commands: 'flipViewportVertical',
+      evaluate: [
+        'evaluate.viewportProperties.toggle',
+        {
+          name: 'evaluate.viewport.supported',
+          unsupportedViewportTypes: ['video', 'volume3d'],
+        },
+      ],
+    },
+  },
+  {
+    id: 'Crop',
+    uiType: 'ohif.toolButtonList',
+    props: {
+      buttonSection: true,
+      icon: 'tool-rectangle',
+      label: i18n.t('Buttons:Crop'),
+      tooltip: 'Crop Options',
+    },
+  },
+  {
+    id: 'Crop_Draw',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-rectangle',
+      label: 'Draw Crop Box',
+      tooltip: 'Draw a crop box',
+      commands: 'activateCrop',
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'Crop_Apply',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-reset',
+      label: 'Apply Crop',
+      tooltip: 'Apply the crop',
+      commands: 'applyCrop',
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'Shutter',
+    uiType: 'ohif.toolButtonList',
+    props: {
+      buttonSection: true,
+      icon: 'tool-circle',
+      label: i18n.t('Buttons:Shutter'),
+      tooltip: 'Shutter Options',
+    },
+  },
+  {
+    id: 'Shutter_Draw',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-circle',
+      label: 'Draw Shutter',
+      tooltip: 'Draw freehand shutter path',
+      commands: 'activateShutter',
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'Shutter_Apply',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-reset',
+      label: 'Apply Shutter',
+      tooltip: 'Apply the shutter mask',
+      commands: 'applyShutter',
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'Autostitch',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'icon-link',
+      label: i18n.t('Buttons:Auto Stitch'),
+      tooltip: i18n.t('Buttons:Auto Stitch Images'),
+      commands: 'activateAutostitch',
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'Stitch',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'icon-link',
+      label: 'Stitch',
+      tooltip: 'Stitch Images Manually',
+      commands: 'activateStitch',
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'DICOMPrint',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-capture',
+      label: i18n.t('Buttons:Print'),
+      tooltip: i18n.t('Buttons:DICOM Print SCU'),
+      commands: {
+        commandName: 'displayNotification',
+        commandOptions: {
+          title: 'DICOM Print',
+          text: 'Sending study to print queue...',
+          type: 'info',
+        },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'SideMarkerStamp',
+    uiType: 'ohif.toolButtonList',
+    props: {
+      buttonSection: true,
+      icon: 'tool-annotate',
+      label: 'Stamp',
+      tooltip: 'Side Marker / Body Stamp',
+    },
+  },
+  {
+    id: 'SideMarker_R',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-annotate',
+      label: 'R',
+      tooltip: 'R Side Marker',
+      commands: {
+        commandName: 'addSideMarkerAnnotation',
+        commandOptions: { text: 'R' },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'SideMarker_L',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-annotate',
+      label: 'L',
+      tooltip: 'L Side Marker',
+      commands: {
+        commandName: 'addSideMarkerAnnotation',
+        commandOptions: { text: 'L' },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'SideMarker_AP',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-annotate',
+      label: 'AP',
+      tooltip: 'AP Side Marker',
+      commands: {
+        commandName: 'addSideMarkerAnnotation',
+        commandOptions: { text: 'AP' },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'SideMarker_PA',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-annotate',
+      label: 'PA',
+      tooltip: 'PA Side Marker',
+      commands: {
+        commandName: 'addSideMarkerAnnotation',
+        commandOptions: { text: 'PA' },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'SideMarker_Standing',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-annotate',
+      label: 'Standing',
+      tooltip: 'Standing Side Marker',
+      commands: {
+        commandName: 'addSideMarkerAnnotation',
+        commandOptions: { text: 'Standing' },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'SideMarker_Supine',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-annotate',
+      label: 'Supine',
+      tooltip: 'Supine Side Marker',
+      commands: {
+        commandName: 'addSideMarkerAnnotation',
+        commandOptions: { text: 'Supine' },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'InfoBox',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'dicom-tag-browser',
+      label: i18n.t('Buttons:Info Box'),
+      tooltip: i18n.t('Buttons:Overlay Metadata Info Box'),
+      commands: {
+        commandName: 'displayNotification',
+        commandOptions: {
+          title: 'Info Box',
+          text: 'Toggled overlay patient info panel.',
+          type: 'info',
+        },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'SelectCursor',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-move',
+      label: i18n.t('Buttons:Select'),
+      tooltip: i18n.t('Buttons:Select Annotation/ROI'),
+      commands: {
+        commandName: 'displayNotification',
+        commandOptions: {
+          title: 'Select Tool',
+          text: 'Click on annotations to edit or move them.',
+          type: 'info',
+        },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'CropX',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-rectangle',
+      label: i18n.t('Buttons:Crop X'),
+      tooltip: i18n.t('Buttons:Crop X'),
+      commands: {
+        commandName: 'displayNotification',
+        commandOptions: {
+          title: 'Crop X',
+          text: 'Activated Crop X tool.',
+          type: 'info',
+        },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'ExportCD',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'dicom-tag-browser',
+      label: i18n.t('Buttons:Export CD'),
+      tooltip: i18n.t('Buttons:Export Study to CD/DVD ISO'),
+      commands: {
+        commandName: 'displayNotification',
+        commandOptions: {
+          title: 'Export CD',
+          text: 'Generating CD ISO image for download...',
+          type: 'info',
+        },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'RemoveSelected',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-reset',
+      label: i18n.t('Buttons:Remove'),
+      tooltip: i18n.t('Buttons:Remove Selected Measurement'),
+      commands: {
+        commandName: 'displayNotification',
+        commandOptions: {
+          title: 'Remove Tool',
+          text: 'Select a measurement or annotation and press Delete/Backspace to remove.',
+          type: 'info',
+        },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'ImageFilter',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'tool-invert',
+      label: i18n.t('Buttons:Filters'),
+      tooltip: i18n.t('Buttons:Apply Image Enhancement Filters'),
+      commands: {
+        commandName: 'displayNotification',
+        commandOptions: {
+          title: 'Filters',
+          text: 'Applying image filters...',
+          type: 'info',
+        },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'Overlay',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'toggle-dicom-overlay',
+      label: i18n.t('Buttons:Overlay'),
+      tooltip: i18n.t('Buttons:Toggle Demographic Overlay info'),
+      commands: {
+        commandName: 'displayNotification',
+        commandOptions: {
+          title: 'Overlay',
+          text: 'Overlay configuration changed.',
+          type: 'info',
+        },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
+  {
+    id: 'WorkstationSettings',
+    uiType: 'ohif.toolButton',
+    props: {
+      icon: 'dicom-tag-browser',
+      label: i18n.t('Buttons:Settings'),
+      tooltip: i18n.t('Buttons:Workstation Settings'),
+      commands: {
+        commandName: 'displayNotification',
+        commandOptions: {
+          title: 'Workstation Settings',
+          text: 'Opening settings dialog...',
+          type: 'info',
+        },
+      },
+      evaluate: 'evaluate.action',
+    },
+  },
 ];
 
 export default toolbarButtons;

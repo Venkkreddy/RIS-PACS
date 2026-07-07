@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Request, Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { ensureAuthenticated, ensurePermission } from "../middleware/auth";
@@ -9,6 +9,9 @@ import { ReportService } from "../services/reportService";
 
 import { StorageService } from "../services/storageService";
 import { StoreService } from "../services/store";
+import { HipaaAuditService } from "../services/hipaaAuditService";
+import { NotificationService } from "../services/notificationService";
+import { getClientIp, getUserAgent } from "../middleware/hipaaMiddleware";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -56,9 +59,70 @@ export function reportsRouter(params: {
 
   emailService: EmailService;
   pdfService: PdfService;
+  hipaaAuditService?: HipaaAuditService;
+  notificationService?: NotificationService;
 }): Router {
   const router = Router();
   const resolveParamId = (id: string | string[]): string => (Array.isArray(id) ? id[0] : id);
+
+  // When a report is saved with priority "critical": write a HIPAA audit entry immediately
+  // and create a notification (visible to admin + radiologist roles) so the finding can't
+  // be missed. Fired from both create (POST) and update (PUT) — whichever path results in
+  // the report ending up critical.
+  async function flagCriticalFinding(req: Request, report: { id: string; studyId: string; metadata?: Record<string, unknown> }): Promise<void> {
+    const metadata = report.metadata ?? {};
+    const patientMeta = (typeof metadata.patient === "object" && metadata.patient !== null ? metadata.patient as Record<string, unknown> : {});
+    const patientName = typeof patientMeta.patientName === "string" && patientMeta.patientName.trim() ? patientMeta.patientName : "Unknown patient";
+
+    const studyRecord = await params.store.getStudyRecord(report.studyId);
+    const studyType =
+      studyRecord?.description ||
+      [studyRecord?.bodyPart, studyRecord?.modality].filter(Boolean).join(" ").trim() ||
+      "Unknown study";
+
+    const radiologistName = req.session.user?.displayName ?? req.session.user?.email ?? "Unknown radiologist";
+
+    await params.hipaaAuditService?.log({
+      action: "CRITICAL_FINDING_FLAGGED",
+      severity: "critical",
+      userId: req.session.user?.id ?? "unknown",
+      userEmail: req.session.user?.email ?? "unknown",
+      userRole: req.session.user?.role ?? "unknown",
+      ipAddress: getClientIp(req),
+      userAgent: getUserAgent(req),
+      resourceType: "report",
+      resourceId: report.id,
+      description: `Critical finding flagged on report ${report.id} for ${patientName} (${studyType})`,
+      httpMethod: req.method,
+      httpPath: req.path,
+      httpStatus: 200,
+      phiAccessed: true,
+      phiFieldsAccessed: ["patientName"],
+    });
+
+    await params.notificationService?.create({
+      type: "critical_finding",
+      report_id: report.id,
+      patient_name: patientName,
+      radiologist_name: radiologistName,
+      study_type: studyType,
+      target_roles: ["admin", "radiologist"],
+    });
+  }
+
+  // Referring physicians may only view finalized reports tied to their own orders.
+  async function assertReferringCanViewReport(req: Request, store: StoreService, report: { studyId: string; status: string }): Promise<void> {
+    const user = req.session.user;
+    if (user?.role !== "referring") return;
+    if (report.status !== "final" && report.status !== "amended") {
+      throw new Error("Report not found");
+    }
+    const orders = await store.listOrders({ referringPhysicianId: user.id });
+    const ownsStudy = orders.some((o) => o.studyId === report.studyId);
+    if (!ownsStudy) {
+      throw new Error("Report not found");
+    }
+  }
 
   router.post("/", ensureAuthenticated, ensurePermission(params.store, "reports:create"), asyncHandler(async (req, res) => {
     const body = createReportSchema.parse(req.body);
@@ -95,11 +159,19 @@ export function reportsRouter(params: {
       ownerId: req.session.user!.id,
       metadata: reportMetadata,
     });
+
+    if (report.priority === "critical") {
+      await flagCriticalFinding(req, { id: report.id, studyId: report.studyId, metadata: report.metadata });
+    }
+
     res.status(201).json(report);
   }));
 
   router.get("/", ensureAuthenticated, ensurePermission(params.store, "reports:view"), asyncHandler(async (req, res) => {
-    const reports = await params.store.listReports(req.session.user!.id);
+    const user = req.session.user!;
+    const reports = user.role === "referring"
+      ? await params.store.listReportsForReferringPhysician(user.id)
+      : await params.store.listReports(user.id);
     res.json(reports);
   }));
 
@@ -107,6 +179,7 @@ export function reportsRouter(params: {
     const studyId = resolveParamId(req.params.studyId);
     const report = await params.store.getReportByStudyId(studyId);
     if (!report) throw new Error("Report not found");
+    await assertReferringCanViewReport(req, params.store, report);
     res.json(report);
   }));
 
@@ -114,6 +187,7 @@ export function reportsRouter(params: {
     const reportId = resolveParamId(req.params.id);
     const report = await params.store.getReport(reportId);
     if (!report) throw new Error("Report not found");
+    await assertReferringCanViewReport(req, params.store, report);
     res.json(report);
   }));
 
@@ -136,6 +210,12 @@ export function reportsRouter(params: {
       authorId: req.session.user!.id,
       createdAt: new Date().toISOString(),
     });
+
+    // Only fire on the transition into "critical" — not on every subsequent edit of an
+    // already-critical report — so saving small text changes doesn't spam new alerts.
+    if (updated.priority === "critical" && existing.priority !== "critical") {
+      await flagCriticalFinding(req, { id: updated.id, studyId: updated.studyId, metadata: updated.metadata });
+    }
 
     res.json(updated);
   }));
@@ -217,6 +297,18 @@ export function reportsRouter(params: {
     });
 
     res.json({ message: "Report shared", report: updated });
+  }));
+
+  router.get("/:id/pdf", ensureAuthenticated, ensurePermission(params.store, "reports:view"), asyncHandler(async (req, res) => {
+    const reportId = resolveParamId(req.params.id);
+    const report = await params.store.getReport(reportId);
+    if (!report) throw new Error("Report not found");
+    await assertReferringCanViewReport(req, params.store, report);
+
+    const pdf = await params.pdfService.buildReportPdf(report);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="report-${reportId}.pdf"`);
+    res.send(pdf);
   }));
 
   return router;
