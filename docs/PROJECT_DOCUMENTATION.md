@@ -18,11 +18,13 @@
   - 5.1 [Reporting App — Backend](#51-reporting-app--backend)
   - 5.2 [Reporting App — Frontend](#52-reporting-app--frontend)
   - 5.3 [Reporting App — Shared Types](#53-reporting-app--shared-types)
-  - 5.4 [Dicoogle Server](#54-dicoogle-server)
-  - 5.5 [OHIF Viewer](#55-ohif-viewer)
-  - 5.6 [MONAI Server](#56-monai-server)
-  - 5.7 [MedASR Server](#57-medasr-server)
-  - 5.8 [Wav2Vec2 Server](#58-wav2vec2-server)
+  - 5.4 [Orthanc PACS Server](#54-orthanc-pacs-server)
+  - 5.5 [Dicoogle Server](#55-dicoogle-server)
+  - 5.6 [OHIF Viewer](#56-ohif-viewer)
+  - 5.7 [MONAI Server](#57-monai-server)
+  - 5.8 [MedASR Server](#58-medasr-server)
+  - 5.9 [Wav2Vec2 Server](#59-wav2vec2-server)
+  - 5.10 [Electron Desktop App Wrapper](#510-electron-desktop-app-wrapper)
 6. [Shared Assets](#6-shared-assets)
 7. [API Reference](#7-api-reference)
 8. [Authentication & Authorization](#8-authentication--authorization)
@@ -31,6 +33,10 @@
 11. [DICOM Pipeline](#11-dicom-pipeline)
 12. [AI Services](#12-ai-services)
 13. [Infrastructure & Deployment](#13-infrastructure--deployment)
+  - 13.1 [Docker Compose Configuration](#131-docker-compose-configuration)
+  - 13.2 [Production Dockerfiles](#132-production-dockerfiles)
+  - 13.3 [GCP VM Deployment](#133-gcp-vm-deployment)
+  - 13.4 [Electron Desktop App Builder](#134-electron-desktop-app-builder)
 14. [Environment Variables](#14-environment-variables)
 15. [Scripts & Tooling](#15-scripts--tooling)
 16. [Testing](#16-testing)
@@ -49,14 +55,16 @@
 | Module                | Description                                                                                                                                                                  |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **RIS Core**          | Patient registry, radiology order lifecycle, scheduling, workflow orchestration                                                                                              |
-| **Dicoogle PACS**     | DICOM image storage, Lucene indexing, DICOMweb retrieval, study webhooks                                                                                                     |
-| **OHIF Viewer**       | Zero-footprint web DICOM viewer with custom TD                                                                                                                               |
+| **Orthanc PACS**      | Primary PACS registry with DICOM C-STORE, C-FIND Modality Worklist (MWL), and MPPS status tracking services (port 4242/11115).                                                |
+| **Dicoogle Server**   | Secondary PACS image storage, Lucene indexing, and DICOMweb retrieval endpoints (port 11112).                                                                                 |
+| **OHIF Viewer**       | Zero-footprint web DICOM viewer with custom TD branding (port 3000).                                                                                                         |
 | **Reporting Engine**  | Structured radiology reports, templates, voice dictation, TipTap rich editor, PDF generation, email sharing                                                                  |
 | **MONAI AI**          | AI-powered medical image analysis (chest X-ray, lung nodule, brain MRI, CT segmentation, cardiac), GradCAM heatmaps, DICOM SR/GSPS/SC generation, MedGemma narrative reports |
 | **MedASR / Wav2Vec2** | Medical speech recognition for voice-to-report dictation with LLM-based correction                                                                                           |
 | **Analytics**         | TAT, volume, productivity, center-level dashboards                                                                                                                           |
 | **Billing**           | CPT/ICD coding, charge capture, revenue tracking                                                                                                                             |
 | **Multi-Tenant**      | Tenant-isolated data, JWT auth, per-tenant RBAC, scoped DICOMweb, platform admin API                                                                                         |
+| **Electron Wrapper**  | Single-click Windows desktop wrapper app running all Docker services silently with splash loading screens and tray icon.                                                      |
 
 
 ### Brand Identity
@@ -651,7 +659,21 @@ Canonical TypeScript type contracts shared between backend and frontend:
 
 ---
 
-### 5.4 Dicoogle Server
+### 5.4 Orthanc PACS Server
+
+**Path:** `pacs-stack/orthanc`  
+**Runtime:** Orthanc Team Docker Image + Python Scripting
+
+The primary PACS (Picture Archiving and Communication System) engine for the workstation:
+
+- **DICOM Listening services:** Port `4242` for incoming DICOM C-STORE and C-FIND queries.
+- **Modality Worklist (MWL):** Custom Python engine (`worklist.py`) reading scheduled order entries from the database and rendering them to modalities on demand via C-FIND.
+- **MPPS (Modality Performed Procedure Step) SCP:** Listens on port `11115` for exposure status tracking notifications (`N-CREATE` and `N-SET`), triggering real-time RIS worklist state updates.
+- **Web Administration interface:** Orthanc REST API exposed on port `8042`.
+
+---
+
+### 5.5 Dicoogle Server
 
 **Path:** `packages/dicoogle-server`  
 **Runtime:** Java 11 + Maven, Dockerized
@@ -676,7 +698,7 @@ A fork/customization of the open-source Dicoogle PACS server with:
 
 ---
 
-### 5.5 OHIF Viewer
+### 5.6 OHIF Viewer
 
 **Path:** `packages/ohif-viewer`  
 **Runtime:** OHIF 3.x + React + Nginx, Dockerized
@@ -695,7 +717,7 @@ Built on top of upstream `ohif/app:latest` with:
 
 ---
 
-### 5.6 MONAI Server
+### 5.7 MONAI Server
 
 **Path:** `packages/monai-server`  
 **Runtime:** Python 3.11 + PyTorch + FastAPI
@@ -735,7 +757,7 @@ AI inference microservice supporting:
 
 ---
 
-### 5.7 MedASR Server
+### 5.8 MedASR Server
 
 **Path:** `packages/medasr-server`  
 **Runtime:** Python 3.11 + torch + torchaudio + FastAPI
@@ -755,7 +777,7 @@ Medical speech recognition using Google's MedASR model with LLM-based report for
 
 ---
 
-### 5.8 Wav2Vec2 Server
+### 5.9 Wav2Vec2 Server
 
 **Path:** `packages/wav2vec2-server`  
 **Runtime:** Python 3.11 + torch + FastAPI
@@ -765,6 +787,20 @@ Open-source alternative ASR tier using Faster-Whisper or Facebook Wav2Vec2 with 
 **Endpoints:** Same API surface as MedASR (`/v1/transcribe`, `/v1/transcribe/radiology`, `/v1/correct`).
 
 **Config:** Port 5002, `ASR_BACKEND` env (default `faster-whisper`).
+
+---
+
+### 5.10 Electron Desktop App Wrapper
+
+**Path:** `desktop-app`  
+**Runtime:** Electron JS + NodeJS, Packaged via Electron Builder
+
+A desktop application shell that acts as a secure container control plane and local presentation layer:
+
+- **Background Services Daemon:** Starts the WSL/Docker engine silently, monitors container health checks, and coordinates port bindings.
+- **SSL Verification Bypass:** Injects Chromium flags to skip certificate validation constraints for local `https://localhost:5173` endpoints.
+- **Port Conflict Resolution:** Executes force-cleanup commands (`docker rm -f`) at launch to free ports occupied by leftover dev containers.
+- **System Tray Native Interface:** Closes the primary window to the system tray to ensure servers keep running in the background.
 
 ---
 
@@ -1064,31 +1100,32 @@ The `ReportEditor` and `RadiologistDashboard` integrate voice dictation via the 
 
 ## 13. Infrastructure & Deployment
 
-### Docker Compose (`docker-compose.yml`)
+### 13.1 Docker Compose Configuration (`docker-compose.yml`)
 
+The platform services run inside a coordinated Docker environment:
 
-| Service                  | Image                              | Host Port   | Depends On              |
-| ------------------------ | ---------------------------------- | ----------- | ----------------------- |
-| `dicoogle`               | Build `./packages/dicoogle-server` | 8080, 11112 | —                       |
-| `ohif`                   | Build `./packages/ohif-viewer`     | 3000        | dicoogle, backend       |
-| `monai-server`           | Build `./packages/monai-server`    | 5000        | —                       |
-| `medasr-server`          | Build `./packages/medasr-server`   | 5001        | —                       |
-| `reporting-app-backend`  | `node:20-alpine`                   | 8081        | postgres, monai, medasr |
-| `reporting-app-frontend` | `node:20-alpine`                   | 5173        | backend                 |
-| `postgres`               | `postgres:16-alpine`               | 5432        | —                       |
-
+| Service                  | Image / Build Context              | Host Port Mapping    | Depends On                        |
+| ------------------------ | ---------------------------------- | -------------------- | --------------------------------- |
+| `orthanc`                | `tdai-orthanc-custom:latest`       | `8042, 4242, 11115`  | —                                 |
+| `dicoogle`               | Build `./packages/dicoogle-server` | `8080, 11112`        | —                                 |
+| `ohif`                   | Build `./packages/ohif-viewer`     | `3000`               | dicoogle, backend, orthanc        |
+| `monai-server`           | Build `./packages/monai-server`    | `5000`               | —                                 |
+| `medasr-server`          | Build `./packages/medasr-server`   | `5001`               | —                                 |
+| `reporting-app-backend`  | `node:20-alpine`                   | `8081`               | postgres, monai, medasr, orthanc  |
+| `reporting-app-frontend` | `node:20-alpine`                   | `5173`               | backend                           |
+| `postgres`               | `postgres:16-alpine`               | `5432`               | —                                 |
 
 **Network:** `imaging-net` (bridge)  
-**Volumes:** `pgdata` (PostgreSQL), bind mounts for `storage/`, `monai-models/`, `dicoogle-index/`
+**Volumes:** `pgdata` (PostgreSQL), `orthanc-storage` (Orthanc PACS DB), `dicoogle-storage` (Dicoogle storage bind mount).
 
-### Production Dockerfile (Root)
+### 13.2 Production Dockerfile (Root)
 
 Two-stage build for the reporting API:
 
 1. **Builder:** `node:20-slim`, installs deps, runs `turbo build --filter=medical-report-system-backend`
 2. **Runtime:** `node:20-slim`, copies built artifacts, `PORT=8080`, `CMD node packages/reporting-app/backend/dist/server.js`
 
-### GCP VM Deployment (`deploy/`)
+### 13.3 GCP VM Deployment (`deploy/`)
 
 
 | Script                         | Purpose                                                                   |
@@ -1110,12 +1147,14 @@ gcloud run deploy ohif-viewer --source ./packages/ohif-viewer
 gcloud run deploy dicoogle-server --source ./packages/dicoogle-server
 ```
 
-### Windows Startup (`start.ps1` / `start.bat`)
+### 13.4 Electron Desktop App Builder (`desktop-app/`)
 
-Modes: `dicoogle`, `full`, `dev`, `core`, `stop`, `reset`  
-Flags: `-Build`, `-NoGpu`, `-NoOrthanc`, `-NoMonai`, `-NoMedasr`
+For self-contained on-premise installations, the system is bundled into a desktop setup installer:
 
-Creates required directories, ensures `.env` from examples, builds Docker service lists, runs `docker compose up`.
+- **Packaging configuration (`package.json`):** Uses `electron-builder` to compile code. It references `extraResources` to bundle database migrations, Nginx reverse proxy configuration (`default.conf`), and Orthanc configuration parameters (`orthanc.json`, `worklist.py`) directly alongside the executable binary files.
+- **Silent Service Manager (`main.js`):** Coordinates background daemon execution. On window launch, it silently ensures that the Docker service is active, cleans conflicting dev containers, and runs `docker compose up -d` internally before loading the presentation layer.
+- **SSL Certificate Errors Override:** Globally overrides certificate warnings for local secure `https://localhost:5173` routing.
+- **Tray Daemonization:** Binds the window `close` event to minimize to system tray, ensuring PACS storage indexing and background DICOM listeners remain operational.
 
 ---
 
@@ -1220,11 +1259,12 @@ Creates required directories, ensures `.env` from examples, builds Docker servic
 
 ## 15. Scripts & Tooling
 
-### Root Scripts (`scripts/`)
+### Root Scripts (`scripts/` and Root Directory)
 
 
 | Script                      | Description                                                              |
 | --------------------------- | ------------------------------------------------------------------------ |
+| `build-client-package.bat`  | Builds local Docker images, saves them to `.tar`, packages the Electron setup, and assembles the `TDAI-RIS-PACS` distribution folder. |
 | `dev-local.mjs`             | Hybrid dev: Dicoogle in Docker, backend + OHIF locally                   |
 | `dev-local-parity.mjs`      | Docker-like ports: Dicoogle + OHIF in Docker, backend + frontend locally |
 | `post_deploy_smoke.py`      | POST-deploy health check (backend, worklist-sync, webhook-connectivity)  |
