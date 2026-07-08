@@ -85,6 +85,8 @@ copy /y "tdai-images.tar"     "TDAI-RIS-PACS\" >nul
 
 :: Copy config files needed by bind-mounts
 copy /y "pacs-stack\orthanc\orthanc.json"  "TDAI-RIS-PACS\" >nul
+copy /y "pacs-stack\orthanc\worklist.py"  "TDAI-RIS-PACS\" >nul
+copy /y "packages\ohif-viewer\default.conf" "TDAI-RIS-PACS\" >nul
 xcopy /y /e "packages\reporting-app\backend\migrations\*" "TDAI-RIS-PACS\migrations\" >nul
 
 :: Copy service account (create empty placeholder if missing)
@@ -96,6 +98,20 @@ if exist "packages\reporting-app\backend\service-account.json" (
 
 :: Copy docs
 if exist "README.md" copy /y "README.md" "TDAI-RIS-PACS\" >nul
+
+:: -- Build Electron app --
+echo.
+echo [3b/4] Building Electron desktop app...
+cd desktop-app
+call npm install
+call npm run build
+cd ..
+if exist "desktop-app\dist\TDAI RISPACS Setup 1.0.0.exe" (
+    copy /y "desktop-app\dist\TDAI RISPACS Setup 1.0.0.exe" "TDAI-RIS-PACS\TDAI RIS-PACS Setup.exe" >nul
+    echo       Setup installer copied to TDAI-RIS-PACS\TDAI RIS-PACS Setup.exe
+) else (
+    echo       WARNING: Desktop app setup installer not found in desktop-app\dist\
+)
 
 echo       Files copied to TDAI-RIS-PACS\
 
@@ -118,21 +134,22 @@ echo   Folder: TDAI-RIS-PACS\
 echo   Size:   ~%SIZE_MB% MB
 echo.
 echo   Contents:
-echo     docker-compose.yml    (client version - no build sections)
-echo     start.bat / start.sh  (one-click startup)
-echo     stop.bat / stop.sh    (one-click shutdown)
-echo     seed-data.bat/.sh     (demo data loader - runs on first start)
-echo     demo-dicoms\          (sample DICOM files)
-echo     tdai-images.tar       (all 8 pre-built Docker images)
-echo     orthanc.json          (PACS config)
-echo     migrations\           (database schema)
-echo     service-account.json  (Firebase credentials)
-echo     README.md             (setup instructions)
+echo     TDAI RIS-PACS Setup.exe (Desktop app wrapper installer)
+echo     docker-compose.yml      (client version - no build sections)
+echo     start.bat / start.sh    (one-click startup)
+echo     stop.bat / stop.sh      (one-click shutdown)
+echo     seed-data.bat/.sh       (demo data loader - runs on first start)
+echo     demo-dicoms\            (sample DICOM files)
+echo     tdai-images.tar         (all 8 pre-built Docker images)
+echo     orthanc.json            (PACS config)
+echo     migrations\             (database schema)
+echo     service-account.json    (Firebase credentials)
+echo     README.md               (setup instructions)
 echo.
 echo   Next steps:
 echo     1. Zip the TDAI-RIS-PACS folder
 echo     2. Send the zip to the client
-echo     3. Client extracts and double-clicks start.bat (or ./start.sh)
+echo     3. Client extracts and runs TDAI RIS-PACS Setup.exe
 echo.
 echo   No .env file, no source code, no build tools needed.
 echo.

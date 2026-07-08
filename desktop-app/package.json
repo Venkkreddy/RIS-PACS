@@ -1,0 +1,69 @@
+{
+  "name": "tdai-ris-pacs",
+  "version": "1.0.0",
+  "description": "TrivitronDigital.ai Smart Radiology Workstation",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder build --win"
+  },
+  "build": {
+    "appId": "com.trivitron.tdai",
+    "productName": "TDAI RIS/PACS",
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TDAI RIS/PACS",
+      "installerIcon": "assets/icon.ico",
+      "include": "installer.nsh"
+    },
+    "files": [
+      "main.js",
+      "splash.html",
+      "assets/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../TDAI-RIS-PACS/docker-compose.yml",
+        "to": "docker-compose.yml"
+      },
+      {
+        "from": "../TDAI-RIS-PACS/orthanc.json",
+        "to": "orthanc.json"
+      },
+      {
+        "from": "../TDAI-RIS-PACS/migrations",
+        "to": "migrations"
+      },
+      {
+        "from": "../TDAI-RIS-PACS/service-account.json",
+        "to": "service-account.json"
+      },
+      {
+        "from": "../TDAI-RIS-PACS/worklist.py",
+        "to": "worklist.py"
+      },
+      {
+        "from": "../TDAI-RIS-PACS/default.conf",
+        "to": "default.conf"
+      },
+      {
+        "from": "../.env",
+        "to": ".env"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "dependencies": {
+    "wait-on": "^7.0.0"
+  }
+}

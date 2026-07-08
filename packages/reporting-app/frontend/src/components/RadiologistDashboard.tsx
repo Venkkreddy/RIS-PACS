@@ -579,6 +579,12 @@ export function RadiologistDashboard() {
   const data = useMemo(() => {
     const latestStudyByPatient = new Map<string, WorklistStudy>();
     for (const study of rawData) {
+      const m = (study.metadata as Record<string, unknown> | undefined) ?? {};
+      const workflowStatus = typeof m.workflowStatus === "string" ? m.workflowStatus : (study.viewerUrl ? "ready-for-reporting" : "scheduled");
+      if (study.status !== "reported" && workflowStatus !== "ready-for-reporting") {
+        continue;
+      }
+
       const key = worklistPatientGroupKey(study);
       const existing = latestStudyByPatient.get(key);
       if (!existing || compareStudiesByRecencyDesc(study, existing) < 0) {

@@ -6,7 +6,7 @@ import { ensureAuthenticated, ensurePermission } from "../middleware/auth";
 import type { GatewayRequest } from "../middleware/apiGateway";
 import { DicoogleService } from "../services/dicoogleService";
 import { logger } from "../services/logger";
-import { StoreService, StudyRecord, StudyStatus } from "../services/store";
+import { StoreService, StudyRecord, StudyStatus, QcStatus } from "../services/store";
 import type { Patient } from "@medical-report-system/shared";
 import { TenantScopedStore, type StudyRow } from "../services/tenantScopedStore";
 import { createWeasisAccessToken } from "../services/weasisAccess";

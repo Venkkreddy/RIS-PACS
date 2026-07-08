@@ -4,34 +4,23 @@ Welcome! This guide will help you get the system running on your computer.
 
 ---
 
-## STEP 1 — ONE-TIME SETUP (do this only once)
+## INSTALLATION METHODS
 
+You can run the system either using the desktop installer app (recommended) or manually via scripts.
+
+### Option 1: Installer (Recommended)
+1. Run **`TDAI RIS-PACS Setup.exe`** from the `TDAI-RIS-PACS` distribution folder.
+2. Install like any normal Windows app (a desktop shortcut will be created automatically).
+3. Ensure Docker Desktop is installed.
+4. Double-click the **TDAI RIS/PACS** desktop icon. The app will automatically check for and launch Docker silently in the background and open the workstation window. No CMD window or manual steps are needed!
+
+### Option 2: Manual Startup (Advanced)
 1. Download **Docker Desktop** from here:
    👉 https://www.docker.com/products/docker-desktop
-
-2. Install it — just follow the on-screen instructions (click Next, Next, Finish).
-
-3. **Restart your computer** after installing.
-
-4. Open Docker Desktop and wait until it says **"Docker Desktop is running"** in the bottom-left corner.
-
-That's it! You only need to do this once.
-
----
-
-## STEP 2 — START THE SYSTEM
-
-1. Make sure **Docker Desktop is open** and running.
-
-2. Open the `TDAI-RIS-PACS` folder you received.
-
-3. Start the system:
-   - **Windows:** Double-click **`start.bat`**
-   - **Mac/Linux:** Double-click **`start.sh`**
-
-4. Wait about **2–3 minutes** on the first run. You'll see a progress indicator.
-
-5. Your browser will **open automatically** when the system is ready.
+2. Install it and restart your computer.
+3. Open Docker Desktop and ensure it is running.
+4. Double-click **`start.bat`** (Windows) or run `./start.sh` (Mac/Linux) in the `TDAI-RIS-PACS` folder.
+5. Wait about 2–3 minutes on the first run, and the workstation will open automatically.
 
 ---
 

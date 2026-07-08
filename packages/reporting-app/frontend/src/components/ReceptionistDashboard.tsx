@@ -1,33 +1,50 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { formatIsoDateDisplay } from "../lib/dateDisplay";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import type { Patient, Gender, RadiologyOrder } from "@medical-report-system/shared";
 import { useAuthRole } from "../hooks/useAuthRole";
+import type { WorklistStudy } from "../types/worklist";
 
-type CheckInStatus = "waiting" | "checked-in" | "in-exam" | "completed";
+type WorkflowStatus =
+  | "scheduled"
+  | "checked-in"
+  | "in-progress"
+  | "images-uploaded"
+  | "qc-pending"
+  | "qc-passed"
+  | "retake-required"
+  | "ready-for-reporting";
+
+const WORKFLOW_LABEL: Record<WorkflowStatus, string> = {
+  scheduled: "Scheduled",
+  "checked-in": "Checked In",
+  "in-progress": "In Progress",
+  "images-uploaded": "Images Uploaded",
+  "qc-pending": "QC Pending",
+  "qc-passed": "QC Passed",
+  "retake-required": "Retake Required",
+  "ready-for-reporting": "Ready For Reporting",
+};
+
+const WORKFLOW_BADGE: Record<WorkflowStatus, string> = {
+  scheduled: "bg-sky-50 text-sky-700 ring-sky-200",
+  "checked-in": "bg-blue-50 text-blue-700 ring-blue-200",
+  "in-progress": "bg-amber-50 text-amber-700 ring-amber-200",
+  "images-uploaded": "bg-indigo-50 text-indigo-700 ring-indigo-200",
+  "qc-pending": "bg-orange-50 text-orange-700 ring-orange-200",
+  "qc-passed": "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  "retake-required": "bg-red-50 text-red-700 ring-red-200",
+  "ready-for-reporting": "bg-teal-50 text-teal-700 ring-teal-200",
+};
 
 interface CheckInEntry {
   patient: Patient;
-  status: CheckInStatus;
+  status: WorkflowStatus;
   checkInTime: string;
   appointmentOrder?: RadiologyOrder;
 }
-
-const statusStyle: Record<CheckInStatus, string> = {
-  waiting: "bg-amber-50 text-amber-700 ring-1 ring-amber-200",
-  "checked-in": "bg-blue-50 text-blue-700 ring-1 ring-blue-200",
-  "in-exam": "bg-tdai-teal-50 text-tdai-teal-700 ring-1 ring-tdai-teal-200",
-  completed: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200",
-};
-
-const statusLabel: Record<CheckInStatus, string> = {
-  waiting: "Waiting",
-  "checked-in": "Checked In",
-  "in-exam": "In Exam",
-  completed: "Completed",
-};
 
 export function ReceptionistDashboard() {
   const auth = useAuthRole();
@@ -39,7 +56,8 @@ export function ReceptionistDashboard() {
   const [form, setForm] = useState({ patientId: "", firstName: "", lastName: "", dateOfBirth: "", gender: "M" as Gender, phone: "", email: "", address: "" });
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"patients" | "today">("today");
-  const [checkIns, setCheckIns] = useState<CheckInEntry[]>([]);
+  const [checkingInPatient, setCheckingInPatient] = useState<Patient | null>(null);
+  const [orderForm, setOrderForm] = useState({ modality: "XR", bodyPart: "Chest", priority: "routine" as "routine" | "urgent" | "stat" });
 
   const isAdmin = auth.role === "admin" || auth.role === "super_admin";
   const hasPatients = auth.hasPermission("patients:view") || isAdmin;
@@ -62,42 +80,91 @@ export function ReceptionistDashboard() {
     retry: 1,
   });
 
+  const allPatientsQuery = useQuery({
+    queryKey: ["all-patients-list"],
+    queryFn: async () => {
+      const res = await api.get<Patient[]>("/patients");
+      return res.data;
+    },
+    staleTime: 5000,
+  });
+
   const ordersQuery = useQuery({
     queryKey: ["orders-today"],
     queryFn: async () => {
-      const res = await api.get<RadiologyOrder[]>("/orders", { params: { status: "scheduled" } });
+      const res = await api.get<RadiologyOrder[]>("/orders");
       return res.data;
     },
-    staleTime: 10000,
+    staleTime: 5000,
+    refetchInterval: 5000,
     retry: 1,
+  });
+
+  const studiesQuery = useQuery({
+    queryKey: ["receptionist", "studies"],
+    queryFn: async () => {
+      const res = await api.get<WorklistStudy[]>("/worklist");
+      return res.data;
+    },
+    staleTime: 5000,
+    refetchInterval: 5000,
   });
 
   const patients = patientsQuery.data ?? [];
   const orders = ordersQuery.data ?? [];
+  const studies = studiesQuery.data ?? [];
 
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const todayOrders = orders.filter((o) => new Date(o.scheduledDate).toISOString().slice(0, 10) === todayStr);
-
-  useEffect(() => {
-    if (patients.length > 0 && todayOrders.length > 0) {
-      setCheckIns((prev) => {
-        const existing = new Map(prev.map((c) => [c.patient.id, c]));
-        const updated: CheckInEntry[] = [];
-        for (const order of todayOrders) {
-          const patient = patients.find((p) => p.id === order.patientId || p.patientId === order.patientId);
-          if (patient && !existing.has(patient.id)) {
-            updated.push({
-              patient,
-              status: "waiting",
-              checkInTime: order.scheduledDate,
-              appointmentOrder: order,
-            });
-          }
-        }
-        return [...prev, ...updated];
-      });
+  function getStudyMrn(study?: WorklistStudy): string {
+    const m = (study?.metadata as Record<string, unknown> | undefined) ?? {};
+    for (const key of ["patientId", "PatientID", "mrn", "MRN", "00100020"]) {
+      const value = m[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
     }
-  }, [patients, todayOrders]);
+    return "";
+  }
+
+  function workflowStatusFor(row: { order?: RadiologyOrder; study?: WorklistStudy }): WorkflowStatus {
+    const m = (row.study?.metadata as Record<string, unknown> | undefined) ?? {};
+    const explicit = m.workflowStatus;
+    if (typeof explicit === "string") return explicit as WorkflowStatus;
+    if (row.study?.qcStatus === "pass") return "qc-passed";
+    if (row.study?.qcStatus === "fail" || row.study?.isRepeat) return "retake-required";
+    if (row.study?.viewerUrl) return "images-uploaded";
+    if (row.order?.status === "in-progress") return "in-progress";
+    if (row.order?.status === "completed") return "ready-for-reporting";
+    if (row.order?.notes === "Checked In") return "checked-in";
+    return "scheduled";
+  }
+
+  const checkIns = useMemo(() => {
+    const list: CheckInEntry[] = [];
+    const patientsList = allPatientsQuery.data ?? [];
+    const allOrders = ordersQuery.data ?? [];
+    const allStudies = studiesQuery.data ?? [];
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    for (const order of allOrders) {
+      const orderDateStr = new Date(order.scheduledDate).toISOString().slice(0, 10);
+      if (orderDateStr !== todayStr) continue;
+
+      const patient = patientsList.find((p) => p.patientId === order.patientId || p.id === order.patientId);
+      if (patient) {
+        const linkedStudy = allStudies.find(
+          (study) =>
+            (order.studyId && study.studyId === order.studyId) ||
+            getStudyMrn(study).trim().toLowerCase() === order.patientId.trim().toLowerCase()
+        );
+
+        list.push({
+          patient,
+          status: workflowStatusFor({ order, study: linkedStudy }),
+          checkInTime: order.scheduledDate,
+          appointmentOrder: order,
+        });
+      }
+    }
+    return list;
+  }, [allPatientsQuery.data, ordersQuery.data, studiesQuery.data]);
 
   function resetForm() {
     setForm({ patientId: "", firstName: "", lastName: "", dateOfBirth: "", gender: "M", phone: "", email: "", address: "" });
@@ -125,33 +192,74 @@ export function ReceptionistDashboard() {
       resetForm();
       await queryClient.invalidateQueries({ queryKey: ["patients"] });
     } catch (err: any) {
-      setError(err?.response?.data?.error ?? err.message ?? "Failed");
+      const respError = err?.response?.data?.error;
+      if (Array.isArray(respError)) {
+        setError(respError.map((e: any) => `${e.path.join(".")}: ${e.message}`).join(", "));
+      } else {
+        setError(respError ?? err.message ?? "Failed");
+      }
     }
   }
 
-  function updateCheckInStatus(patientId: string, status: CheckInStatus) {
-    setCheckIns((prev) =>
-      prev.map((c) => (c.patient.id === patientId ? { ...c, status } : c)),
-    );
+  async function handleUpdateCheckInStatus(orderId: string, status: WorkflowStatus) {
+    try {
+      let patchStatus: "scheduled" | "in-progress" | "completed" = "scheduled";
+      let patchNotes: string | undefined;
+
+      if (status === "checked-in") {
+        patchStatus = "scheduled";
+        patchNotes = "Checked In";
+      } else if (status === "in-progress") {
+        patchStatus = "in-progress";
+      } else if (status === "ready-for-reporting") {
+        patchStatus = "completed";
+      }
+
+      await api.patch(`/orders/${orderId}`, {
+        status: patchStatus,
+        ...(patchNotes ? { notes: patchNotes } : {}),
+      });
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["orders-today"] }),
+        queryClient.invalidateQueries({ queryKey: ["radiographer", "orders"] }),
+      ]);
+    } catch (err) {
+      console.warn("Failed to update check-in status:", err);
+    }
   }
 
   function quickCheckIn(patient: Patient) {
-    setCheckIns((prev) => {
-      if (prev.some((c) => c.patient.id === patient.id)) {
-        return prev.map((c) =>
-          c.patient.id === patient.id ? { ...c, status: "checked-in" as CheckInStatus } : c,
-        );
-      }
-      return [
-        ...prev,
-        { patient, status: "checked-in" as CheckInStatus, checkInTime: new Date().toISOString() },
-      ];
-    });
+    setCheckingInPatient(patient);
   }
 
-  const waitingCount = checkIns.filter((c) => c.status === "waiting").length;
-  const checkedInCount = checkIns.filter((c) => c.status === "checked-in" || c.status === "in-exam").length;
-  const completedCount = checkIns.filter((c) => c.status === "completed").length;
+  async function submitQuickCheckIn(e: FormEvent) {
+    e.preventDefault();
+    if (!checkingInPatient) return;
+    try {
+      await api.post("/orders", {
+        patientId: checkingInPatient.patientId,
+        patientName: `${checkingInPatient.firstName} ${checkingInPatient.lastName}`,
+        modality: orderForm.modality,
+        bodyPart: orderForm.bodyPart,
+        priority: orderForm.priority,
+        status: "scheduled",
+        notes: "Checked In",
+        scheduledDate: new Date().toISOString(),
+      });
+      setCheckingInPatient(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["orders-today"] }),
+        queryClient.invalidateQueries({ queryKey: ["radiographer", "orders"] }),
+      ]);
+    } catch (err) {
+      console.warn("Failed to create walk-in check-in order:", err);
+    }
+  }
+
+  const waitingCount = checkIns.filter((c) => c.status === "scheduled").length;
+  const checkedInCount = checkIns.filter((c) => ["checked-in", "in-progress", "images-uploaded", "qc-pending", "qc-passed", "retake-required"].includes(c.status)).length;
+  const completedCount = checkIns.filter((c) => c.status === "ready-for-reporting").length;
 
   return (
     <div className="min-h-screen bg-tdai-background">
@@ -321,26 +429,26 @@ export function ReceptionistDashboard() {
                               : "Walk-in"}
                           </td>
                           <td className="table-cell">
-                            <span className={`badge ${statusStyle[entry.status]}`}>{statusLabel[entry.status]}</span>
+                            <span className={`badge ring-1 ${WORKFLOW_BADGE[entry.status]}`}>{WORKFLOW_LABEL[entry.status]}</span>
                           </td>
                           <td className="table-cell">
                             <div className="flex items-center gap-1.5">
-                              {entry.status === "waiting" && (
-                                <button className="btn-primary !rounded-lg !px-3 !py-1.5 text-xs" onClick={() => updateCheckInStatus(entry.patient.id, "checked-in")}>
+                              {entry.status === "scheduled" && entry.appointmentOrder && (
+                                <button className="btn-primary !rounded-lg !px-3 !py-1.5 text-xs" onClick={() => handleUpdateCheckInStatus(entry.appointmentOrder!.id, "checked-in")}>
                                   Check In
                                 </button>
                               )}
-                              {entry.status === "checked-in" && (
-                                <button className="inline-flex items-center gap-1.5 rounded-lg border border-tdai-teal-200 bg-tdai-teal-50 px-3 py-1.5 text-xs font-medium text-tdai-teal-700 transition-all duration-150 hover:bg-tdai-teal-100 hover:border-tdai-teal-300 hover:shadow-sm" onClick={() => updateCheckInStatus(entry.patient.id, "in-exam")}>
+                              {entry.status === "checked-in" && entry.appointmentOrder && (
+                                <button className="inline-flex items-center gap-1.5 rounded-lg border border-tdai-teal-200 bg-tdai-teal-50 px-3 py-1.5 text-xs font-medium text-tdai-teal-700 transition-all duration-150 hover:bg-tdai-teal-100 hover:border-tdai-teal-300 hover:shadow-sm" onClick={() => handleUpdateCheckInStatus(entry.appointmentOrder!.id, "in-progress")}>
                                   Start Exam
                                 </button>
                               )}
-                              {entry.status === "in-exam" && (
-                                <button className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 transition-all duration-150 hover:bg-emerald-100 hover:border-emerald-300 hover:shadow-sm" onClick={() => updateCheckInStatus(entry.patient.id, "completed")}>
+                              {entry.status === "in-progress" && entry.appointmentOrder && (
+                                <button className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 transition-all duration-150 hover:bg-emerald-100 hover:border-emerald-300 hover:shadow-sm" onClick={() => handleUpdateCheckInStatus(entry.appointmentOrder!.id, "ready-for-reporting")}>
                                   Complete
                                 </button>
                               )}
-                              {entry.status === "completed" && (
+                              {entry.status === "ready-for-reporting" && (
                                 <span className="flex items-center gap-1 text-xs text-emerald-600">
                                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
                                   Done
@@ -500,6 +608,80 @@ export function ReceptionistDashboard() {
           </div>
         )}
       </div>
+      {checkingInPatient && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-fade-in"
+          onClick={() => setCheckingInPatient(null)}
+        >
+          <div
+            className="w-full max-w-md mx-4 rounded-xl bg-white p-6 shadow-2xl animate-slide-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-bold text-tdai-navy-800">Check In Patient: {checkingInPatient.firstName} {checkingInPatient.lastName}</h3>
+            <p className="mt-1 text-xs text-tdai-gray-500">Create an imaging order to send this patient to the Radiographer Workstation.</p>
+            
+            <form onSubmit={submitQuickCheckIn} className="mt-4 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-tdai-gray-600">Modality</label>
+                <select
+                  className="select-field mt-1 w-full"
+                  value={orderForm.modality}
+                  onChange={(e) => setOrderForm({ ...orderForm, modality: e.target.value })}
+                >
+                  <option value="XR">XR - X-Ray</option>
+                  <option value="CR">CR - Computed Radiography</option>
+                  <option value="DX">DX - Digital Radiography</option>
+                  <option value="MG">MG - Mammography</option>
+                  <option value="CT">CT - Computed Tomography</option>
+                  <option value="MR">MR - Magnetic Resonance</option>
+                  <option value="US">US - Ultrasound</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-tdai-gray-600">Body Part</label>
+                <input
+                  type="text"
+                  className="input-field mt-1"
+                  placeholder="e.g. Chest, Abdomen, Knee"
+                  value={orderForm.bodyPart}
+                  onChange={(e) => setOrderForm({ ...orderForm, bodyPart: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-tdai-gray-600">Priority</label>
+                <select
+                  className="select-field mt-1 w-full"
+                  value={orderForm.priority}
+                  onChange={(e) => setOrderForm({ ...orderForm, priority: e.target.value as any })}
+                >
+                  <option value="routine">Routine</option>
+                  <option value="urgent">Urgent</option>
+                  <option value="stat">STAT</option>
+                </select>
+              </div>
+
+              <div className="mt-5 flex justify-end gap-2 border-t border-tdai-border pt-4">
+                <button
+                  type="button"
+                  className="btn-secondary text-xs"
+                  onClick={() => setCheckingInPatient(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary text-xs"
+                >
+                  Confirm & Check In
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

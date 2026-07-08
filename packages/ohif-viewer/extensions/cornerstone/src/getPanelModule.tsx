@@ -221,6 +221,7 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
      * ═══════════════════════════════════════════════════════════════════ */
     const cropRectRef = useRef<{x1:number,y1:number,x2:number,y2:number}|null>(null);
     const cropOverlayRef = useRef<HTMLCanvasElement|null>(null);
+    const cropMaskOverlayRef = useRef<HTMLCanvasElement|null>(null);
 
     const getActiveViewport = () => {
       try {
@@ -307,34 +308,13 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
 
     const handleCropApply = () => {
       const viewport = getActiveViewport();
-      if (!viewport) return;
+      if (!viewport?.canvas) return;
+      const viewportEl = viewport.canvas.parentElement as HTMLElement;
+      if (!viewportEl) return;
 
       const rect = cropRectRef.current;
-      if (rect && (rect.x2 - rect.x1) > 10 && (rect.y2 - rect.y1) > 10) {
-        const canvas = cropOverlayRef.current;
-        const canvasDisplayW = canvas?.getBoundingClientRect().width || viewport.canvas.clientWidth;
-        const canvasDisplayH = canvas?.getBoundingClientRect().height || viewport.canvas.clientHeight;
-        const csW = viewport.canvas.width;
-        const csH = viewport.canvas.height;
-        // Scale drawn pixel coords to Cornerstone canvas coords
-        const scaleX = csW / canvasDisplayW;
-        const scaleY = csH / canvasDisplayH;
-        const csX1 = rect.x1 * scaleX, csY1 = rect.y1 * scaleY;
-        const csX2 = rect.x2 * scaleX, csY2 = rect.y2 * scaleY;
-        const boxW = csX2 - csX1, boxH = csY2 - csY1;
-        const camera = viewport.getCamera();
-        if (camera?.parallelScale) {
-          const newScale = Math.max(
-            camera.parallelScale * boxW / csW,
-            camera.parallelScale * boxH / csH
-          );
-          const mid = viewport.canvasToWorld([(csX1 + csX2) / 2, (csY1 + csY2) / 2, 0] as [number,number,number]);
-          viewport.setCamera({ parallelScale: newScale, focalPoint: mid });
-          viewport.render();
-        }
-      }
 
-      // Remove drawing overlay, restore pointer events
+      // Remove drawing overlay
       if (cropOverlayRef.current) {
         const listeners = (cropOverlayRef.current as any).__tdaiListeners;
         if (listeners) {
@@ -345,6 +325,32 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
         cropOverlayRef.current.remove();
         cropOverlayRef.current = null;
       }
+
+      if (rect && (rect.x2 - rect.x1) > 10 && (rect.y2 - rect.y1) > 10) {
+        // Create permanent crop mask overlay
+        cropMaskOverlayRef.current?.remove();
+        const mask = document.createElement('canvas');
+        mask.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:15;';
+        mask.style.width = '100%';
+        mask.style.height = '100%';
+        mask.width = viewport.canvas.clientWidth || viewport.canvas.width;
+        mask.height = viewport.canvas.clientHeight || viewport.canvas.height;
+        viewportEl.appendChild(mask);
+        cropMaskOverlayRef.current = mask;
+
+        const ctx = mask.getContext('2d')!;
+        const w = mask.width, h = mask.height;
+
+        // Fill entire canvas black
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, w, h);
+
+        // Cut out the drawn rectangular region (make it transparent)
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.fillRect(rect.x1, rect.y1, rect.x2 - rect.x1, rect.y2 - rect.y1);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
       viewport.canvas.style.pointerEvents = '';
       setCropState('applied');
       setActiveTool(null);
@@ -353,13 +359,15 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
     const handleCropReset = () => {
       const viewport = getActiveViewport();
       if (viewport) {
-        viewport.resetCamera();
-        viewport.render();
         viewport.canvas.style.pointerEvents = '';
       }
       if (cropOverlayRef.current) {
         cropOverlayRef.current.remove();
         cropOverlayRef.current = null;
+      }
+      if (cropMaskOverlayRef.current) {
+        cropMaskOverlayRef.current.remove();
+        cropMaskOverlayRef.current = null;
       }
       cropRectRef.current = null;
       setCropState('idle');

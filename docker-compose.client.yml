@@ -38,18 +38,21 @@ services:
   # -- PACS / Imaging --------------------------------------------------------
 
   orthanc:
-    image: orthancteam/orthanc:latest
+    image: tdai-orthanc-custom:latest
     container_name: orthanc
     restart: unless-stopped
     ports:
       - "${ORTHANC_HTTP_PORT:-8042}:8042"
       - "${ORTHANC_DICOM_PORT:-4242}:4242"
+      - "11115:11115"
     volumes:
       - orthanc-storage:/var/lib/orthanc/db
       - ./orthanc.json:/etc/orthanc/orthanc.json:ro
+      - ./worklist.py:/etc/orthanc/worklist.py:ro
     environment:
       VERBOSE_ENABLED: "false"
       DICOM_WEB_PLUGIN_ENABLED: "true"
+      PYTHON_PLUGIN_ENABLED: "true"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8042/system"]
       interval: 15s
@@ -251,6 +254,8 @@ services:
     restart: unless-stopped
     ports:
       - "${OHIF_PORT:-3000}:443"
+    volumes:
+      - ./default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       orthanc:
         condition: service_started

@@ -19,9 +19,10 @@ import {
   X,
   Search,
   CalendarRange,
+  Edit2,
   type LucideIcon,
 } from "lucide-react";
-import type { OrderPriority, OrderStatus, RadiologyOrder } from "@medical-report-system/shared";
+import type { OrderPriority, OrderStatus, RadiologyOrder, Gender, Patient } from "@medical-report-system/shared";
 import { api } from "../api/client";
 import type { QcStatus, WorklistStudy } from "../types/worklist";
 import { DicomUpload } from "./DicomUpload";
@@ -31,6 +32,7 @@ import { useSearchParams } from "react-router-dom";
 
 type WorkflowStatus =
   | "scheduled"
+  | "checked-in"
   | "in-progress"
   | "images-uploaded"
   | "qc-pending"
@@ -94,6 +96,7 @@ const EMPTY_QC: QcChecklist = {
 
 const WORKFLOW_LABEL: Record<WorkflowStatus, string> = {
   scheduled: "Scheduled",
+  "checked-in": "Checked In",
   "in-progress": "In Progress",
   "images-uploaded": "Images Uploaded",
   "qc-pending": "QC Pending",
@@ -104,6 +107,7 @@ const WORKFLOW_LABEL: Record<WorkflowStatus, string> = {
 
 const WORKFLOW_BADGE: Record<WorkflowStatus, string> = {
   scheduled: "bg-sky-50 text-sky-700 ring-sky-200",
+  "checked-in": "bg-blue-50 text-blue-700 ring-blue-200",
   "in-progress": "bg-amber-50 text-amber-700 ring-amber-200",
   "images-uploaded": "bg-indigo-50 text-indigo-700 ring-indigo-200",
   "qc-pending": "bg-orange-50 text-orange-700 ring-orange-200",
@@ -154,6 +158,7 @@ function workflowStatusFor(row: { order?: RadiologyOrder; study?: WorklistStudy 
   if (row.study?.viewerUrl) return "images-uploaded";
   if (row.order?.status === "in-progress") return "in-progress";
   if (row.order?.status === "completed") return "ready-for-reporting";
+  if (row.order?.notes === "Checked In") return "checked-in";
   return "scheduled";
 }
 
@@ -261,6 +266,124 @@ export function RadiographerWorkstation() {
   const [customRejectReason, setCustomRejectReason] = useState("");
   const showWorkflowPanel = false;
 
+  const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
+  const [showRegisterPatient, setShowRegisterPatient] = useState(false);
+  const [editPatientId, setEditPatientId] = useState<string | null>(null);
+  const [regForm, setRegForm] = useState({ patientId: "", firstName: "", lastName: "", dateOfBirth: "", gender: "M" as Gender, phone: "", email: "", address: "" });
+  const [regError, setRegError] = useState<string | null>(null);
+  const [regSuccess, setRegSuccess] = useState<string | null>(null);
+  const [regSubmitting, setRegSubmitting] = useState(false);
+
+  const patientsQuery = useQuery({
+    queryKey: ["radiographer", "patients"],
+    queryFn: async () => {
+      const res = await api.get<Patient[]>("/patients");
+      return res.data;
+    },
+  });
+
+  const knownPatients = useMemo(() => {
+    const map = new Map<string, Patient>();
+    for (const p of patientsQuery.data ?? []) {
+      map.set(p.patientId.trim().toUpperCase(), p);
+    }
+    return map;
+  }, [patientsQuery.data]);
+
+  function resetRegForm() {
+    setRegForm({ patientId: "", firstName: "", lastName: "", dateOfBirth: "", gender: "M", phone: "", email: "", address: "" });
+    setRegError(null);
+    setRegSuccess(null);
+    setEditPatientId(null);
+  }
+
+  function startRegisterPatient() {
+    resetRegForm();
+    setShowRegisterPatient(true);
+  }
+
+  function startEditPatient(row: ExamRow) {
+    resetRegForm();
+    const mrnKey = row.mrn.trim().toUpperCase();
+    const p = knownPatients.get(mrnKey);
+    if (p) {
+      setRegForm({
+        patientId: p.patientId,
+        firstName: p.firstName,
+        lastName: p.lastName,
+        dateOfBirth: p.dateOfBirth,
+        gender: p.gender,
+        phone: p.phone ?? "",
+        email: p.email ?? "",
+        address: p.address ?? "",
+      });
+      setEditPatientId(p.id);
+    } else {
+      const names = row.patientName.split(" ");
+      const first = names[0] || "Unknown";
+      const last = names.slice(1).join(" ") || "Patient";
+      setRegForm({
+        patientId: row.mrn !== "-" ? row.mrn : "",
+        firstName: first,
+        lastName: last,
+        dateOfBirth: (row.studyRecord?.metadata?.patientDateOfBirth as string) || "",
+        gender: "M",
+        phone: "",
+        email: "",
+        address: "",
+      });
+      setEditPatientId(null);
+    }
+    setShowRegisterPatient(true);
+  }
+
+  async function handleRegisterPatient(e: React.FormEvent) {
+    e.preventDefault();
+    setRegError(null);
+    setRegSuccess(null);
+    if (!regForm.dateOfBirth) {
+      setRegError("Date of birth is required.");
+      return;
+    }
+    setRegSubmitting(true);
+    try {
+      const payload = {
+        patientId: regForm.patientId.trim().toUpperCase(),
+        firstName: regForm.firstName.trim(),
+        lastName: regForm.lastName.trim(),
+        dateOfBirth: regForm.dateOfBirth,
+        gender: regForm.gender,
+        phone: regForm.phone.trim() || undefined,
+        email: regForm.email.trim() || undefined,
+        address: regForm.address.trim() || undefined,
+      };
+      if (editPatientId) {
+        await api.patch(`/patients/${editPatientId}`, payload);
+        setRegSuccess("Patient updated successfully!");
+      } else {
+        await api.post("/patients", payload);
+        setRegSuccess("Patient registered successfully!");
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["radiographer", "patients"] }),
+        refreshWorkflow(),
+      ]);
+      setTimeout(() => {
+        setShowRegisterPatient(false);
+        resetRegForm();
+      }, 1500);
+    } catch (err: any) {
+      const respError = err?.response?.data?.error;
+      if (Array.isArray(respError)) {
+        setRegError(respError.map((e: any) => `${e.path.join(".")}: ${e.message}`).join(", "));
+      } else {
+        setRegError(respError ?? err.message ?? "Failed to save patient");
+      }
+    } finally {
+      setRegSubmitting(false);
+    }
+  }
+
   const ordersQuery = useQuery({
     queryKey: ["radiographer", "orders"],
     queryFn: async () => {
@@ -328,6 +451,7 @@ export function RadiographerWorkstation() {
   const summary = useMemo(() => {
     const result: Record<WorkflowStatus, number> = {
       scheduled: 0,
+      "checked-in": 0,
       "in-progress": 0,
       "images-uploaded": 0,
       "qc-pending": 0,
@@ -433,6 +557,12 @@ export function RadiographerWorkstation() {
   function submitReject() {
     const reason = rejectReason === "Other" ? customRejectReason.trim() : rejectReason;
     if (!reason) return;
+    if (selectedRow?.order) {
+      updateOrderMutation.mutate({
+        orderId: selectedRow.order.id,
+        patch: { status: "scheduled" as OrderStatus, notes: "Reject / Retake Required" },
+      });
+    }
     patchSelectedStudy({
       qcStatus: "fail",
       qcResult: "rejected",
@@ -451,6 +581,12 @@ export function RadiographerWorkstation() {
   function submitRetake() {
     const reason = retakeReason === "Other" ? customRetakeReason.trim() : retakeReason;
     if (!reason) return;
+    if (selectedRow?.order) {
+      updateOrderMutation.mutate({
+        orderId: selectedRow.order.id,
+        patch: { status: "scheduled" as OrderStatus, notes: "Retake Required" },
+      });
+    }
     patchSelectedStudy({
       isRepeat: true,
       repeatReason: reason,
@@ -483,6 +619,12 @@ export function RadiographerWorkstation() {
       approveStudy();
     } else if (action === "reject") {
       const reason = payload?.reason || "Poor Image Quality";
+      if (selectedRow?.order) {
+        updateOrderMutation.mutate({
+          orderId: selectedRow.order.id,
+          patch: { status: "scheduled" as OrderStatus, notes: "Reject / Retake Required" },
+        });
+      }
       patchSelectedStudy({
         qcStatus: "fail",
         qcResult: "rejected",
@@ -795,6 +937,23 @@ export function RadiographerWorkstation() {
             </div>
 
             <div className="flex items-center gap-2">
+              <button
+                className="btn-primary !h-9 text-xs"
+                onClick={startRegisterPatient}
+              >
+                Register Patient
+              </button>
+              <button
+                className="btn-secondary !h-9 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!highlightedRowId}
+                onClick={() => {
+                  const row = filteredRows.find((r) => r.id === highlightedRowId);
+                  if (row) startEditPatient(row);
+                }}
+              >
+                <Edit2 className="h-3.5 w-3.5" />
+                Edit Patient
+              </button>
               <button className="btn-secondary !h-9 text-xs" onClick={() => void refreshWorkflow()}>
                 <RefreshCw className="h-3.5 w-3.5" />
                 Refresh
@@ -828,7 +987,13 @@ export function RadiographerWorkstation() {
                 </thead>
                 <tbody className="divide-y divide-tdai-gray-100">
                   {filteredRows.map((row) => (
-                    <tr key={row.id} className="hover:bg-tdai-gray-50/50 transition-colors">
+                    <tr
+                      key={row.id}
+                      className={`hover:bg-tdai-gray-50/50 transition-colors cursor-pointer ${
+                        highlightedRowId === row.id ? "bg-tdai-teal-500/10 hover:bg-tdai-teal-500/15" : ""
+                      }`}
+                      onClick={() => setHighlightedRowId(highlightedRowId === row.id ? null : row.id)}
+                    >
                       <td className="px-5 py-4 font-semibold text-tdai-navy-800">{row.patientName}</td>
                       <td className="px-5 py-4 font-mono text-xs text-tdai-gray-500">{row.mrn}</td>
                       <td className="px-5 py-4 text-tdai-navy-700">{row.study}</td>
@@ -844,7 +1009,7 @@ export function RadiographerWorkstation() {
                         <span className={`badge ring-1 ${WORKFLOW_BADGE[row.status]}`}>{WORKFLOW_LABEL[row.status]}</span>
                       </td>
                       <td className="px-5 py-4 text-tdai-gray-600">{row.scheduledTime}</td>
-                      <td className="px-5 py-4 text-right">
+                      <td className="px-5 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1.5">
                           <button className="btn-primary !h-8 !px-3 !py-1 text-[11px]" onClick={() => void startExam(row)}>
                             {row.status === "scheduled" ? "Start Exam" : "Resume Exam"}
@@ -869,12 +1034,7 @@ export function RadiographerWorkstation() {
             </div>
           </section>
 
-          {/* Quick Notification Tiles */}
-          <section className="grid gap-3 md:grid-cols-3">
-            <NotificationTile title="Retake Required" count={summary["retake-required"]} tone="red" />
-            <NotificationTile title="QC Pending" count={summary["qc-pending"]} tone="amber" />
-            <NotificationTile title="STAT Cases" count={rows.filter((row) => row.priority === "stat" || row.priority === "emergency").length} tone="red" />
-          </section>
+
         </div>
       </div>
     );
@@ -919,6 +1079,143 @@ export function RadiographerWorkstation() {
               <button className="btn-secondary" onClick={() => setRejectOpen(false)}>Cancel</button>
               <button className="btn-danger bg-red-600 hover:bg-red-500" onClick={submitReject}>Confirm Reject</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Register / Edit Patient Modal ───────── */}
+      {showRegisterPatient && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-fade-in"
+          onClick={() => { setShowRegisterPatient(false); resetRegForm(); }}
+        >
+          <div
+            className="w-full max-w-xl mx-4 max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl animate-slide-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-tdai-border px-6 py-4">
+              <div>
+                <h2 className="text-lg font-semibold text-tdai-text">
+                  {editPatientId ? "Edit Patient Details" : "Register New Patient"}
+                </h2>
+                <p className="text-xs text-tdai-muted mt-0.5">Fields marked with * are required</p>
+              </div>
+              <button
+                className="rounded-lg p-1.5 text-tdai-muted hover:bg-tdai-surface-alt hover:text-tdai-text transition-colors"
+                onClick={() => { setShowRegisterPatient(false); resetRegForm(); }}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form className="overflow-y-auto p-6" onSubmit={handleRegisterPatient}>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">MRN / Patient ID *</label>
+                  <input
+                    className="input-field"
+                    placeholder="e.g. MRN-001"
+                    value={regForm.patientId}
+                    onChange={(e) => setRegForm({ ...regForm, patientId: e.target.value })}
+                    required
+                    disabled={!!editPatientId}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Gender</label>
+                  <select
+                    className="select-field w-full"
+                    value={regForm.gender}
+                    onChange={(e) => setRegForm({ ...regForm, gender: e.target.value as Gender })}
+                  >
+                    <option value="M">Male</option>
+                    <option value="F">Female</option>
+                    <option value="O">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">First Name *</label>
+                  <input
+                    className="input-field"
+                    placeholder="First name"
+                    value={regForm.firstName}
+                    onChange={(e) => setRegForm({ ...regForm, firstName: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Last Name *</label>
+                  <input
+                    className="input-field"
+                    placeholder="Last name"
+                    value={regForm.lastName}
+                    onChange={(e) => setRegForm({ ...regForm, lastName: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Date of Birth *</label>
+                  <input
+                    className="input-field input-date"
+                    type="date"
+                    max={new Date().toISOString().slice(0, 10)}
+                    value={regForm.dateOfBirth}
+                    onChange={(e) => setRegForm({ ...regForm, dateOfBirth: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Phone</label>
+                  <input
+                    className="input-field"
+                    type="tel"
+                    placeholder="Phone number"
+                    value={regForm.phone}
+                    onChange={(e) => setRegForm({ ...regForm, phone: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Email</label>
+                  <input
+                    className="input-field"
+                    type="email"
+                    placeholder="Email address"
+                    value={regForm.email}
+                    onChange={(e) => setRegForm({ ...regForm, email: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-tdai-secondary">Address</label>
+                  <input
+                    className="input-field"
+                    placeholder="Address"
+                    value={regForm.address}
+                    onChange={(e) => setRegForm({ ...regForm, address: e.target.value })}
+                  />
+                </div>
+              </div>
+              {regError && (
+                <p className="mt-4 rounded-xl border border-tdai-red-200 bg-tdai-red-50 px-4 py-2.5 text-sm text-tdai-red-700">
+                  {regError}
+                </p>
+              )}
+              {regSuccess && (
+                <p className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-700">
+                  {regSuccess}
+                </p>
+              )}
+              <div className="mt-6 flex gap-3 border-t border-tdai-border pt-6">
+                <button className="btn-primary !rounded-lg !px-5 !py-2.5" type="submit" disabled={regSubmitting}>
+                  {regSubmitting ? "Saving…" : editPatientId ? "Save Changes" : "Register Patient"}
+                </button>
+                <button
+                  className="btn-secondary !rounded-lg !px-5 !py-2.5"
+                  type="button"
+                  onClick={() => { setShowRegisterPatient(false); resetRegForm(); }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

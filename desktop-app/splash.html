@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #ffffff;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      overflow: hidden;
+      box-sizing: border-box;
+      border: 1px solid #e2e8f0;
+      -webkit-app-region: drag;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      padding: 24px;
+      width: 100%;
+      height: 100%;
+      justify-content: space-between;
+      box-sizing: border-box;
+    }
+
+    .brand-section {
+      margin-top: 20px;
+    }
+
+    .logo-text {
+      font-size: 28px;
+      font-weight: 800;
+      color: #0f172a;
+      letter-spacing: -0.5px;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .logo-accent {
+      color: #0d9488; /* teal color matching our theme */
+    }
+
+    .subtitle {
+      font-size: 11px;
+      font-weight: 600;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      margin: 6px 0 0 0;
+    }
+
+    .loading-section {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 80%;
+      margin-bottom: 20px;
+    }
+
+    /* CSS Spinner */
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3.5px solid #f1f5f9;
+      border-top: 3.5px solid #0d9488;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-bottom: 20px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .status-text {
+      font-size: 12px;
+      font-weight: 500;
+      color: #334155;
+      margin: 0;
+      min-height: 36px;
+      line-height: 1.5;
+      white-space: pre-line;
+    }
+
+    /* Pulsing progress bar */
+    .progress-track {
+      width: 100%;
+      height: 4px;
+      background: #e2e8f0;
+      border-radius: 2px;
+      margin-top: 16px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 40%;
+      background: linear-gradient(90deg, #0d9488, #0ea5e9);
+      border-radius: 2px;
+      position: absolute;
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0% { left: -40%; }
+      100% { left: 100%; }
+    }
+
+    .footer {
+      font-size: 9px;
+      font-weight: 600;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="brand-section">
+      <h1 class="logo-text">TD<span class="logo-accent">|ai</span></h1>
+      <p class="subtitle">Smart Radiology Workstation</p>
+    </div>
+
+    <div class="loading-section">
+      <div class="spinner"></div>
+      <p id="status" class="status-text">Initializing services...</p>
+      <div class="progress-track">
+        <div class="progress-bar"></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      Powered by Trivitron Healthcare
+    </div>
+  </div>
+</body>
+</html>
