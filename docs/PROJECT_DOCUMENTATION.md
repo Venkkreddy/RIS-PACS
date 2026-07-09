@@ -2,9 +2,13 @@
 
 ## Medical Imaging Platform: Integrated RIS + PACS + AI
 
-**Version:** 0.1.0  
-**Last updated:** April 2026  
+**Version:** 0.2.0  
+**Last updated:** 9 July 2026  
 **Repository:** `tdai-main/metupalle-jpg/tdai`
+
+> **Session: 9 July 2026** — Smart Patient Intake system built (AI-powered DICOM tag generator).
+> New files: `intake_service.py`, `intake.ts` (backend proxy), `SmartIntake.tsx` (frontend modal).
+> See Section 12 for full AI Services reference.
 
 ---
 
@@ -1689,3 +1693,95 @@ npm run test
 
 *TD|ai — Traditional Diagnostics powered by Artificial Intelligence*  
 *Trivitron Digital*
+
+---
+
+## Smart Patient Intake System (Added: 9 July 2026)
+
+### Overview
+
+The Smart Patient Intake is an AI-powered DICOM tag generator built for the Radiographer Workstation.
+A radiographer types (or speaks) a free-text complaint, and the system automatically fills all DICOM tags in ~5 seconds.
+
+### Architecture
+
+```
+Radiographer types: "right knee pain after fall"
+           ↓
+Frontend: SmartIntake.tsx (modal, 4 screens)
+           ↓
+Backend Proxy: POST /intake/analyze  (intake.ts)
+           ↓
+AI Service: IntakeAIService (intake_service.py in medasr-server)
+           ↓  tries AI first
+BioMistral 7B via Ollama → returns JSON DICOM tags
+           ↓  fallback if AI unavailable
+RuleBasedIntake (keyword matching, covers 80% of cases)
+           ↓
+Result: body_part_examined, laterality, view_positions, ICD-10, urgency
+           ↓
+Confirm → Creates/Updates RadiologyOrder in Firestore
+```
+
+### AI Engine Configuration
+
+| Env Variable | Default | Description |
+|---|---|---|
+| `INTAKE_AI_ENGINE` | `ollama` | `ollama`, `kompact_ai`, or `rule_based` |
+| `INTAKE_AI_MODEL` | `biomistral:7b` | Any model compatible with Ollama |
+| `INTAKE_AI_URL` | `http://localhost:11434` | Ollama or Kompact AI base URL |
+
+**Phase 1** (now): BioMistral 7B via Ollama  
+**Phase 2** (Kompact AI arrives): Change `INTAKE_AI_ENGINE=kompact_ai` and `INTAKE_AI_URL` — zero code changes.
+
+### API Endpoint
+
+```
+POST /intake/analyze
+Body: { complaint, patient_age?, patient_sex?, laterality_answer? }
+Returns: {
+  body_part_examined, laterality, study_description,
+  view_positions, series_descriptions, reason_for_exam,
+  icd10_codes, urgency, follow_up_needed, follow_up_question,
+  source ("ai" | "rule_based")
+}
+```
+
+### Frontend UX (SmartIntake.tsx)
+
+| Screen | Description |
+|---|---|
+| Screen 1 | Input: name, age, sex, complaint text + 🎤 voice button |
+| Screen 2 | AI Results: body part, views, ICD-10, urgency badge |
+| Follow-up | If laterality missing: `[LEFT]` `[RIGHT]` `[BOTH SIDES]` buttons |
+| Screen 3 | Edit mode: override any field (body part dropdown, add/remove views) |
+| STAT banner | Red banner if urgency = stat |
+| Screen 4 | Done: "Study Created/Updated. Device worklist updated." |
+
+### Voice Pipeline Integration
+
+```
+Radiographer speaks (5s) → MedASR transcribes (2s) → BioMistral analyzes (2s)
+→ All DICOM tags filled → 1-click confirm
+Total: ~10 seconds from speech to study created
+```
+
+### Files Added
+
+| File | Purpose |
+|---|---|
+| `packages/medasr-server/intake_service.py` | Python AI + rule-based fallback + FastAPI router |
+| `packages/reporting-app/backend/src/routes/intake.ts` | Node.js proxy → medasr-server |
+| `packages/reporting-app/frontend/src/components/SmartIntake.tsx` | Full modal UI component |
+| `packages/reporting-app/backend/src/app.ts` | Registered `/intake` route |
+| `packages/reporting-app/frontend/src/components/RadiographerWorkstation.tsx` | Added `⚡ Smart Intake` toolbar button + per-row `⚡ Intake` button |
+
+### Buttons Added to Radiographer Workstation
+
+- **Toolbar**: `⚡ Smart Intake` — opens intake for a new walk-in patient  
+- **Per-row**: `⚡ Intake` — opens intake pre-filled with that patient's data, updates their existing order
+
+### Dual Mode (Option C)
+
+- **Walk-in**: no pre-selected row → creates brand-new `RadiologyOrder` via `POST /orders`  
+- **Existing order**: row selected → updates via `PATCH /orders/:id` + `PATCH /worklist/:id/fields` with full triage metadata

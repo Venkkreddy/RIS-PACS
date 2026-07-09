@@ -28,6 +28,7 @@ from llm_correction import MedGemmaCorrector, RadiologyReport
 from medical_dictionary import MedicalDictionary
 from report_structurer import ReportStructurer
 from config import settings
+from intake_service import intake_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("medasr-server")
@@ -451,6 +452,10 @@ async def correct_transcript(transcript: str = Form(...)):
         "impression": "Clinical correlation recommended.",
         "corrections_applied": ["MedGemma unavailable — raw transcript used"],
     }
+
+
+# ── Intake AI router (Smart Patient Intake) ─────────────────────────────────
+app.include_router(intake_router)
 
 
 if __name__ == "__main__":

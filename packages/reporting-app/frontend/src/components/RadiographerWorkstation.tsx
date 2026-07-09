@@ -27,6 +27,8 @@ import { api } from "../api/client";
 import type { QcStatus, WorklistStudy } from "../types/worklist";
 import { DicomUpload } from "./DicomUpload";
 import { OhifViewerEmbed } from "./OhifViewerEmbed";
+import { SmartIntake } from "./SmartIntake";
+import type { IntakeResult } from "./SmartIntake";
 import { useAuthRole } from "../hooks/useAuthRole";
 import { useSearchParams } from "react-router-dom";
 
@@ -268,6 +270,8 @@ export function RadiographerWorkstation() {
 
   const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
   const [showRegisterPatient, setShowRegisterPatient] = useState(false);
+  const [showSmartIntake, setShowSmartIntake] = useState(false);
+  const [smartIntakeRow, setSmartIntakeRow] = useState<ExamRow | null>(null);
   const [editPatientId, setEditPatientId] = useState<string | null>(null);
   const [regForm, setRegForm] = useState({ patientId: "", firstName: "", lastName: "", dateOfBirth: "", gender: "M" as Gender, phone: "", email: "", address: "" });
   const [regError, setRegError] = useState<string | null>(null);
@@ -938,6 +942,12 @@ export function RadiographerWorkstation() {
 
             <div className="flex items-center gap-2">
               <button
+                className="btn-primary !h-9 text-xs bg-gradient-to-r from-tdai-teal-700 to-tdai-navy-700 border-0"
+                onClick={() => { setSmartIntakeRow(null); setShowSmartIntake(true); }}
+              >
+                ⚡ Smart Intake
+              </button>
+              <button
                 className="btn-primary !h-9 text-xs"
                 onClick={startRegisterPatient}
               >
@@ -1011,6 +1021,13 @@ export function RadiographerWorkstation() {
                       <td className="px-5 py-4 text-tdai-gray-600">{row.scheduledTime}</td>
                       <td className="px-5 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            className="btn-secondary !h-8 !px-3 !py-1 text-[11px] !border-tdai-teal-400 !text-tdai-teal-700 hover:!bg-tdai-teal-50"
+                            onClick={() => { setSmartIntakeRow(row); setShowSmartIntake(true); }}
+                            title="AI-powered intake: auto-fill DICOM tags from complaint"
+                          >
+                            ⚡ Intake
+                          </button>
                           <button className="btn-primary !h-8 !px-3 !py-1 text-[11px]" onClick={() => void startExam(row)}>
                             {row.status === "scheduled" ? "Start Exam" : "Resume Exam"}
                           </button>
@@ -1044,6 +1061,19 @@ export function RadiographerWorkstation() {
     <div className="min-h-screen bg-tdai-background flex flex-col h-screen overflow-hidden">
       {!selectedRow && renderHeader()}
       {content}
+      {showSmartIntake && (
+        <SmartIntake
+          existingOrder={smartIntakeRow?.order}
+          prefilledPatientId={smartIntakeRow?.mrn !== "-" ? smartIntakeRow?.mrn : undefined}
+          prefilledPatientName={smartIntakeRow?.patientName}
+          onConfirmed={(_result: IntakeResult, _orderId: string) => {
+            setShowSmartIntake(false);
+            setSmartIntakeRow(null);
+            void refreshWorkflow();
+          }}
+          onClose={() => { setShowSmartIntake(false); setSmartIntakeRow(null); }}
+        />
+      )}
       {retakeOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setRetakeOpen(false)}>
           <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>

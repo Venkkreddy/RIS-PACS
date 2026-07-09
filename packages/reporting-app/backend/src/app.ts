@@ -29,6 +29,7 @@ import { dicomwebMultiTenantRouter } from "./routes/dicomwebMultiTenant";
 import { permissionsRouter } from "./routes/permissions";
 import { servicesRouter } from "./routes/services";
 import { voiceRouter } from "./routes/voice";
+import { intakeRouter } from "./routes/intake";
 import { radiographerRouter } from "./routes/radiographer";
 import { tenantAuthRouter } from "./routes/tenantAuth";
 import { tenantAdminRouter } from "./routes/tenantAdminPlatform";
@@ -159,6 +160,7 @@ export function createApp(deps?: {
   app.use("/wado", dicomRouter);
   app.use("/permissions", permissionsRouter(store));
   app.use("/voice", voiceRouter());
+  app.use("/intake", intakeRouter());
   app.use("/radiographer", radiographerRouter(store));
   app.use("/", servicesRouter(serviceRegistry, store));
 
