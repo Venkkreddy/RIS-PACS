@@ -1,0 +1,96 @@
+{
+  "id": "ankle_xray",
+  "name": "Ankle X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "ANKLE"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "AP, lateral and mortise views of the {laterality} ankle were obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Bones",
+        "Joints",
+        "Soft Tissues",
+        "Alignment"
+      ],
+      "normal_text": "No fracture or dislocation is identified. The tibiotalar and subtalar joint spaces are maintained. The medial, lateral and posterior malleoli are intact. The mortise is symmetrical. No periarticular soft tissue swelling is identified. Alignment is normal.",
+      "common_findings": [
+        "Fibula fracture",
+        "Medial malleolus fracture",
+        "Posterior malleolus fracture",
+        "Bimalleolar fracture",
+        "Trimalleolar fracture",
+        "Osteochondral defect",
+        "Periarticular soft tissue swelling",
+        "Joint effusion",
+        "Ankle instability signs"
+      ],
+      "medical_terms": [
+        "tibiotalar",
+        "subtalar",
+        "malleolus",
+        "mortise",
+        "fibula",
+        "tibia",
+        "osteochondral",
+        "ligament",
+        "tendon",
+        "effusion",
+        "displaced",
+        "comminuted"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No fracture or dislocation of the {laterality} ankle."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "no fracture, joint space normal, mortise symmetric",
+    "output": {
+      "findings": "No fracture or dislocation is identified. The tibiotalar and subtalar joint spaces are maintained. The mortise is symmetrical. The medial, lateral and posterior malleoli are intact. No periarticular soft tissue swelling. Alignment is normal.",
+      "impression": "No fracture or dislocation of the ankle."
+    }
+  },
+  "few_shot_abnormal": {
+    "input": "distal fibula fracture, soft tissue swelling, mortise widening",
+    "output": {
+      "findings": "There is a fracture of the distal fibula at the level of the ankle joint. The fracture appears undisplaced. Mortise widening is noted, raising concern for syndesmotic injury. Periarticular soft tissue swelling is present.",
+      "impression": "Distal fibula fracture with possible syndesmotic injury. Orthopedic review and further assessment recommended."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm",
+    "displaced",
+    "angulated"
+  ]
+}

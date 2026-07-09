@@ -1,10 +1,11 @@
 """
 MedGemma / Gemini Medical Report Formatting Module
 
-Supports two modes:
-  1. Gemini API key (direct REST) — simplest, works with GEMINI_API_KEY
-  2. Vertex AI SDK — requires GCP project + service account
-  3. Fallback rule-based formatting when neither is available
+Supports these modes (in priority order):
+  1. Ollama (local) — MedGemma 4B / DeepSeek-R1:8b — fully offline, default
+  2. Gemini API key (direct REST) — cloud, optional
+  3. Vertex AI SDK — GCP cloud, optional
+  4. Fallback rule-based formatting — always available
 """
 
 import re
@@ -51,19 +52,79 @@ You MUST respond with valid JSON in this exact format:
 Do not include any text outside the JSON object."""
 
 
-class MedGemmaCorrector:
-    """Routes transcripts to Gemini/MedGemma for medical report formatting.
-
-    Priority: Vertex AI SDK -> Gemini API key -> fallback rule-based
+class LocalOllamaCorrector:
     """
+    Corrects transcripts using a local LLM via Ollama.
+    100% offline — no cloud, no data leaves the network.
+    """
+
+    def __init__(self):
+        self.model = os.getenv("REPORT_AI_MODEL", "medgemma-4b-it")
+        self.base_url = os.getenv("REPORT_AI_URL", "http://localhost:11434")
+        self._available: bool | None = None
+
+    async def correct_and_format(self, transcript: str) -> RadiologyReport:
+        try:
+            from openai import AsyncOpenAI  # type: ignore
+            client = AsyncOpenAI(
+                base_url=f"{self.base_url.rstrip('/')}/v1",
+                api_key="none",
+            )
+            resp = await client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": MEDGEMMA_PROMPT},
+                    {"role": "user", "content": f"Transcript:\n{transcript}"},
+                ],
+                temperature=0.05,
+                max_tokens=2000,
+            )
+            raw = resp.choices[0].message.content or "{}"
+            self._available = True
+            return self._parse(raw, transcript)
+        except Exception as exc:
+            logger.warning("Ollama correction unavailable: %s", exc)
+            self._available = False
+            raise
+
+    @staticmethod
+    def _parse(raw: str, original: str) -> RadiologyReport:
+        import re
+        import json
+        cleaned = re.sub(r"```(?:json)?", "", raw).strip()
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if not match:
+            raise ValueError("No JSON in Ollama response")
+        parsed = json.loads(match.group())
+        return RadiologyReport(
+            findings=parsed.get("findings", ""),
+            impression=parsed.get("impression", ""),
+            raw_input=original,
+            corrections_applied=parsed.get("corrections_applied", ["local-llm"]),
+        )
+
+
+class MedGemmaCorrector:
+    """Routes transcripts to local Ollama → Gemini API → Vertex AI → rule-based fallback."""
 
     def __init__(self):
         self._model = None
         self._mode = "fallback"
+        self._ollama: LocalOllamaCorrector | None = None
         self._client = httpx.AsyncClient(timeout=60.0)
         self._init_backend()
 
     def _init_backend(self):
+        # Priority 1: Local Ollama (always try first for local-only deployments)
+        report_engine = os.getenv("REPORT_AI_ENGINE", "ollama")
+        if report_engine == "ollama":
+            self._ollama = LocalOllamaCorrector()
+            self._mode = "ollama"
+            logger.info("MedGemmaCorrector: using local Ollama (%s @ %s)",
+                        self._ollama.model, self._ollama.base_url)
+            return
+
+        # Priority 2: Vertex AI (cloud)
         if settings.VERTEX_AI_ENABLED and settings.GCP_PROJECT_ID:
             try:
                 import vertexai
@@ -92,6 +153,12 @@ class MedGemmaCorrector:
         logger.info("No Vertex AI or Gemini API key configured — using fallback formatting")
 
     async def correct_and_format(self, transcript: str) -> RadiologyReport:
+        if self._mode == "ollama" and self._ollama:
+            try:
+                return await self._ollama.correct_and_format(transcript)
+            except Exception:
+                logger.warning("Ollama unavailable — falling back to rule-based")
+                return self.fallback_format(transcript)
         if self._mode == "gemini_api":
             return await self._call_gemini_api(transcript)
         elif self._mode == "vertex_ai" and self._model is not None:

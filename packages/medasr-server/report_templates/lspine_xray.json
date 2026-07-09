@@ -1,0 +1,93 @@
+{
+  "id": "lspine_xray",
+  "name": "Lumbar Spine X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "LSPINE",
+    "SPINE"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "AP and lateral views of the lumbar spine were obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Vertebral Bodies",
+        "Disc Spaces",
+        "Alignment",
+        "Neural Foramina",
+        "Soft Tissues"
+      ],
+      "normal_text": "The vertebral bodies show normal height and alignment. No fracture or dislocation is identified. The intervertebral disc spaces are maintained at all levels. The pedicles are intact. No significant spondylolisthesis is identified. The paravertebral soft tissues are unremarkable.",
+      "common_findings": [
+        "L4-L5 disc space narrowing",
+        "L5-S1 disc space narrowing",
+        "Spondylolisthesis L4-L5",
+        "Lumbar spondylosis",
+        "Vertebral body compression fracture",
+        "Osteophytic lipping",
+        "Facet joint arthritis",
+        "Sacralization L5",
+        "Lumbarization S1"
+      ],
+      "medical_terms": [
+        "vertebral body",
+        "intervertebral disc",
+        "disc space",
+        "pedicle",
+        "facet joint",
+        "spondylolisthesis",
+        "spondylosis",
+        "foraminal",
+        "listhesis",
+        "osteophyte",
+        "Schmorl node",
+        "end plate",
+        "lordosis",
+        "kyphosis"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No significant radiological abnormality of the lumbar spine."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "lumbar spine vertebrae normal, disc spaces maintained, no fracture",
+    "output": {
+      "findings": "The vertebral bodies show normal height and alignment. No fracture or dislocation is identified. The intervertebral disc spaces are maintained at all levels. The pedicles are intact. No significant spondylolisthesis is identified. The paravertebral soft tissues are unremarkable.",
+      "impression": "No significant radiological abnormality of the lumbar spine."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm",
+    "grade",
+    "listhesis percentage"
+  ]
+}

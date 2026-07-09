@@ -71,6 +71,19 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [templateCategory, setTemplateCategory] = useState("all");
 
+  // ── AI Fill Report state ─────────────────────────────────────────────────
+  const [showAiPanel, setShowAiPanel] = useState(false);
+  const [aiDictation, setAiDictation] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiSource, setAiSource] = useState<"llm" | "rule_based" | null>(null);
+  const [aiMeasurements, setAiMeasurements] = useState<{ text: string }[]>([]);
+  const [aiTemplateUsed, setAiTemplateUsed] = useState<string | null>(null);
+  // Per-section voice recording
+  const [sectionRecording, setSectionRecording] = useState<string | null>(null);
+  const sectionMediaRef = useRef<MediaRecorder | null>(null);
+  const sectionChunksRef = useRef<Blob[]>([]);
+
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dirtyRef = useRef(false);
 
@@ -189,6 +202,103 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
     setStatusMessage("Marked as reported.");
     onRefresh();
     setTimeout(() => setStatusMessage(null), 3000);
+  }
+
+  // ── AI Fill Report ────────────────────────────────────────────────────────
+  async function fillWithAI() {
+    if (!aiDictation.trim()) return;
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const bodyPart = (report as any).bodyPart ?? (report as any).body_part ?? "CHEST";
+      const modality = (report as any).modality ?? "CR";
+      const laterality = (report as any).laterality ?? undefined;
+      const res = await api.post("/reports/ai/structure", {
+        dictation: aiDictation.trim(),
+        body_part: bodyPart,
+        modality: modality,
+        laterality,
+        patient_name: (report as any).patientName ?? (report as any).patient_name,
+        clinical_history: aiDictation.trim(),
+      });
+      const data = res.data as {
+        sections: { key: string; title: string; content: string; is_signature?: boolean }[];
+        template_name?: string;
+        measurements_extracted?: { text: string }[];
+        source?: "llm" | "rule_based";
+      };
+
+      // Merge AI sections into existing sections
+      setSections((prev) =>
+        prev.map((existing) => {
+          const aiSection = data.sections?.find((s) => s.key === existing.key);
+          if (aiSection && aiSection.content && !aiSection.is_signature) {
+            return { ...existing, content: aiSection.content };
+          }
+          return existing;
+        })
+      );
+
+      setAiSource(data.source ?? "rule_based");
+      setAiTemplateUsed(data.template_name ?? null);
+      setAiMeasurements(data.measurements_extracted ?? []);
+      setShowAiPanel(false);
+      setAiDictation("");
+      markDirty();
+      setStatusMessage(`AI report generated (${data.source === "llm" ? "MedGemma local" : "rule-based"})`);
+      setTimeout(() => setStatusMessage(null), 3000);
+    } catch {
+      setAiError("AI service unavailable. Check that Ollama is running with the report model.");
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  function insertNormalFindings(sectionKey: string) {
+    // Just clear the section content — the AI will fill it.
+    // Or if not using AI, just note it as normal.
+    const normalMap: Record<string, string> = {
+      findings: "No significant abnormality identified.",
+      impression: "Normal study. No significant radiological abnormality.",
+      recommendation: "No immediate follow-up required.",
+      comparison: "No prior studies available for comparison.",
+    };
+    const text = normalMap[sectionKey] ?? "";
+    if (text) updateSection(sectionKey, `<p>${text}</p>`);
+  }
+
+  // ── Per-section voice recording ───────────────────────────────────────────
+  async function startSectionRecording(sectionKey: string) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+      sectionChunksRef.current = [];
+      mr.ondataavailable = (e) => { if (e.data.size > 0) sectionChunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(sectionChunksRef.current, { type: "audio/webm" });
+        if (blob.size < 100) return;
+        try {
+          const fd = new FormData();
+          fd.append("audio", blob, "recording.webm");
+          const res = await api.post<{ raw_transcript?: string; transcript?: string }>("/voice/transcribe", fd, {
+            headers: { "Content-Type": "multipart/form-data" },
+          });
+          const transcript = res.data.raw_transcript ?? res.data.transcript ?? "";
+          if (transcript.trim()) updateSection(sectionKey, `<p>${transcript.trim()}</p>`);
+        } catch { /* voice unavailable */ }
+      };
+      mr.start();
+      sectionMediaRef.current = mr;
+      setSectionRecording(sectionKey);
+    } catch {
+      alert("Microphone access denied.");
+    }
+  }
+
+  function stopSectionRecording() {
+    sectionMediaRef.current?.stop();
+    setSectionRecording(null);
   }
 
   const categories = [...new Set(templates.map((t) => t.category ?? "Other"))];
@@ -336,6 +446,114 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
         </div>
       )}
 
+      {/* ── AI Fill Report Panel ──────────── */}
+      {!isLocked && (
+        <div className="card overflow-hidden">
+          <button
+            className="flex w-full items-center justify-between px-5 py-3.5 transition-colors hover:bg-tdai-gray-50/50 dark:hover:bg-white/[0.06]"
+            onClick={() => setShowAiPanel(!showAiPanel)}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="icon-box h-8 w-8 rounded-lg bg-gradient-to-br from-tdai-teal-500 to-tdai-navy-600">
+                <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </div>
+              <div className="text-left">
+                <span className="text-sm font-bold text-tdai-navy-800 dark:text-tdai-gray-100">
+                  ⚡ AI Fill Report
+                  {aiTemplateUsed && (
+                    <span className="ml-2 rounded-full bg-tdai-teal-50 px-2 py-0.5 text-[10px] font-bold text-tdai-teal-700 ring-1 ring-tdai-teal-200 dark:bg-tdai-teal-900/20 dark:text-tdai-teal-300">
+                      {aiTemplateUsed}
+                    </span>
+                  )}
+                  {aiSource && (
+                    <span className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${aiSource === "llm" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                      {aiSource === "llm" ? "MedGemma Local" : "Rule-Based"}
+                    </span>
+                  )}
+                </span>
+                <p className="text-[11px] text-tdai-gray-400 dark:text-tdai-gray-500">
+                  Dictate or type findings — AI structures the full report locally
+                </p>
+              </div>
+            </div>
+            <svg className={`h-4 w-4 text-tdai-gray-400 transition-transform duration-200 dark:text-tdai-gray-500 ${showAiPanel ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {showAiPanel && (
+            <div className="border-t border-tdai-gray-100 p-4 animate-slide-up dark:border-white/[0.08] space-y-3">
+              {/* Dictation input */}
+              <div>
+                <label className="block text-xs font-bold text-tdai-gray-500 dark:text-tdai-gray-400 mb-1.5 uppercase tracking-wider">
+                  Findings Dictation
+                </label>
+                <div className="relative">
+                  <textarea
+                    rows={4}
+                    className="input-field w-full resize-none text-sm"
+                    placeholder="Type or dictate findings… e.g. 'right lower lobe consolidation, small pleural effusion, heart normal'"
+                    value={aiDictation}
+                    onChange={(e) => setAiDictation(e.target.value)}
+                    disabled={aiLoading}
+                  />
+                </div>
+                <p className="mt-1 text-[11px] text-tdai-gray-400 dark:text-tdai-gray-500">
+                  AI will fill: Technique, Findings, Impression based on the correct template for this study's body part and modality.
+                </p>
+              </div>
+
+              {/* Measurements extracted */}
+              {aiMeasurements.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-tdai-gray-400 mb-1.5">Measurements Detected &amp; Bolded</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {aiMeasurements.map((m, i) => (
+                      <span key={i} className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-300">
+                        📏 {m.text}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {aiError && (
+                <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-xs text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300">
+                  {aiError}
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex items-center gap-2">
+                <button
+                  className="btn-primary flex items-center gap-2 disabled:opacity-50"
+                  disabled={aiLoading || !aiDictation.trim()}
+                  onClick={() => void fillWithAI()}
+                >
+                  {aiLoading ? (
+                    <>
+                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                      Generating…
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                      Generate Report
+                    </>
+                  )}
+                </button>
+                <button className="btn-secondary text-xs" onClick={() => { setAiDictation(""); setAiError(null); }}>
+                  Clear
+                </button>
+                <span className="ml-auto text-[11px] text-tdai-gray-400 dark:text-tdai-gray-500">
+                  Uses local MedGemma 4B via Ollama — no cloud
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Section Editor ───────────────── */}
       <div className={`card overflow-hidden ${expandedView ? "fixed inset-4 z-40 overflow-y-auto shadow-modal" : ""}`}>
         <div className="flex items-center border-b border-tdai-gray-100 bg-tdai-gray-50/50 dark:border-white/[0.08] dark:bg-tdai-gray-800/50">
@@ -387,23 +605,85 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
 
         {sections.map((section) => (
           <div key={section.key} className={activeTab === section.key ? "block" : "hidden"}>
-            {section.key === "impression" && (
-              <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg bg-tdai-teal-50/60 border border-tdai-teal-200/60 px-3 py-2 dark:bg-tdai-teal-900/20 dark:border-tdai-teal-800/60">
-                <svg className="h-4 w-4 text-tdai-teal-500 dark:text-tdai-teal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-                <span className="text-[11px] font-medium text-tdai-teal-700 dark:text-tdai-teal-300">Key clinical section — this is the most important part of the report</span>
+            {/* Signature section */}
+            {(section as any).is_signature ? (
+              <div className="p-5 space-y-4">
+                <div className="rounded-xl border border-tdai-gray-200 bg-tdai-gray-50/50 p-4 dark:border-white/[0.08] dark:bg-tdai-gray-800/50">
+                  <p className="text-xs font-bold uppercase tracking-wider text-tdai-gray-400 dark:text-tdai-gray-500 mb-3">Electronic Signature</p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-tdai-gray-500 dark:text-tdai-gray-400 mb-1">Radiologist Name</label>
+                      <input className="input-field" placeholder="Dr. Full Name" defaultValue={(report as any).radiologistName ?? ""} disabled={isLocked} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-tdai-gray-500 dark:text-tdai-gray-400 mb-1">Qualification</label>
+                      <input className="input-field" placeholder="MBBS, MD Radiology" disabled={isLocked} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-tdai-gray-500 dark:text-tdai-gray-400 mb-1">Date &amp; Time</label>
+                      <input className="input-field" type="datetime-local" defaultValue={new Date().toISOString().slice(0, 16)} disabled={isLocked} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-tdai-gray-500 dark:text-tdai-gray-400 mb-1">Referring Physician</label>
+                      <input className="input-field" placeholder="Dr. Name / Hospital" disabled={isLocked} />
+                    </div>
+                  </div>
+                  {isLocked && (
+                    <div className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 dark:bg-emerald-900/20 dark:border-emerald-800">
+                      <svg className="h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                      <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">Report is finalized and electronically signed.</span>
+                    </div>
+                  )}
+                </div>
               </div>
+            ) : (
+              <>
+                {section.key === "impression" && (
+                  <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg bg-tdai-teal-50/60 border border-tdai-teal-200/60 px-3 py-2 dark:bg-tdai-teal-900/20 dark:border-tdai-teal-800/60">
+                    <svg className="h-4 w-4 text-tdai-teal-500 dark:text-tdai-teal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                    <span className="text-[11px] font-medium text-tdai-teal-700 dark:text-tdai-teal-300">Key clinical section — this is the most important part of the report</span>
+                  </div>
+                )}
+                {/* Per-section quick actions */}
+                {!isLocked && (
+                  <div className="mx-4 mt-3 flex items-center gap-2">
+                    <button
+                      className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-semibold transition-all ${
+                        sectionRecording === section.key
+                          ? "border-red-300 bg-red-50 text-red-700 animate-pulse dark:bg-red-900/20 dark:border-red-700 dark:text-red-300"
+                          : "border-tdai-gray-200 bg-white text-tdai-gray-500 hover:border-tdai-teal-400 hover:text-tdai-teal-700 dark:border-white/[0.08] dark:bg-tdai-gray-800 dark:text-tdai-gray-400 dark:hover:border-tdai-teal-600"
+                      }`}
+                      onClick={() => sectionRecording === section.key ? stopSectionRecording() : void startSectionRecording(section.key)}
+                      title={sectionRecording === section.key ? "Stop recording" : `Dictate into ${section.title}`}
+                    >
+                      <svg className="h-3.5 w-3.5" fill={sectionRecording === section.key ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-7a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+                      </svg>
+                      {sectionRecording === section.key ? "Stop" : "Dictate"}
+                    </button>
+                    <button
+                      className="flex items-center gap-1.5 rounded-lg border border-tdai-gray-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-tdai-gray-500 hover:border-emerald-400 hover:text-emerald-700 transition-all dark:border-white/[0.08] dark:bg-tdai-gray-800 dark:text-tdai-gray-400 dark:hover:border-emerald-600"
+                      onClick={() => insertNormalFindings(section.key)}
+                      title={`Insert normal ${section.title}`}
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                      Normal
+                    </button>
+                  </div>
+                )}
+                <div className="p-4">
+                  <TipTapEditor
+                    content={section.content}
+                    onChange={(html) => updateSection(section.key, html)}
+                    placeholder={sectionPlaceholders[section.key] ?? `Enter ${section.title.toLowerCase()}...`}
+                    editable={!isLocked}
+                    autoFocus={activeTab === section.key && section.key === "findings"}
+                    sectionTitle={section.title}
+                    enableDictation={!isLocked}
+                  />
+                </div>
+              </>
             )}
-            <div className="p-4">
-              <TipTapEditor
-                content={section.content}
-                onChange={(html) => updateSection(section.key, html)}
-                placeholder={sectionPlaceholders[section.key] ?? `Enter ${section.title.toLowerCase()}...`}
-                editable={!isLocked}
-                autoFocus={activeTab === section.key && section.key === "findings"}
-                sectionTitle={section.title}
-                enableDictation={!isLocked}
-              />
-            </div>
           </div>
         ))}
       </div>

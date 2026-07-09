@@ -6,6 +6,12 @@
 **Last updated:** 9 July 2026  
 **Repository:** `tdai-main/metupalle-jpg/tdai`
 
+> **Session: 9 July 2026 (Update 2)** — AI Report Template System built.  
+> 22 body-part/modality-specific report templates (RAG knowledge base), local MedGemma/DeepSeek via Ollama,  
+> `report_template_service.py`, `ReportEditor.tsx` enhanced with AI Fill panel, per-section voice dictation,  
+> Normal quick-insert, Signature block, and measurement auto-bolding. All 100% local, no cloud.  
+> See Section 13 for full Report Template System reference.
+
 > **Session: 9 July 2026** — Smart Patient Intake system built (AI-powered DICOM tag generator).
 > New files: `intake_service.py`, `intake.ts` (backend proxy), `SmartIntake.tsx` (frontend modal).
 > See Section 12 for full AI Services reference.
@@ -1784,4 +1790,156 @@ Total: ~10 seconds from speech to study created
 ### Dual Mode (Option C)
 
 - **Walk-in**: no pre-selected row → creates brand-new `RadiologyOrder` via `POST /orders`  
-- **Existing order**: row selected → updates via `PATCH /orders/:id` + `PATCH /worklist/:id/fields` with full triage metadata
+- **Existing order**: row selected → updates via `PATCH /orders/:id` + `PATCH /worklist/:id/fields` with full triage metadata
+
+---
+
+## Section 13 — AI Report Template System
+
+### Overview
+
+A fully **local AI-powered report generation system** built for the Radiologist dashboard. Takes the radiologist's dictated findings and automatically generates a structured, section-based radiology report using the correct template for the study's body part and modality.
+
+**Key principle**: 100% local — MedGemma 4B or DeepSeek-R1:8b via Ollama. No cloud APIs. No data leaves the network.
+
+### Architecture
+
+```
+Radiologist dictates findings (text or voice)
+           ↓
+POST /reports/ai/structure  (Node.js backend proxy)
+           ↓
+POST /v1/report/structure   (medasr-server FastAPI)
+           ↓
+Template Selector           picks correct JSON template (body_part + modality)
+           ↓
+RAG Context Builder         injects normal findings + few-shot examples
+           ↓
+Local LLM (Ollama)          MedGemma 4B / DeepSeek-R1:8b
+           ↓
+Measurement Extractor       finds and bolds numeric values
+           ↓
+Section Assembler           returns ordered JSON sections
+           ↓
+ReportEditor.tsx            fills all sections in the editor
+```
+
+### RAG Template Knowledge Base
+
+**Location**: `packages/medasr-server/report_templates/`
+
+22 JSON templates covering:
+
+| Category | Templates |
+|---|---|
+| X-Ray (CR/DX) | chest, knee, ankle, foot, wrist, hand, shoulder, elbow, hip |
+| X-Ray (CR/DX) | lumbar spine, cervical spine, thoracic spine, pelvis, skull, abdomen, ribs |
+| CT | chest, abdomen/pelvis, brain |
+| MRI | brain, knee, lumbar spine |
+
+Each template contains:
+- `sections[]` — ordered section list with titles and subsections
+- `normal_text` — authoritative normal findings text per section
+- `common_findings[]` — clickable chips of frequent abnormal findings
+- `medical_terms[]` — correct terminology the LLM must use
+- `few_shot_normal` — real example of a normal study input→output
+- `few_shot_abnormal` — real example of an abnormal study input→output
+
+### New Files
+
+| File | Purpose |
+|---|---|
+| `packages/medasr-server/report_templates/*.json` | 22 RAG knowledge base templates |
+| `packages/medasr-server/report_template_service.py` | Core AI engine + FastAPI router |
+| `packages/medasr-server/generate_templates.py` | One-time template generation script |
+
+### Modified Files
+
+| File | Change |
+|---|---|
+| `packages/medasr-server/llm_correction.py` | Added `LocalOllamaCorrector`, Ollama as priority 1 |
+| `packages/medasr-server/server.py` | Registered `report_template_router` |
+| `packages/reporting-app/backend/src/routes/reports.ts` | Added AI proxy routes |
+| `packages/reporting-app/frontend/src/components/ReportEditor.tsx` | AI Fill panel, per-section voice, Normal buttons, Signature block |
+
+### API Endpoints
+
+#### Python (medasr-server)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/report/structure` | Generate full report from dictation |
+| `POST` | `/v1/report/suggest` | Single-section AI suggestion |
+| `GET` | `/v1/report/templates` | List all available templates |
+| `GET` | `/v1/report/health` | AI service health check |
+
+#### Node.js Proxy (reporting-app backend)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/reports/ai/structure` | Proxy → medasr /v1/report/structure |
+| `POST` | `/reports/ai/suggest` | Proxy → medasr /v1/report/suggest |
+| `GET` | `/reports/ai/templates` | Proxy → medasr /v1/report/templates |
+| `GET` | `/reports/ai/health` | Proxy → medasr /v1/report/health |
+
+### Request/Response
+
+**POST /reports/ai/structure**
+```json
+{
+  "dictation": "Right lower lobe consolidation, small right pleural effusion",
+  "body_part": "CHEST",
+  "modality": "CR",
+  "laterality": null,
+  "patient_name": "John Doe",
+  "clinical_history": "Fever, cough for 3 days"
+}
+```
+
+**Response**
+```json
+{
+  "sections": [
+    { "key": "clinical_history", "title": "Clinical History", "content": "Fever, cough for 3 days" },
+    { "key": "technique", "title": "Technique", "content": "PA and lateral views of the chest were obtained." },
+    { "key": "findings", "title": "Findings", "content": "There is consolidation in the right lower lobe. A small right-sided pleural effusion is noted..." },
+    { "key": "impression", "title": "Impression", "content": "1. Right lower lobe consolidation — infective/inflammatory...\n2. Small right-sided pleural effusion." },
+    { "key": "recommendation", "title": "Recommendation", "content": "" },
+    { "key": "signature", "title": "Signature", "content": "", "is_signature": true }
+  ],
+  "template_id": "chest_xray",
+  "template_name": "Chest X-Ray",
+  "measurements_extracted": [],
+  "source": "llm",
+  "model": "medgemma-4b-it"
+}
+```
+
+### Environment Configuration
+
+```env
+# medasr-server .env
+REPORT_AI_ENGINE=ollama          # ollama | rule_based
+REPORT_AI_MODEL=medgemma-4b-it   # or deepseek-r1:8b
+REPORT_AI_URL=http://localhost:11434
+```
+
+### Frontend Features Added to ReportEditor
+
+1. **⚡ AI Fill Report panel** — collapsible card above section editor; radiologist types/dictates findings; one click generates all sections in ~3-4 seconds
+2. **Source badge** — shows "MedGemma Local" (green) or "Rule-Based" (amber) after generation
+3. **Template used badge** — shows which template was selected (e.g., "Chest X-Ray")
+4. **Measurements detected chips** — after generation, amber chips show every measurement extracted and bolded in the report
+5. **Per-section Dictate button** — 🎤 button on each section; speak directly into Findings, Impression, etc.
+6. **Per-section Normal button** — one click inserts standard normal text for that section
+7. **Signature section** — structured form with Radiologist Name, Qualification, Date/Time, Referring Physician; locked after finalization
+8. **Fallback** — if Ollama is down, rule-based generator fills sections automatically; no errors shown to user
+
+### Models Setup
+
+```bash
+# Pull once on Ollama (primary + fallback)
+ollama pull medgemma-4b-it   # primary — medical-trained by Google
+ollama pull deepseek-r1:8b   # fallback — better reasoning
+```
+

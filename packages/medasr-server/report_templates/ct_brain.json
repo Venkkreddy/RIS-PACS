@@ -1,0 +1,103 @@
+{
+  "id": "ct_brain",
+  "name": "CT Brain",
+  "modality": [
+    "CT"
+  ],
+  "body_part": [
+    "SKULL",
+    "BRAIN"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "Non-contrast CT of the brain was performed. Axial sections were obtained from the skull base to the vertex."
+    },
+    {
+      "key": "comparison",
+      "title": "Comparison",
+      "default": ""
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Brain Parenchyma",
+        "Ventricles",
+        "Sulci/Gyri",
+        "Basal Ganglia",
+        "Posterior Fossa",
+        "Calvarium/Scalp",
+        "Orbits"
+      ],
+      "normal_text": "The brain parenchyma shows normal attenuation. No intracranial hemorrhage, infarct or mass lesion is identified. The ventricles are normal in size and configuration. The sulci and gyri are unremarkable. The basal ganglia, thalami and internal capsules are intact. The posterior fossa structures including cerebellum and brainstem are normal. The calvarium is intact. No scalp soft tissue swelling.",
+      "common_findings": [
+        "Intracranial hemorrhage",
+        "Subarachnoid hemorrhage",
+        "Subdural hematoma",
+        "Epidural hematoma",
+        "Cerebral infarct",
+        "Brain mass/tumor",
+        "Cerebral edema",
+        "Hydrocephalus",
+        "Midline shift",
+        "Cerebral atrophy"
+      ],
+      "medical_terms": [
+        "parenchyma",
+        "hyperdense",
+        "hypodense",
+        "hemorrhage",
+        "infarct",
+        "mass effect",
+        "midline shift",
+        "ventricle",
+        "sulci",
+        "gyri",
+        "cerebellum",
+        "brainstem",
+        "subarachnoid",
+        "subdural",
+        "epidural",
+        "leukoaraiosis",
+        "periventricular"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "Normal non-contrast CT of the brain. No intracranial hemorrhage or acute ischemic change."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "brain parenchyma normal, no hemorrhage, ventricles normal",
+    "output": {
+      "findings": "The brain parenchyma shows normal attenuation. No intracranial hemorrhage, infarct or mass lesion is identified. The ventricles are normal in size and configuration. The sulci and gyri are unremarkable. The basal ganglia and internal capsules are intact. The posterior fossa structures are normal. The calvarium is intact.",
+      "impression": "Normal non-contrast CT of the brain. No intracranial hemorrhage or acute ischemic change."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm",
+    "HU",
+    "midline shift",
+    "diameter"
+  ]
+}

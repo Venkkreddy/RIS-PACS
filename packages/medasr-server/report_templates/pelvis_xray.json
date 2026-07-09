@@ -1,0 +1,87 @@
+{
+  "id": "pelvis_xray",
+  "name": "Pelvis X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "PELVIS"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "AP view of the pelvis was obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Pelvis Ring",
+        "Hip Joints",
+        "Sacrum/Coccyx",
+        "Sacroiliac Joints",
+        "Soft Tissues"
+      ],
+      "normal_text": "The pelvic ring is intact. No fracture or dislocation is identified. Both hip joints are normally located with maintained joint spaces. The sacrum, coccyx and sacroiliac joints appear normal. The visualized lumbar vertebrae are intact. No soft tissue abnormality is identified.",
+      "common_findings": [
+        "Pubic ramus fracture",
+        "Iliac wing fracture",
+        "Sacral fracture",
+        "Acetabular fracture",
+        "Hip dislocation",
+        "Pubic symphysis disruption",
+        "Sacroiliac joint disruption",
+        "Osteoarthritis hip joints"
+      ],
+      "medical_terms": [
+        "pelvis",
+        "ilium",
+        "ischium",
+        "pubis",
+        "acetabulum",
+        "sacrum",
+        "coccyx",
+        "sacroiliac",
+        "pubic symphysis",
+        "obturator ring",
+        "femoral head",
+        "pelvic ring"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No fracture or significant radiological abnormality of the pelvis."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "pelvis intact, hip joints normal, sacrum normal",
+    "output": {
+      "findings": "The pelvic ring is intact. No fracture or dislocation is identified. Both hip joints are normally located with maintained joint spaces. The sacrum, coccyx and sacroiliac joints appear normal. No soft tissue abnormality is identified.",
+      "impression": "No fracture or significant radiological abnormality of the pelvis."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm"
+  ]
+}

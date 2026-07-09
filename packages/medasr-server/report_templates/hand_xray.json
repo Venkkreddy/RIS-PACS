@@ -1,0 +1,86 @@
+{
+  "id": "hand_xray",
+  "name": "Hand X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "HAND"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "PA and oblique views of the {laterality} hand were obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Metacarpals",
+        "Phalanges",
+        "Joints",
+        "Soft Tissues"
+      ],
+      "normal_text": "The metacarpal and phalangeal bones appear intact. No fracture or dislocation is identified. The interphalangeal and metacarpophalangeal joint spaces are maintained. No periarticular soft tissue swelling or calcification is identified.",
+      "common_findings": [
+        "Metacarpal fracture",
+        "Phalangeal fracture",
+        "Bennett fracture",
+        "Boxer fracture",
+        "Mallet finger",
+        "Interphalangeal dislocation",
+        "Rheumatoid arthritis changes",
+        "Osteoarthritis"
+      ],
+      "medical_terms": [
+        "metacarpal",
+        "phalanx",
+        "proximal",
+        "middle",
+        "distal",
+        "PIP",
+        "DIP",
+        "MCP",
+        "interphalangeal",
+        "metacarpophalangeal",
+        "Bennett",
+        "boxer fracture"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No fracture or significant bony abnormality of the {laterality} hand."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "hand bones intact, no fracture, joints normal",
+    "output": {
+      "findings": "The metacarpal and phalangeal bones appear intact. No fracture or dislocation is identified. The interphalangeal and metacarpophalangeal joint spaces are maintained. No periarticular soft tissue swelling.",
+      "impression": "No fracture or significant bony abnormality of the hand."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm"
+  ]
+}

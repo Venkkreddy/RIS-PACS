@@ -1,0 +1,109 @@
+{
+  "id": "ct_abdomen",
+  "name": "CT Abdomen & Pelvis",
+  "modality": [
+    "CT"
+  ],
+  "body_part": [
+    "ABDOMEN",
+    "PELVIS"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "CT examination of the abdomen and pelvis was performed with/without intravenous contrast. Axial sections were obtained with coronal and sagittal reformats."
+    },
+    {
+      "key": "comparison",
+      "title": "Comparison",
+      "default": ""
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Liver",
+        "Gallbladder/Bile Ducts",
+        "Pancreas",
+        "Spleen",
+        "Kidneys/Ureters",
+        "Adrenal Glands",
+        "Bowel",
+        "Mesentery/Lymph Nodes",
+        "Vessels",
+        "Pelvis",
+        "Bones"
+      ],
+      "normal_text": "The liver is normal in size and attenuation with no focal lesion. The gallbladder is normal. The common bile duct is not dilated. The pancreas is normal. The spleen is normal in size. Both kidneys are normal in size and enhancement with no hydronephrosis or calculus. The adrenal glands are normal. The bowel is not dilated. No free fluid or lymphadenopathy. The pelvic organs are normal. The visualized bones are intact.",
+      "common_findings": [
+        "Hepatic cyst",
+        "Hepatic mass",
+        "Cholelithiasis",
+        "Cholecystitis",
+        "Dilated common bile duct",
+        "Pancreatic mass",
+        "Splenic cyst",
+        "Renal calculus",
+        "Hydronephrosis",
+        "Appendicitis",
+        "Bowel obstruction",
+        "Free fluid",
+        "Lymphadenopathy"
+      ],
+      "medical_terms": [
+        "attenuation",
+        "enhancement",
+        "hypodense",
+        "hyperdense",
+        "isodense",
+        "heterogeneous",
+        "homogeneous",
+        "hydronephrosis",
+        "lithiasis",
+        "cholecystitis",
+        "pancreatitis",
+        "hepatomegaly",
+        "splenomegaly",
+        "lymphadenopathy",
+        "ascites"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "Normal CT examination of the abdomen and pelvis."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "liver normal, kidneys normal, no free fluid, bowel normal",
+    "output": {
+      "findings": "The liver is normal in size and attenuation with no focal lesion. The gallbladder is normal with no calculus. The common bile duct is not dilated. The pancreas appears normal. The spleen is normal in size. Both kidneys are normal with no hydronephrosis or calculus. The adrenal glands are normal. The bowel is not dilated. No free fluid or lymphadenopathy. The pelvic organs are normal.",
+      "impression": "Normal CT examination of the abdomen and pelvis."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm",
+    "HU",
+    "Hounsfield",
+    "caliber",
+    "diameter"
+  ]
+}

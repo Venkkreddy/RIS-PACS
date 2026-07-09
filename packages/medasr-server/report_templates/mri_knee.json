@@ -1,0 +1,97 @@
+{
+  "id": "mri_knee",
+  "name": "MRI Knee",
+  "modality": [
+    "MR"
+  ],
+  "body_part": [
+    "KNEE"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "MRI of the {laterality} knee was performed using standard sequences including PD, T1, T2 fat-sat in axial, coronal and sagittal planes."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Menisci",
+        "Cruciate Ligaments",
+        "Collateral Ligaments",
+        "Articular Cartilage",
+        "Bones/Marrow",
+        "Joint Effusion",
+        "Baker's Cyst"
+      ],
+      "normal_text": "The medial and lateral menisci are of normal morphology and signal. The ACL and PCL are intact and show normal signal. The medial and lateral collateral ligaments are intact. The articular cartilage is preserved throughout. The osseous structures show no marrow edema, fracture or avascular change. No significant joint effusion. No Baker cyst identified.",
+      "common_findings": [
+        "Medial meniscus tear",
+        "Lateral meniscus tear",
+        "ACL tear",
+        "PCL tear",
+        "MCL sprain/tear",
+        "LCL injury",
+        "Cartilage loss",
+        "Bone marrow edema",
+        "Osteochondral defect",
+        "Joint effusion",
+        "Baker cyst"
+      ],
+      "medical_terms": [
+        "meniscus",
+        "ACL",
+        "PCL",
+        "MCL",
+        "LCL",
+        "cartilage",
+        "chondral",
+        "marrow edema",
+        "Outerbridge",
+        "Baker cyst",
+        "popliteal",
+        "anterior cruciate ligament",
+        "posterior cruciate",
+        "medial collateral",
+        "lateral collateral",
+        "tibial plateau",
+        "femoral condyle"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No significant abnormality on MRI of the {laterality} knee."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "menisci normal, ACL PCL intact, cartilage normal, no effusion",
+    "output": {
+      "findings": "The medial and lateral menisci are of normal morphology and signal. The ACL and PCL are intact and show normal signal. The medial and lateral collateral ligaments are intact. The articular cartilage is preserved throughout. No marrow edema or fracture. No significant joint effusion. No Baker cyst.",
+      "impression": "No significant abnormality on MRI of the knee."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm",
+    "grade",
+    "Outerbridge grade"
+  ]
+}

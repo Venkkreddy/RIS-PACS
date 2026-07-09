@@ -1,0 +1,101 @@
+{
+  "id": "mri_brain",
+  "name": "MRI Brain",
+  "modality": [
+    "MR"
+  ],
+  "body_part": [
+    "SKULL",
+    "BRAIN"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "MRI of the brain was performed using standard sequences including T1, T2, FLAIR, DWI and T1 post gadolinium on axial, coronal and sagittal planes."
+    },
+    {
+      "key": "comparison",
+      "title": "Comparison",
+      "default": ""
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Brain Parenchyma",
+        "White Matter",
+        "Ventricles",
+        "Cortex",
+        "Basal Ganglia",
+        "Posterior Fossa",
+        "Vascular Structures",
+        "Calvarium/Sinuses"
+      ],
+      "normal_text": "The brain parenchyma demonstrates normal signal intensity on all sequences. No abnormal signal change, mass lesion or enhancement is identified. The white matter is normal. The cortex is well-defined. The basal ganglia and thalami are normal. The posterior fossa including cerebellum and brainstem shows no abnormality. The ventricles are normal in size. No restricted diffusion on DWI. The paranasal sinuses and mastoids are clear.",
+      "common_findings": [
+        "White matter lesions",
+        "Cerebral infarct",
+        "Tumor/metastasis",
+        "Demyelination",
+        "Leukoencephalopathy",
+        "Enhancement",
+        "Restricted diffusion",
+        "Atrophy",
+        "Midline shift"
+      ],
+      "medical_terms": [
+        "T1",
+        "T2",
+        "FLAIR",
+        "DWI",
+        "ADC",
+        "gadolinium",
+        "enhancement",
+        "signal intensity",
+        "hyperintense",
+        "hypointense",
+        "restricted diffusion",
+        "leukoaraiosis",
+        "periventricular",
+        "demyelination",
+        "gliosis",
+        "encephalomalacia"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "Normal MRI of the brain with no significant intracranial pathology."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "brain signal normal, no enhancement, white matter normal, DWI negative",
+    "output": {
+      "findings": "The brain parenchyma demonstrates normal signal intensity on all sequences. No abnormal signal change, mass lesion or enhancement is identified. The white matter is normal. The cortex is well-defined. The basal ganglia and thalami are normal. The posterior fossa is unremarkable. The ventricles are normal. No restricted diffusion on DWI.",
+      "impression": "Normal MRI of the brain with no significant intracranial pathology."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm",
+    "signal",
+    "enhancement"
+  ]
+}

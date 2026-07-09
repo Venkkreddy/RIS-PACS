@@ -311,5 +311,108 @@ export function reportsRouter(params: {
     res.send(pdf);
   }));
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // AI Report Template Routes (local MedGemma via Ollama, no cloud)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const medasrUrl = process.env.MEDASR_SERVER_URL ?? "http://localhost:5001";
+
+  /** GET /reports/ai/templates — list all available report templates */
+  router.get("/ai/templates", ensureAuthenticated, asyncHandler(async (_req, res) => {
+    try {
+      const resp = await fetch(`${medasrUrl}/v1/report/templates`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      const data = await resp.json();
+      return res.json(data);
+    } catch {
+      return res.status(503).json({ error: "Report AI service unavailable", templates: [] });
+    }
+  }));
+
+  /** POST /reports/ai/structure — generate full report sections from dictation */
+  router.post("/ai/structure", ensureAuthenticated, asyncHandler(async (req, res) => {
+    const {
+      dictation,
+      body_part = "CHEST",
+      modality = "CR",
+      laterality,
+      patient_name,
+      patient_age,
+      patient_sex,
+      clinical_history,
+    } = req.body as {
+      dictation?: string;
+      body_part?: string;
+      modality?: string;
+      laterality?: string;
+      patient_name?: string;
+      patient_age?: number;
+      patient_sex?: string;
+      clinical_history?: string;
+    };
+
+    if (!dictation || dictation.trim().length < 3) {
+      return res.status(400).json({ error: "dictation must be at least 3 characters" });
+    }
+
+    try {
+      const resp = await fetch(`${medasrUrl}/v1/report/structure`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dictation, body_part, modality, laterality, patient_name, patient_age, patient_sex, clinical_history }),
+        signal: AbortSignal.timeout(60_000), // 60s for local LLM inference
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text();
+        return res.status(resp.status).json({ error: `Report AI error: ${text}` });
+      }
+
+      return res.json(await resp.json());
+    } catch {
+      // AI service down — return 503 so frontend uses rule-based fallback
+      return res.status(503).json({ error: "Report AI service unavailable", fallback: true });
+    }
+  }));
+
+  /** POST /reports/ai/suggest — get a single-section suggestion as radiologist types */
+  router.post("/ai/suggest", ensureAuthenticated, asyncHandler(async (req, res) => {
+    const { partial_text, section_key, body_part = "CHEST", modality = "CR", laterality } = req.body as {
+      partial_text?: string;
+      section_key?: string;
+      body_part?: string;
+      modality?: string;
+      laterality?: string;
+    };
+
+    if (!partial_text || !section_key) {
+      return res.status(400).json({ error: "partial_text and section_key are required" });
+    }
+
+    try {
+      const resp = await fetch(`${medasrUrl}/v1/report/suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ partial_text, section_key, body_part, modality, laterality }),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      return res.json(await resp.json());
+    } catch {
+      return res.status(503).json({ suggestion: "" });
+    }
+  }));
+
+  /** GET /reports/ai/health — check AI service status */
+  router.get("/ai/health", ensureAuthenticated, asyncHandler(async (_req, res) => {
+    try {
+      const resp = await fetch(`${medasrUrl}/v1/report/health`, { signal: AbortSignal.timeout(3000) });
+      return res.json(await resp.json());
+    } catch {
+      return res.status(503).json({ status: "unavailable" });
+    }
+  }));
+
   return router;
 }

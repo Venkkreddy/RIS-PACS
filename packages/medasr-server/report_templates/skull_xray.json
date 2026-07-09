@@ -1,0 +1,84 @@
+{
+  "id": "skull_xray",
+  "name": "Skull X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "SKULL"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "PA and lateral views of the skull were obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Calvarium",
+        "Sella Turcica",
+        "Facial Bones",
+        "Sinuses",
+        "Soft Tissues"
+      ],
+      "normal_text": "The bony calvarium is intact with no fracture identified. The sella turcica is of normal size and shape. The facial bones are intact. The paranasal sinuses appear clear. No calcifications are identified within the brain parenchyma. The soft tissues are unremarkable.",
+      "common_findings": [
+        "Vault fracture",
+        "Depressed fracture",
+        "Sinus opacification",
+        "Pineal gland calcification",
+        "Sella enlargement",
+        "Facial bone fracture"
+      ],
+      "medical_terms": [
+        "calvarium",
+        "sella turcica",
+        "mastoid",
+        "petrous",
+        "paranasal sinus",
+        "orbital",
+        "nasal bone",
+        "zygomatic arch",
+        "mandible",
+        "calcification",
+        "density"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No fracture or significant radiological abnormality of the skull."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "skull intact, no fracture, sinuses clear",
+    "output": {
+      "findings": "The bony calvarium is intact with no fracture identified. The sella turcica is of normal size and shape. The facial bones are intact. The paranasal sinuses appear clear. No abnormal calcifications. The soft tissues are unremarkable.",
+      "impression": "No fracture or significant radiological abnormality of the skull."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm"
+  ]
+}

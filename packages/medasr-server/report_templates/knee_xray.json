@@ -1,0 +1,96 @@
+{
+  "id": "knee_xray",
+  "name": "Knee X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "KNEE"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "AP and lateral views of the {laterality} knee were obtained. {skyline}"
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Joint Space",
+        "Bony Structures",
+        "Soft Tissues",
+        "Alignment"
+      ],
+      "normal_text": "The joint space is maintained bilaterally. No significant narrowing of the medial or lateral compartment. The bony margins are well-defined with no osteophytic lipping. No fracture or dislocation is identified. The alignment is normal. The visualized soft tissues are unremarkable.",
+      "common_findings": [
+        "Medial compartment joint space narrowing",
+        "Lateral compartment narrowing",
+        "Osteophytic lipping at tibial plateaus",
+        "Osteophytes at femoral condyles",
+        "Periarticular osteopenia",
+        "Soft tissue swelling",
+        "Effusion",
+        "Chondrocalcinosis",
+        "Patella alta/baja"
+      ],
+      "medical_terms": [
+        "joint space",
+        "osteophyte",
+        "subchondral",
+        "chondrocalcinosis",
+        "tibial plateau",
+        "femoral condyle",
+        "patella",
+        "meniscal",
+        "cruciate",
+        "valgus",
+        "varus",
+        "effusion",
+        "osteoarthritis"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No significant radiological abnormality of the {laterality} knee."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "knee joint space normal, no osteophytes, alignment normal",
+    "output": {
+      "findings": "The joint space is maintained bilaterally. No significant narrowing of the medial or lateral compartment is seen. The bony margins are well-defined with no osteophytic lipping. No fracture or dislocation is identified. Alignment is normal. Visualized soft tissues are unremarkable.",
+      "impression": "No significant radiological abnormality of the knee."
+    }
+  },
+  "few_shot_abnormal": {
+    "input": "medial joint space narrowing, osteophytes, soft tissue swelling",
+    "output": {
+      "findings": "There is narrowing of the medial compartment joint space. Osteophytic lipping is seen at the medial tibial plateau and medial femoral condyle. The lateral compartment is relatively preserved. There is periarticular soft tissue swelling. No acute fracture is identified.",
+      "impression": "Medial compartment osteoarthritis of the knee. Clinical correlation advised."
+    }
+  },
+  "measurement_hints": [
+    "joint space",
+    "mm",
+    "cm"
+  ]
+}

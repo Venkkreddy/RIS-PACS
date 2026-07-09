@@ -1,0 +1,84 @@
+{
+  "id": "foot_xray",
+  "name": "Foot X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "FOOT"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "AP, lateral and oblique views of the {laterality} foot were obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Bones",
+        "Joints",
+        "Soft Tissues"
+      ],
+      "normal_text": "No fracture or dislocation is identified. The tarsal, metatarsal and phalangeal bones appear intact. The joint spaces are maintained. No periarticular soft tissue swelling is identified. The alignment of the foot is normal.",
+      "common_findings": [
+        "Metatarsal fracture",
+        "Calcaneal fracture",
+        "Navicular fracture",
+        "Fifth metatarsal fracture",
+        "Toe phalangeal fracture",
+        "Plantar fasciitis calcification",
+        "Hallux valgus",
+        "Joint space narrowing"
+      ],
+      "medical_terms": [
+        "calcaneus",
+        "talus",
+        "navicular",
+        "cuboid",
+        "cuneiform",
+        "metatarsal",
+        "phalanx",
+        "hallux valgus",
+        "plantar fasciitis",
+        "lisfranc",
+        "jones fracture"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No fracture or significant bony abnormality of the {laterality} foot."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "foot bones intact, no fracture, joints normal",
+    "output": {
+      "findings": "No fracture or dislocation is identified. The tarsal, metatarsal and phalangeal bones appear intact. The joint spaces are maintained. No periarticular soft tissue swelling. Alignment of the foot is normal.",
+      "impression": "No fracture or significant bony abnormality of the foot."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm"
+  ]
+}

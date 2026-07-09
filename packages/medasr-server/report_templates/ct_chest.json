@@ -1,0 +1,100 @@
+{
+  "id": "ct_chest",
+  "name": "CT Chest",
+  "modality": [
+    "CT"
+  ],
+  "body_part": [
+    "CHEST"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "CT examination of the chest was performed with/without intravenous contrast. Axial sections were obtained with coronal and sagittal reformats."
+    },
+    {
+      "key": "comparison",
+      "title": "Comparison",
+      "default": ""
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Lung Parenchyma",
+        "Pleura",
+        "Mediastinum",
+        "Heart/Pericardium",
+        "Chest Wall/Bones",
+        "Upper Abdomen"
+      ],
+      "normal_text": "The lung parenchyma is clear bilaterally. No consolidation, mass or nodule is identified. No pleural effusion or pneumothorax. The mediastinum is normal in width. No mediastinal lymphadenopathy. The heart size is normal. No pericardial effusion. The aorta is normal in caliber. No chest wall abnormality. The visualized upper abdominal organs are unremarkable.",
+      "common_findings": [
+        "Ground glass opacity",
+        "Consolidation",
+        "Pleural effusion",
+        "Pulmonary nodule",
+        "Mass",
+        "Lymphadenopathy",
+        "Atelectasis",
+        "Emphysema",
+        "Interstitial thickening",
+        "Pericardial effusion"
+      ],
+      "medical_terms": [
+        "ground glass opacity",
+        "consolidation",
+        "nodule",
+        "mass",
+        "atelectasis",
+        "emphysema",
+        "bronchiectasis",
+        "interstitial",
+        "reticular",
+        "pleural effusion",
+        "lymphadenopathy",
+        "mediastinum",
+        "pericardium",
+        "HU",
+        "Hounsfield"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "Normal CT examination of the chest."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "lungs clear, no nodule, no effusion, mediastinum normal",
+    "output": {
+      "findings": "The lung parenchyma is clear bilaterally with no consolidation, mass or nodule. No pleural effusion or pneumothorax. The mediastinum is normal in width. No mediastinal lymphadenopathy is identified. The heart size is normal with no pericardial effusion. The aorta is normal in caliber.",
+      "impression": "Normal CT examination of the chest."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm",
+    "HU",
+    "Hounsfield unit",
+    "short axis",
+    "long axis"
+  ]
+}

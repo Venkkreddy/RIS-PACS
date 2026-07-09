@@ -1,0 +1,87 @@
+{
+  "id": "shoulder_xray",
+  "name": "Shoulder X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "SHOULDER"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "AP and axial views of the {laterality} shoulder were obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Glenohumeral Joint",
+        "Acromioclavicular Joint",
+        "Bones",
+        "Soft Tissues"
+      ],
+      "normal_text": "The glenohumeral joint is normally located without dislocation. The joint space is maintained. The acromioclavicular joint is normal. The humeral head, glenoid, acromion, coracoid and clavicle are intact. No fracture is identified. No periarticular calcification is seen. The visualized soft tissues are normal.",
+      "common_findings": [
+        "Anterior shoulder dislocation",
+        "Posterior dislocation",
+        "Clavicle fracture",
+        "Proximal humerus fracture",
+        "Acromioclavicular separation",
+        "Calcific tendinitis",
+        "Hill-Sachs lesion",
+        "Bankart lesion",
+        "Subacromial spur"
+      ],
+      "medical_terms": [
+        "glenohumeral",
+        "acromioclavicular",
+        "acromion",
+        "coracoid",
+        "glenoid",
+        "humeral head",
+        "rotator cuff",
+        "subacromial",
+        "calcific tendinitis",
+        "Hill-Sachs",
+        "Bankart"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No fracture or dislocation of the {laterality} shoulder."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "shoulder joint normal, no dislocation, clavicle intact",
+    "output": {
+      "findings": "The glenohumeral joint is normally located without dislocation. The joint space is maintained. The acromioclavicular joint is normal. The humeral head, glenoid, acromion and clavicle are intact. No fracture identified. No calcification.",
+      "impression": "No fracture or dislocation of the shoulder."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm",
+    "acromioclavicular distance"
+  ]
+}

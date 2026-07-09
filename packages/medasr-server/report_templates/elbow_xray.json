@@ -1,0 +1,83 @@
+{
+  "id": "elbow_xray",
+  "name": "Elbow X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "ELBOW"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "AP and lateral views of the {laterality} elbow were obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Bones",
+        "Joint",
+        "Soft Tissues"
+      ],
+      "normal_text": "No fracture or dislocation is identified. The distal humerus, radial head and proximal ulna appear intact. The elbow joint space is maintained. The anterior fat pad is not displaced. No posterior fat pad sign is identified. No periarticular soft tissue swelling.",
+      "common_findings": [
+        "Radial head fracture",
+        "Coronoid fracture",
+        "Lateral condyle fracture",
+        "Supracondylar fracture",
+        "Posterior fat pad sign",
+        "Elbow dislocation",
+        "Olecranon fracture"
+      ],
+      "medical_terms": [
+        "radial head",
+        "coronoid",
+        "olecranon",
+        "lateral condyle",
+        "medial epicondyle",
+        "supracondylar",
+        "fat pad",
+        "anterior fat pad",
+        "posterior fat pad",
+        "radiocapitellar",
+        "ulnohumeral"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No fracture or dislocation of the {laterality} elbow."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "elbow bones intact, no fracture, fat pad normal",
+    "output": {
+      "findings": "No fracture or dislocation is identified. The distal humerus, radial head and proximal ulna appear intact. The elbow joint space is maintained. The anterior fat pad is not displaced. No posterior fat pad sign. No periarticular soft tissue swelling.",
+      "impression": "No fracture or dislocation of the elbow."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm"
+  ]
+}

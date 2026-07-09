@@ -1,0 +1,91 @@
+{
+  "id": "wrist_xray",
+  "name": "Wrist X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "WRIST"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "PA and lateral views of the {laterality} wrist were obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Distal Radius/Ulna",
+        "Carpal Bones",
+        "Joints",
+        "Soft Tissues"
+      ],
+      "normal_text": "No fracture or dislocation is identified. The distal radius and ulna are intact. The carpal bones appear normal in size, shape and alignment. The radiocarpal and intercarpal joint spaces are maintained. No periarticular soft tissue swelling is identified.",
+      "common_findings": [
+        "Colles fracture",
+        "Smith fracture",
+        "Scaphoid fracture",
+        "Distal radial fracture",
+        "Barton fracture",
+        "Scapholunate dissociation",
+        "Carpal bone fracture",
+        "Periarticular osteopenia",
+        "Soft tissue swelling"
+      ],
+      "medical_terms": [
+        "distal radius",
+        "ulna",
+        "scaphoid",
+        "lunate",
+        "triquetrum",
+        "pisiform",
+        "trapezium",
+        "trapezoid",
+        "capitate",
+        "hamate",
+        "radiocarpal",
+        "scapholunate",
+        "Colles",
+        "Smith"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No fracture or significant radiological abnormality of the {laterality} wrist."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "wrist bones intact, joints normal, no fracture",
+    "output": {
+      "findings": "No fracture or dislocation is identified. The distal radius and ulna are intact. The carpal bones appear normal in size, shape and alignment. The radiocarpal and intercarpal joint spaces are maintained. No periarticular soft tissue swelling.",
+      "impression": "No fracture or significant radiological abnormality of the wrist."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm",
+    "angulation",
+    "displacement"
+  ]
+}

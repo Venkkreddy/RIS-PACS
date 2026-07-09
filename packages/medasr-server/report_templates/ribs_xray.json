@@ -1,0 +1,83 @@
+{
+  "id": "ribs_xray",
+  "name": "Ribs X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "RIBS"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "AP and oblique views of the {laterality} ribs were obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Ribs",
+        "Lungs",
+        "Pleura",
+        "Soft Tissues"
+      ],
+      "normal_text": "The visualized ribs are intact bilaterally. No fracture is identified. The lung fields appear clear. No pleural effusion is identified. The underlying soft tissues are unremarkable.",
+      "common_findings": [
+        "Rib fracture (specify rib and side)",
+        "Multiple rib fractures",
+        "Flail chest",
+        "Callus formation",
+        "Pleural effusion secondary to rib fracture",
+        "Pneumothorax"
+      ],
+      "medical_terms": [
+        "rib",
+        "costal",
+        "intercostal",
+        "callus",
+        "displaced fracture",
+        "non-displaced",
+        "flail chest",
+        "pneumothorax",
+        "hemothorax",
+        "pleural effusion"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No fracture of the visualized ribs."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "ribs intact, no fracture, lungs clear",
+    "output": {
+      "findings": "The visualized ribs are intact bilaterally. No fracture is identified. The lung fields appear clear. No pleural effusion is identified. The soft tissues are unremarkable.",
+      "impression": "No fracture of the visualized ribs."
+    }
+  },
+  "measurement_hints": [
+    "rib number",
+    "displaced",
+    "cm"
+  ]
+}

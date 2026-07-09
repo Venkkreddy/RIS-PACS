@@ -29,6 +29,7 @@ from medical_dictionary import MedicalDictionary
 from report_structurer import ReportStructurer
 from config import settings
 from intake_service import intake_router
+from report_template_service import report_template_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("medasr-server")
@@ -454,8 +455,11 @@ async def correct_transcript(transcript: str = Form(...)):
     }
 
 
-# ── Intake AI router (Smart Patient Intake) ─────────────────────────────────
+# ── Intake AI router ────────────────────────────────────────────
 app.include_router(intake_router)
+
+# ── Report Template router (local AI, RAG, MedGemma/DeepSeek) ──────────
+app.include_router(report_template_router)
 
 
 if __name__ == "__main__":

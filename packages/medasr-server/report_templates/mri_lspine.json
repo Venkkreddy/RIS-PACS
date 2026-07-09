@@ -1,0 +1,101 @@
+{
+  "id": "mri_lspine",
+  "name": "MRI Lumbar Spine",
+  "modality": [
+    "MR"
+  ],
+  "body_part": [
+    "LSPINE",
+    "SPINE"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "MRI of the lumbar spine was performed using T1 and T2 weighted sequences in sagittal and axial planes."
+    },
+    {
+      "key": "comparison",
+      "title": "Comparison",
+      "default": ""
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Vertebral Bodies",
+        "Disc Spaces L1-S1",
+        "Spinal Canal",
+        "Neural Foramina",
+        "Conus",
+        "Soft Tissues"
+      ],
+      "normal_text": "The lumbar vertebral bodies are normal in height and marrow signal. The intervertebral discs at L1-L2, L2-L3, L3-L4, L4-L5 and L5-S1 show normal height and signal intensity. The spinal canal is of adequate caliber. The neural foramina are patent bilaterally. The conus medullaris terminates at the L1 level. No significant posterior element abnormality.",
+      "common_findings": [
+        "L4-L5 disc prolapse",
+        "L5-S1 disc prolapse",
+        "Disc desiccation",
+        "Canal stenosis",
+        "Foraminal stenosis",
+        "Spondylolisthesis",
+        "Nerve root compression",
+        "Disc extrusion",
+        "Modic changes",
+        "Schmorl nodes"
+      ],
+      "medical_terms": [
+        "disc prolapse",
+        "herniation",
+        "protrusion",
+        "extrusion",
+        "sequestration",
+        "desiccation",
+        "Modic",
+        "Schmorl node",
+        "neural foramen",
+        "canal stenosis",
+        "thecal sac",
+        "nerve root",
+        "conus",
+        "cauda equina",
+        "spondylolisthesis",
+        "facet arthropathy"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No significant disc herniation or neural compression on MRI of the lumbar spine."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "lumbar discs normal signal, no prolapse, canal adequate, no nerve compression",
+    "output": {
+      "findings": "The lumbar vertebral bodies are normal in height and marrow signal. The intervertebral discs at L1-L2 through L5-S1 show normal height and signal intensity. The spinal canal is of adequate caliber. The neural foramina are patent bilaterally. The conus medullaris terminates at the L1 level. No neural compression is identified.",
+      "impression": "No significant disc herniation or neural compression on MRI of the lumbar spine."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm",
+    "canal diameter",
+    "foraminal height",
+    "grade"
+  ]
+}

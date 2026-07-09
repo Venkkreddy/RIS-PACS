@@ -1,0 +1,86 @@
+{
+  "id": "tspine_xray",
+  "name": "Thoracic Spine X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "TSPINE"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "AP and lateral views of the thoracic spine were obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Vertebral Bodies",
+        "Disc Spaces",
+        "Alignment",
+        "Ribs",
+        "Soft Tissues"
+      ],
+      "normal_text": "The thoracic vertebral bodies show normal height and alignment. No fracture or dislocation is identified. The intervertebral disc spaces are maintained. The pedicles are intact. Normal thoracic kyphosis is maintained. The visualized ribs are intact. The paravertebral soft tissues are unremarkable.",
+      "common_findings": [
+        "Vertebral body compression fracture",
+        "Thoracic spondylosis",
+        "Disc space narrowing",
+        "Wedge compression deformity",
+        "Scheuermann disease",
+        "Scoliosis",
+        "Rib fracture"
+      ],
+      "medical_terms": [
+        "vertebral body",
+        "kyphosis",
+        "scoliosis",
+        "compression fracture",
+        "wedge deformity",
+        "Scheuermann",
+        "end plate",
+        "disc space",
+        "pedicle",
+        "costovertebral"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No significant radiological abnormality of the thoracic spine."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "thoracic spine normal, no fracture, kyphosis normal",
+    "output": {
+      "findings": "The thoracic vertebral bodies show normal height and alignment. No fracture or dislocation identified. The intervertebral disc spaces are maintained. Normal thoracic kyphosis is maintained. The pedicles are intact. Visualized ribs are intact.",
+      "impression": "No significant radiological abnormality of the thoracic spine."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm",
+    "Cobb angle",
+    "degree"
+  ]
+}

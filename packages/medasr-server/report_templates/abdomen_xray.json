@@ -1,0 +1,89 @@
+{
+  "id": "abdomen_xray",
+  "name": "Abdomen X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "ABDOMEN"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "Erect and supine AP views of the abdomen were obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Bowel Gas Pattern",
+        "Solid Organs",
+        "Calcifications",
+        "Bones",
+        "Soft Tissues"
+      ],
+      "normal_text": "The bowel gas pattern is normal. No dilated bowel loops are identified. No air-fluid levels are seen on erect view. No free air under the diaphragm. The liver, spleen and kidneys are normal in size. No abnormal calcifications are identified. The visualized bones are intact.",
+      "common_findings": [
+        "Dilated small bowel loops",
+        "Air-fluid levels",
+        "Free air under diaphragm",
+        "Renal calculus",
+        "Ureteric calculus",
+        "Fecal loading",
+        "Calcified gallstones",
+        "Pancreatic calcification",
+        "Aortic calcification"
+      ],
+      "medical_terms": [
+        "bowel gas",
+        "air-fluid level",
+        "pneumoperitoneum",
+        "obstruction",
+        "calculus",
+        "calcification",
+        "hepatomegaly",
+        "splenomegaly",
+        "psoas shadow",
+        "pneumatosis",
+        "volvulus",
+        "intussusception"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No significant radiological abnormality on abdominal radiograph."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "bowel gas normal, no air-fluid levels, no free air, organs normal",
+    "output": {
+      "findings": "The bowel gas pattern is normal. No dilated bowel loops are identified. No air-fluid levels are seen on erect view. No free air under the diaphragm. The liver, spleen and kidneys are normal in size. No abnormal calcifications. The visualized bones are intact.",
+      "impression": "No significant radiological abnormality on abdominal radiograph."
+    }
+  },
+  "measurement_hints": [
+    "cm",
+    "mm",
+    "HU"
+  ]
+}

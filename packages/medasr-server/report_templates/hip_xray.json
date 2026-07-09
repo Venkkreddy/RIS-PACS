@@ -1,0 +1,88 @@
+{
+  "id": "hip_xray",
+  "name": "Hip X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "HIP"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "AP and lateral views of the {laterality} hip were obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Femoral Head",
+        "Acetabulum",
+        "Joint Space",
+        "Bones",
+        "Soft Tissues"
+      ],
+      "normal_text": "The femoral head is well-contained within the acetabulum. The joint space is maintained symmetrically. No fracture is identified. The femoral neck appears intact and of normal density. The greater and lesser trochanters are intact. No periarticular calcification or soft tissue swelling.",
+      "common_findings": [
+        "Neck of femur fracture",
+        "Intertrochanteric fracture",
+        "Subtrochanteric fracture",
+        "Avascular necrosis femoral head",
+        "Hip osteoarthritis",
+        "Joint space narrowing",
+        "Acetabular fracture",
+        "Periarticular calcification"
+      ],
+      "medical_terms": [
+        "femoral head",
+        "acetabulum",
+        "femoral neck",
+        "trochanter",
+        "intertrochanteric",
+        "avascular necrosis",
+        "Garden classification",
+        "joint space",
+        "osteoarthritis",
+        "coxa vara",
+        "protrusio"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No fracture or significant radiological abnormality of the {laterality} hip."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "hip joint normal, femoral head contained, no fracture",
+    "output": {
+      "findings": "The femoral head is well-contained within the acetabulum. The joint space is maintained symmetrically. No fracture is identified. The femoral neck appears intact and of normal density. The greater and lesser trochanters are intact. No periarticular calcification.",
+      "impression": "No fracture or significant radiological abnormality of the hip."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "cm",
+    "displacement",
+    "Garden"
+  ]
+}

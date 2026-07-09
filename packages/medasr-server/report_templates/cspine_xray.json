@@ -1,0 +1,87 @@
+{
+  "id": "cspine_xray",
+  "name": "Cervical Spine X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "CSPINE"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "AP, lateral and open mouth odontoid views of the cervical spine were obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Vertebral Bodies C1-C7",
+        "Disc Spaces",
+        "Alignment",
+        "Prevertebral Soft Tissues",
+        "Odontoid"
+      ],
+      "normal_text": "The cervical vertebrae C1 through C7 are well-aligned. No fracture or dislocation is identified. The intervertebral disc spaces are maintained at all levels. The prevertebral soft tissues are normal in thickness. The odontoid process appears intact. Normal cervical lordosis is maintained.",
+      "common_findings": [
+        "Cervical spondylosis",
+        "Disc space narrowing",
+        "Cervical lordosis straightening",
+        "C5-C6 disc space narrowing",
+        "C6-C7 disc space narrowing",
+        "Osteophytic lipping",
+        "Prevertebral soft tissue swelling",
+        "Fracture (specify level)"
+      ],
+      "medical_terms": [
+        "vertebral body",
+        "odontoid",
+        "atlas",
+        "axis",
+        "cervical lordosis",
+        "disc space",
+        "prevertebral",
+        "facet joint",
+        "uncovertebral joint",
+        "spondylosis",
+        "subluxation",
+        "cord compression"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "No significant radiological abnormality of the cervical spine."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "cervical spine alignment normal, disc spaces maintained, no fracture",
+    "output": {
+      "findings": "The cervical vertebrae C1 through C7 are well-aligned. No fracture or dislocation is identified. The intervertebral disc spaces are maintained at all levels. The prevertebral soft tissues are normal. The odontoid process is intact. Normal cervical lordosis is maintained.",
+      "impression": "No significant radiological abnormality of the cervical spine."
+    }
+  },
+  "measurement_hints": [
+    "mm",
+    "prevertebral thickness"
+  ]
+}

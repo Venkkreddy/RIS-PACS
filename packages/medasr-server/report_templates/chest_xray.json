@@ -1,0 +1,104 @@
+{
+  "id": "chest_xray",
+  "name": "Chest X-Ray",
+  "modality": [
+    "CR",
+    "DX",
+    "XR"
+  ],
+  "body_part": [
+    "CHEST"
+  ],
+  "sections": [
+    {
+      "key": "clinical_history",
+      "title": "Clinical History",
+      "default": ""
+    },
+    {
+      "key": "technique",
+      "title": "Technique",
+      "default": "PA and lateral views of the chest were obtained."
+    },
+    {
+      "key": "findings",
+      "title": "Findings",
+      "subsections": [
+        "Lungs",
+        "Pleura",
+        "Heart",
+        "Mediastinum",
+        "Hilum",
+        "Diaphragm",
+        "Bones",
+        "Soft Tissues"
+      ],
+      "normal_text": "The lungs are clear bilaterally with no evidence of consolidation, collapse or pleural effusion. The heart size is within normal limits with cardiothoracic ratio less than 0.5. The mediastinum is central and not widened. Both hila appear normal in size and density. The hemidiaphragms are intact. No acute bony abnormality is identified. The visualized soft tissues are unremarkable.",
+      "common_findings": [
+        "Right-sided pleural effusion",
+        "Left-sided pleural effusion",
+        "Right lower lobe consolidation",
+        "Left lower lobe consolidation",
+        "Cardiomegaly",
+        "Pneumothorax",
+        "Increased interstitial markings",
+        "Pulmonary edema",
+        "Hilar lymphadenopathy",
+        "Mediastinal widening"
+      ],
+      "medical_terms": [
+        "consolidation",
+        "atelectasis",
+        "pneumothorax",
+        "pleural effusion",
+        "cardiomegaly",
+        "cardiothoracic ratio",
+        "mediastinum",
+        "hilum",
+        "hemidiaphragm",
+        "interstitial",
+        "reticulonodular",
+        "infiltrate",
+        "opacity",
+        "haziness"
+      ]
+    },
+    {
+      "key": "impression",
+      "title": "Impression",
+      "normal_text": "Normal chest radiograph. No acute cardiopulmonary abnormality."
+    },
+    {
+      "key": "recommendation",
+      "title": "Recommendation",
+      "default": ""
+    },
+    {
+      "key": "signature",
+      "title": "Signature",
+      "is_signature": true,
+      "default": ""
+    }
+  ],
+  "few_shot_normal": {
+    "input": "lungs clear, no effusion, heart normal, mediastinum normal",
+    "output": {
+      "technique": "PA and lateral views of the chest were obtained.",
+      "findings": "The lungs are clear bilaterally with no evidence of consolidation, collapse or pleural effusion. The heart size is within normal limits with cardiothoracic ratio less than 0.5. The mediastinum is central and not widened. Both hila appear normal. The hemidiaphragms are intact. No acute bony abnormality is identified.",
+      "impression": "Normal chest radiograph. No acute cardiopulmonary abnormality."
+    }
+  },
+  "few_shot_abnormal": {
+    "input": "right lower lobe consolidation, small right pleural effusion",
+    "output": {
+      "findings": "There is consolidation seen in the right lower lobe. A small right-sided pleural effusion is noted. The heart size is within normal limits. The mediastinum is not widened. The left lung is clear.",
+      "impression": "1. Right lower lobe consolidation — likely infective/inflammatory in etiology.\n2. Small right-sided pleural effusion.\nClinical correlation recommended. Follow-up chest radiograph after treatment advised."
+    }
+  },
+  "measurement_hints": [
+    "cardiothoracic ratio",
+    "CTR",
+    "cm",
+    "mm"
+  ]
+}
