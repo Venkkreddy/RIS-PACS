@@ -375,10 +375,11 @@ class ReportTemplateService:
         laterality: Optional[str] = None,
         patient_info: Optional[dict] = None,
         section_key: Optional[str] = None,   # if set, generate only this section
+        auto_detect: bool = False,
     ) -> dict:
         """
         Full report generation pipeline:
-          1. Find template
+          1. Find template (with voice keyword auto-detection if enabled)
           2. Build RAG context + system prompt
           3. Call local LLM
           4. Bold measurements
@@ -386,7 +387,63 @@ class ReportTemplateService:
 
         Falls back to rule-based if Ollama is unreachable.
         """
-        template = get_template(body_part, modality)
+        detected_bp = body_part.upper().strip()
+        detected_mod = modality.upper().strip()
+
+        if auto_detect or detected_bp == "AUTO" or detected_mod == "AUTO":
+            # Keyword matching from dictation text
+            text_lower = dictation.lower()
+            
+            # Modality detection
+            if "ct scan" in text_lower or "computed tomography" in text_lower or " ct " in text_lower:
+                detected_mod = "CT"
+            elif "mri" in text_lower or "magnetic resonance" in text_lower:
+                detected_mod = "MR"
+            elif "xray" in text_lower or "x-ray" in text_lower or "radiograph" in text_lower:
+                detected_mod = "CR"
+            elif detected_mod == "AUTO":
+                detected_mod = "CR"  # fallback default modality
+                
+            # Body part detection
+            if "chest" in text_lower or "lungs" in text_lower or "pleural" in text_lower or "heart" in text_lower:
+                detected_bp = "CHEST"
+            elif "knee" in text_lower:
+                detected_bp = "KNEE"
+            elif "ankle" in text_lower:
+                detected_bp = "ANKLE"
+            elif "foot" in text_lower or "feet" in text_lower:
+                detected_bp = "FOOT"
+            elif "wrist" in text_lower:
+                detected_bp = "WRIST"
+            elif "hand" in text_lower or "finger" in text_lower:
+                detected_bp = "HAND"
+            elif "shoulder" in text_lower:
+                detected_bp = "SHOULDER"
+            elif "elbow" in text_lower:
+                detected_bp = "ELBOW"
+            elif "hip" in text_lower:
+                detected_bp = "HIP"
+            elif "lumbar spine" in text_lower or "lspine" in text_lower or "l-spine" in text_lower or "lumbar" in text_lower:
+                detected_bp = "LSPINE"
+            elif "cervical spine" in text_lower or "cspine" in text_lower or "c-spine" in text_lower or "cervical" in text_lower:
+                detected_bp = "CSPINE"
+            elif "thoracic spine" in text_lower or "tspine" in text_lower or "t-spine" in text_lower or "thoracic" in text_lower:
+                detected_bp = "TSPINE"
+            elif "pelvis" in text_lower or "pelvic" in text_lower:
+                detected_bp = "PELVIS"
+            elif "skull" in text_lower or "head" in text_lower or "brain" in text_lower:
+                if detected_mod == "CT" or detected_mod == "MR":
+                    detected_bp = "BRAIN"
+                else:
+                    detected_bp = "SKULL"
+            elif "abdomen" in text_lower or "abdominal" in text_lower:
+                detected_bp = "ABDOMEN"
+            elif "ribs" in text_lower or "rib" in text_lower:
+                detected_bp = "RIBS"
+            elif detected_bp == "AUTO":
+                detected_bp = "CHEST"  # fallback default body part
+
+        template = get_template(detected_bp, detected_mod)
         if not template:
             template = _TEMPLATE_CACHE.get("chest_xray", {})
 
@@ -462,6 +519,7 @@ class ReportTemplateService:
             "model": self.llm.model if source == "llm" else "rule_based",
         }
 
+
     async def suggest_section(
         self,
         partial_text: str,
@@ -531,6 +589,7 @@ class StructureRequest(BaseModel):
     patient_age: Optional[int] = Field(None)
     patient_sex: Optional[str] = Field(None)
     clinical_history: Optional[str] = Field(None)
+    auto_detect: Optional[bool] = Field(default=False)
 
 
 class SuggestRequest(BaseModel):
@@ -562,11 +621,13 @@ async def structure_report(req: StructureRequest):
             modality=req.modality,
             laterality=req.laterality,
             patient_info=patient_info,
+            auto_detect=req.auto_detect or False,
         )
         return result
     except Exception as exc:
         logger.error("Report structuring failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
 
 
 @report_template_router.post("/suggest")

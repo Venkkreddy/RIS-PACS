@@ -6,11 +6,11 @@
 **Last updated:** 9 July 2026  
 **Repository:** `tdai-main/metupalle-jpg/tdai`
 
-> **Session: 9 July 2026 (Update 2)** — AI Report Template System built.  
-> 22 body-part/modality-specific report templates (RAG knowledge base), local MedGemma/DeepSeek via Ollama,  
-> `report_template_service.py`, `ReportEditor.tsx` enhanced with AI Fill panel, per-section voice dictation,  
-> Normal quick-insert, Signature block, and measurement auto-bolding. All 100% local, no cloud.  
-> See Section 13 for full Report Template System reference.
+> **Session: 9 July 2026 (Update 2)** — AI Smart Dictate & Report Template System built.  
+> 22 body-part/modality-specific report templates (RAG knowledge base), local MedGemma/DeepSeek via Ollama.  
+> **One-Button Smart Dictate pipeline**: Single microphone captures full voice dictation, automatically transcribes via MedASR, auto-detects template based on voice keywords and study context, extracts measurements, and fills all sections (Technique, Findings, Impression) instantly.  
+> See Section 13 for full Smart Dictate & Report Template reference.
+
 
 > **Session: 9 July 2026** — Smart Patient Intake system built (AI-powered DICOM tag generator).
 > New files: `intake_service.py`, `intake.ts` (backend proxy), `SmartIntake.tsx` (frontend modal).
@@ -1926,14 +1926,15 @@ REPORT_AI_URL=http://localhost:11434
 
 ### Frontend Features Added to ReportEditor
 
-1. **⚡ AI Fill Report panel** — collapsible card above section editor; radiologist types/dictates findings; one click generates all sections in ~3-4 seconds
-2. **Source badge** — shows "MedGemma Local" (green) or "Rule-Based" (amber) after generation
-3. **Template used badge** — shows which template was selected (e.g., "Chest X-Ray")
-4. **Measurements detected chips** — after generation, amber chips show every measurement extracted and bolded in the report
-5. **Per-section Dictate button** — 🎤 button on each section; speak directly into Findings, Impression, etc.
-6. **Per-section Normal button** — one click inserts standard normal text for that section
-7. **Signature section** — structured form with Radiologist Name, Qualification, Date/Time, Referring Physician; locked after finalization
-8. **Fallback** — if Ollama is down, rule-based generator fills sections automatically; no errors shown to user
+1. **🎤 Smart Dictate panel** — collapsible card at top with one prominent mic button; radiologist records a single full dictation; stops to auto-transcribe and format all sections at once.
+2. **Auto-Detect Template** — matches keywords in dictation (e.g. "chest", "c-spine", "ct scan") and links patient study modality to automatically pick from 22 RAG templates.
+3. **Status Phases** — guides the user through `Listening... → Transcribing... → AI Structuring... → Done` micro-states.
+4. **Source badge** — shows "MedGemma Local" (green) or "Rule-Based Fallback" (amber) after formatting.
+5. **Template used badge** — shows which template was selected (e.g., "Chest X-Ray").
+6. **Measurements detected chips** — amber chips showing every measurement extracted and bolded.
+7. **Normal Presets** — per-section quick-insert button to fill default normal findings for faster editing.
+8. **Signature section** — structured form with Radiologist Name, Qualification, Date/Time, Referring Physician; locked after finalization.
+9. **Fallback** — if speech transcription or LLM fails, falls back gracefully (offering text input or using a rule-based structurer) with no system crashes.
 
 ### Models Setup
 
@@ -1942,4 +1943,5 @@ REPORT_AI_URL=http://localhost:11434
 ollama pull medgemma-4b-it   # primary — medical-trained by Google
 ollama pull deepseek-r1:8b   # fallback — better reasoning
 ```
+
 

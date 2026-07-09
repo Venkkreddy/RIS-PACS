@@ -324,9 +324,9 @@ export function reportsRouter(params: {
         signal: AbortSignal.timeout(5000),
       });
       const data = await resp.json();
-      return res.json(data);
+      res.json(data);
     } catch {
-      return res.status(503).json({ error: "Report AI service unavailable", templates: [] });
+      res.status(503).json({ error: "Report AI service unavailable", templates: [] });
     }
   }));
 
@@ -341,6 +341,7 @@ export function reportsRouter(params: {
       patient_age,
       patient_sex,
       clinical_history,
+      auto_detect,
     } = req.body as {
       dictation?: string;
       body_part?: string;
@@ -350,29 +351,33 @@ export function reportsRouter(params: {
       patient_age?: number;
       patient_sex?: string;
       clinical_history?: string;
+      auto_detect?: boolean;
     };
 
     if (!dictation || dictation.trim().length < 3) {
-      return res.status(400).json({ error: "dictation must be at least 3 characters" });
+      res.status(400).json({ error: "dictation must be at least 3 characters" });
+      return;
     }
 
     try {
       const resp = await fetch(`${medasrUrl}/v1/report/structure`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dictation, body_part, modality, laterality, patient_name, patient_age, patient_sex, clinical_history }),
+        body: JSON.stringify({ dictation, body_part, modality, laterality, patient_name, patient_age, patient_sex, clinical_history, auto_detect }),
         signal: AbortSignal.timeout(60_000), // 60s for local LLM inference
       });
 
+
       if (!resp.ok) {
         const text = await resp.text();
-        return res.status(resp.status).json({ error: `Report AI error: ${text}` });
+        res.status(resp.status).json({ error: `Report AI error: ${text}` });
+        return;
       }
 
-      return res.json(await resp.json());
+      res.json(await resp.json());
     } catch {
       // AI service down — return 503 so frontend uses rule-based fallback
-      return res.status(503).json({ error: "Report AI service unavailable", fallback: true });
+      res.status(503).json({ error: "Report AI service unavailable", fallback: true });
     }
   }));
 
@@ -387,7 +392,8 @@ export function reportsRouter(params: {
     };
 
     if (!partial_text || !section_key) {
-      return res.status(400).json({ error: "partial_text and section_key are required" });
+      res.status(400).json({ error: "partial_text and section_key are required" });
+      return;
     }
 
     try {
@@ -398,9 +404,9 @@ export function reportsRouter(params: {
         signal: AbortSignal.timeout(30_000),
       });
 
-      return res.json(await resp.json());
+      res.json(await resp.json());
     } catch {
-      return res.status(503).json({ suggestion: "" });
+      res.status(503).json({ suggestion: "" });
     }
   }));
 
@@ -408,11 +414,12 @@ export function reportsRouter(params: {
   router.get("/ai/health", ensureAuthenticated, asyncHandler(async (_req, res) => {
     try {
       const resp = await fetch(`${medasrUrl}/v1/report/health`, { signal: AbortSignal.timeout(3000) });
-      return res.json(await resp.json());
+      res.json(await resp.json());
     } catch {
-      return res.status(503).json({ status: "unavailable" });
+      res.status(503).json({ status: "unavailable" });
     }
   }));
+
 
   return router;
 }
