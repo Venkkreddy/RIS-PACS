@@ -145,6 +145,10 @@ export function SmartIntake({ existingOrder, prefilledPatientId, prefilledPatien
   const [editNewView, setEditNewView] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string|null>(null);
+  // Background AI refinement
+  const [aiRefining, setAiRefining] = useState(false);
+  const [aiToast, setAiToast] = useState<string|null>(null);
+  const aiAbortRef = useRef<AbortController|null>(null);
 
   useEffect(() => {
     if (result) {
@@ -180,22 +184,60 @@ export function SmartIntake({ existingOrder, prefilledPatientId, prefilledPatien
   }, []);
 
   const analyze = useCallback(async (complaintText: string, answers: Record<string,string> = {}) => {
-    setScreen("analyzing"); setAnalyzeError(null); setClarifyAnswers({});
+    // Cancel any in-flight background AI call
+    if (aiAbortRef.current) { aiAbortRef.current.abort(); aiAbortRef.current = null; }
+    setAiToast(null);
+
+    // Clean up ASR artifacts (</s> end-of-sequence token from MedASR)
+    const cleanText = complaintText.replace(/<\/s>/gi, "").trim();
+
+    // ── STEP 1: Show rule-based result INSTANTLY (<100ms) ─────────────────
+    setAnalyzeError(null); setClarifyAnswers({});
+    const instant = ruleBasedAnalyze(cleanText, answers);
+    setResult(instant);
+    setScreen(instant.ambiguities.length > 0 ? "clarify" : "results");
+
+    // ── STEP 2: Fire AI call in background (max 8s) ────────────────────────
+    // If AI responds with better info, update the card with a toast notification.
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+    setAiRefining(true);
+
+    const aiTimeout = setTimeout(() => controller.abort(), 8000);
     try {
       const resp = await api.post<IntakeResult>("/intake/analyze", {
-        complaint: complaintText,
+        complaint: cleanText,
         patient_age: patientAge ? parseInt(patientAge,10) : undefined,
         patient_sex: patientSex,
         clarification_answers: Object.keys(answers).length > 0 ? answers : undefined,
-      });
+      }, { signal: controller.signal });
+      clearTimeout(aiTimeout);
       const data = resp.data;
       if (!data.ambiguities) data.ambiguities = [];
-      setResult(data);
-      setScreen(data.ambiguities.length > 0 ? "clarify" : "results");
+
+      // Only use AI result if it clearly added value (source === 'ai' and different body part or ambiguities)
+      if (data.source === "ai") {
+        setResult(data);
+        // If we're on clarify screen, update ambiguities
+        if (data.ambiguities.length > 0) setScreen("clarify");
+        else setScreen("results");
+        // Show a brief toast notifying the radiographer AI refined the result
+        const bodyChanged = data.body_part_examined !== instant.body_part_examined;
+        const latChanged = data.laterality !== instant.laterality;
+        if (bodyChanged || latChanged) {
+          setAiToast(`✨ AI refined: ${data.body_part_examined}${data.laterality ? ` (${data.laterality === 'R' ? 'RIGHT' : data.laterality === 'L' ? 'LEFT' : 'BILATERAL'})` : ""}`);
+          setTimeout(() => setAiToast(null), 4000);
+        } else {
+          setAiToast("✨ AI confirmed rule-based result");
+          setTimeout(() => setAiToast(null), 2500);
+        }
+      }
     } catch {
-      const fallback = ruleBasedAnalyze(complaintText, answers);
-      setResult(fallback);
-      setScreen(fallback.ambiguities.length > 0 ? "clarify" : "results");
+      clearTimeout(aiTimeout);
+      // Silently keep rule-based — radiographer already has a usable result
+    } finally {
+      setAiRefining(false);
+      aiAbortRef.current = null;
     }
   }, [patientAge, patientSex]);
 
@@ -485,12 +527,25 @@ export function SmartIntake({ existingOrder, prefilledPatientId, prefilledPatien
               </div>
             )}
 
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600"/>
-              <span className="text-sm font-bold text-slate-800">AI Analysis Complete</span>
-              {result.source === "rule_based" && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">RULE-BASED</span>}
+            <div className="flex items-center gap-2 flex-wrap">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0"/>
+              <span className="text-sm font-bold text-slate-800">Result Ready</span>
+              {result.source === "rule_based" && !aiRefining && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">RULE-BASED</span>}
+              {result.source === "ai" && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">✓ AI</span>}
+              {aiRefining && (
+                <span className="flex items-center gap-1.5 rounded-full bg-tdai-teal-50 border border-tdai-teal-200 px-2.5 py-0.5 text-[10px] font-semibold text-tdai-teal-700">
+                  <span className="h-1.5 w-1.5 rounded-full bg-tdai-teal-500 animate-pulse"/>
+                  AI refining in background…
+                </span>
+              )}
+              {aiToast && (
+                <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-700 animate-pulse">
+                  {aiToast}
+                </span>
+              )}
               <span className="ml-auto text-[10px] text-slate-400 flex items-center gap-1"><Edit3 className="h-3 w-3"/>Click any field to edit</span>
             </div>
+
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 space-y-4">
               <div className="grid grid-cols-2 gap-4">

@@ -274,10 +274,17 @@ class IntakeAIService:
             return result
 
         try:
-            raw = await self._call_llm(user_message)
+            # Hard 8-second budget for LLM — anything slower falls back to rule-based.
+            raw = await asyncio.wait_for(self._call_llm(user_message), timeout=8.0)
             result = self._parse_json(raw)
             result["source"] = "ai"
             self._available = True
+            return result
+        except asyncio.TimeoutError:
+            logger.warning("Intake AI timeout (>8s). Falling back to rule-based.")
+            self._available = False
+            result = self.fallback.analyze(complaint, patient_age, patient_sex)
+            result["source"] = "rule_based"
             return result
         except Exception as exc:
             logger.warning("Intake AI unavailable (%s). Falling back to rule-based.", exc)
@@ -287,7 +294,10 @@ class IntakeAIService:
             return result
 
     async def _call_llm(self, message: str) -> str:
-        """OpenAI-compatible call — works with Ollama, Kompact AI, LM Studio, vLLM."""
+        """OpenAI-compatible call — works with Ollama, Kompact AI, LM Studio, vLLM.
+        The caller wraps this with asyncio.wait_for(timeout=8.0) so we only
+        set a generous httpx-level timeout as a safety net.
+        """
         try:
             from openai import AsyncOpenAI  # type: ignore
         except ImportError:
@@ -296,6 +306,7 @@ class IntakeAIService:
         client = AsyncOpenAI(
             base_url=f"{self.base_url.rstrip('/')}/v1",
             api_key="none",  # Ollama doesn't require a real key
+            timeout=10.0,   # httpx safety net — asyncio.wait_for provides the real 8s limit
         )
         resp = await client.chat.completions.create(
             model=self.model,
@@ -304,7 +315,7 @@ class IntakeAIService:
                 {"role": "user", "content": message},
             ],
             temperature=0.1,
-            max_tokens=700,
+            max_tokens=512,   # Reduced — we only need a small JSON response
         )
         return resp.choices[0].message.content or "{}"
 
