@@ -29,73 +29,85 @@ logger = logging.getLogger("medasr-intake")
 # ─────────────────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """
-You are an expert radiology intake assistant with deep knowledge of:
-- Human anatomy and medical terminology
-- DICOM standards and tag values
-- ICD-10-CM coding for radiology
-- Standard X-Ray view positions by body part
+You are an expert radiology triage assistant. You know DICOM standards,
+human anatomy, standard X-Ray view protocols, and ICD-10-CM coding.
 
-Given a patient complaint or clinical indication,
-extract and return ONLY a valid JSON object with these exact fields:
+Given a patient complaint, return ONLY a valid JSON object with EXACTLY these fields:
 
 {
-  "body_part_examined": "DICOM body part code",
+  "body_part_examined": "<ONE of the DICOM codes listed below — NEVER use anatomical names like 'lower extremity'>",
   "laterality": "R or L or B or null",
-  "study_description": "SHORT PROFESSIONAL DESCRIPTION",
-  "series_descriptions": ["VIEW 1", "VIEW 2"],
-  "view_positions": ["AP", "LATERAL"],
+  "study_description": "SHORT PROFESSIONAL RADIOLOGY DESCRIPTION IN CAPS",
+  "series_descriptions": ["BODY_PART VIEW", ...],
+  "view_positions": ["AP", "LATERAL", ...],
   "reason_for_exam": "cleaned clinical reason",
   "icd10_codes": [
-    {
-      "code": "ICD10 code",
-      "description": "description",
-      "confidence": 0.0
-    }
+    {"code": "ICD10", "description": "description", "confidence": 0.85}
   ],
-  "ai_notes": "any protocol suggestions",
+  "ai_notes": "optional protocol note or null",
   "urgency": "routine or urgent or stat",
-  "follow_up_needed": true,
-  "follow_up_question": "question if ambiguous or null"
+  "ambiguities": []
 }
 
-DICOM body part codes:
-CHEST, ABDOMEN, PELVIS, SPINE, CSPINE, TSPINE, LSPINE, SKULL,
-SHOULDER, ARM, ELBOW, FOREARM, WRIST, HAND, FINGER,
-HIP, THIGH, KNEE, LEG, ANKLE, FOOT, TOE,
-RIBS, CLAVICLE, SCAPULA, STERNUM
+=== DICOM BODY PART CODES (use ONLY these — never use anatomical names) ===
+CHEST, ABDOMEN, PELVIS, SKULL,
+SPINE, CSPINE, TSPINE, LSPINE,
+SHOULDER, CLAVICLE, SCAPULA, STERNUM, RIBS,
+ARMn, ELBOW, FOREARM, WRIST, HAND, FINGER,
+HIP, THIGH, KNEE, LEG, ANKLE, FOOT, TOE
 
-Standard views by body part:
-CHEST: PA, LATERAL (or AP if portable)
-KNEE: AP, LATERAL (add SKYLINE if patella involvement mentioned)
-ANKLE: AP, LATERAL, MORTISE
-FOOT: AP, LATERAL, OBLIQUE
-WRIST: PA, LATERAL (add SCAPHOID if injury/fracture)
-HAND: PA, OBLIQUE
-SHOULDER: AP, AXIAL
-ELBOW: AP, LATERAL
-HIP: AP, LATERAL
-SPINE (any): AP, LATERAL
-SKULL: PA, LATERAL
-PELVIS: AP
-RIBS: AP, OBLIQUE
-ABDOMEN: AP
+=== TRAUMA / MOBILITY KEYWORD MAPPING ===
+When you see these patterns, map directly to the DICOM code:
+- "fell from cycle" / "fell from bike" / "road accident" + "can't walk" / "unable to walk" → KNEE or LEG (ask laterality)
+- "wrist pain after fall" → WRIST
+- "head injury" / "fell and hit head" → SKULL
+- "chest pain" / "breathlessness" → CHEST (no laterality needed)
+- "back pain" / "lumbar" → LSPINE
+- "neck pain" / "cervical" → CSPINE
+- "shoulder pain" → SHOULDER (ask laterality)
+- "ankle twist" / "ankle sprain" → ANKLE (ask laterality)
+- "hip pain after fall" (elderly) → HIP (ask laterality)
 
-ICD-10 rules:
-- Prefer symptom codes (R, M, S chapters) not final diagnosis codes
+=== STANDARD VIEWS BY BODY PART ===
+CHEST: PA, LATERAL | KNEE: AP, LATERAL | ANKLE: AP, LATERAL, MORTISE
+FOOT: AP, LATERAL, OBLIQUE | WRIST: PA, LATERAL | HAND: PA, OBLIQUE
+SHOULDER: AP, AXIAL | ELBOW: AP, LATERAL | HIP: AP, LATERAL
+SPINE: AP, LATERAL | SKULL: PA, LATERAL | PELVIS: AP | RIBS: AP, OBLIQUE
+LEG: AP, LATERAL | THIGH: AP, LATERAL | FOREARM: AP, LATERAL
+
+=== ICD-10 RULES ===
 - Trauma → S-chapter; Pain → M25.3xx; Fracture → S-chapter
 - Include laterality in code when available (right=1, left=2)
-- Return top 3 most likely codes with confidence scores (0.0 to 1.0)
+- Return top 3 most likely codes with confidence 0.0–1.0
 
-Urgency rules:
-- STAT: trauma, fracture, chest pain, difficulty breathing, head injury, stroke
-- URGENT: significant pain, swelling, suspected infection, fever with localized pain
+=== URGENCY RULES ===
+- STAT: fracture, head injury, chest pain, difficulty breathing, stroke, unconscious, major trauma
+- URGENT: unable to walk, severe pain, swelling, suspected infection, high fever
 - ROUTINE: everything else
 
-Laterality rules:
-- If complaint mentions body part that normally has laterality (arm, leg, knee, etc.)
-  but NO side is specified → set follow_up_needed: true and follow_up_question to ask
+=== AMBIGUITIES ARRAY (max 4 entries) ===
+If key information is missing or unclear, add up to 4 items to "ambiguities".
+Each item MUST have:
+  - "field": one of: "laterality", "body_part", "urgency", "injury_type"
+  - "question": SHORT question (max 8 words)
+  - "options": list of 2–4 short answer strings (max 3 words each)
 
-Output ONLY the JSON. No explanation. No markdown. No code fences.
+Only add an ambiguity if you genuinely cannot determine the answer from context.
+Do NOT ask about laterality for CHEST, ABDOMEN, PELVIS, SKULL, SPINE, RIBS, STERNUM.
+Maximum 4 ambiguity entries total.
+
+Example ambiguities:
+[
+  {"field": "laterality", "question": "Which leg is affected?", "options": ["Left leg", "Right leg", "Both legs"]},
+  {"field": "injury_type", "question": "Type of injury?", "options": ["Fall / Trauma", "Chronic pain", "Swelling"]}
+]
+
+If nothing is ambiguous, return: "ambiguities": []
+
+=== OUTPUT RULES ===
+- Return ONLY valid JSON — no explanation, no markdown fences, no extra text.
+- body_part_examined MUST be one of the DICOM codes above.
+- ambiguities must be an array (empty [] if no clarification needed).
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -319,8 +331,14 @@ class IntakeRequest(BaseModel):
     complaint: str = Field(..., min_length=3, max_length=1000)
     patient_age: Optional[int] = Field(None, ge=0, le=130)
     patient_sex: Optional[str] = Field(None)
-    # If radiographer answered follow-up question, include here to re-run analysis
-    laterality_answer: Optional[str] = Field(None, description="R, L, or B — provided after follow-up question")
+    # Answers to ambiguity questions — dict of field -> chosen option
+    clarification_answers: Optional[dict] = Field(None, description="Map of field->answer from follow-up questions")
+
+
+class AmbiguityItem(BaseModel):
+    field: str          # laterality | body_part | urgency | injury_type
+    question: str
+    options: list[str]
 
 
 class IntakeResponse(BaseModel):
@@ -333,8 +351,9 @@ class IntakeResponse(BaseModel):
     icd10_codes: list[dict]
     ai_notes: Optional[str]
     urgency: str
-    follow_up_needed: bool
-    follow_up_question: Optional[str]
+    ambiguities: list[dict]     # list of AmbiguityItem dicts
+    follow_up_needed: bool      # True if ambiguities is non-empty (kept for backward compat)
+    follow_up_question: Optional[str]  # kept for backward compat
     source: str  # "ai" | "rule_based"
 
 
@@ -342,16 +361,19 @@ class IntakeResponse(BaseModel):
 async def analyze_intake(req: IntakeRequest):
     """
     Analyze free-text complaint and return structured DICOM tag suggestions.
-
-    If the AI/LLM is unavailable, the rule-based fallback activates automatically.
-    If `laterality_answer` is provided (after follow-up), it is appended to the
-    complaint so the model incorporates the side information.
+    If `clarification_answers` is provided, they are appended to the complaint
+    so the model incorporates those answers.
     """
     complaint = req.complaint.strip()
-    if req.laterality_answer:
-        side_map = {"R": "right", "L": "left", "B": "bilateral"}
-        side_word = side_map.get(req.laterality_answer.upper(), req.laterality_answer)
-        complaint = f"{side_word} {complaint}"
+
+    # Append any clarification answers to the complaint text
+    if req.clarification_answers:
+        extras = []
+        for field, answer in req.clarification_answers.items():
+            if answer:
+                extras.append(f"{field}: {answer}")
+        if extras:
+            complaint = complaint + ". Additional info: " + "; ".join(extras)
 
     try:
         result = await _intake_service.analyze(
@@ -374,12 +396,30 @@ async def analyze_intake(req: IntakeRequest):
         "icd10_codes": [],
         "ai_notes": None,
         "urgency": "routine",
+        "ambiguities": [],
         "follow_up_needed": False,
         "follow_up_question": None,
         "source": "rule_based",
     }
     for key, default in defaults.items():
         result.setdefault(key, default)
+
+    # Normalise ambiguities — enforce max 4, ensure correct shape
+    raw_amb = result.get("ambiguities", [])
+    if not isinstance(raw_amb, list):
+        raw_amb = []
+    validated_amb = []
+    for item in raw_amb[:4]:
+        if isinstance(item, dict) and "question" in item and "options" in item:
+            validated_amb.append({
+                "field": item.get("field", "general"),
+                "question": str(item["question"])[:80],
+                "options": [str(o)[:40] for o in item["options"][:4] if o],
+            })
+    result["ambiguities"] = validated_amb
+    result["follow_up_needed"] = len(validated_amb) > 0
+    if validated_amb:
+        result["follow_up_question"] = validated_amb[0]["question"]
 
     return result
 
