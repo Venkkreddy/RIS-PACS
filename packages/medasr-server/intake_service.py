@@ -152,6 +152,11 @@ class RuleBasedIntake:
         "ribs": ("RIBS", ["AP", "OBLIQUE"], [("S22.3", "Fracture of rib", 0.5)]),
         "sternum": ("STERNUM", ["PA", "LATERAL"], [("S22.2", "Fracture of sternum", 0.4)]),
         "scapula": ("SCAPULA", ["AP", "LATERAL"], [("S42.1", "Fracture of scapula", 0.4)]),
+        # Trauma / mobility patterns — must come BEFORE generic keywords
+        "cycle": ("KNEE", ["AP", "LATERAL"], [("S80.00", "Contusion of knee", 0.7)]),
+        "bike": ("KNEE", ["AP", "LATERAL"], [("S80.00", "Contusion of knee", 0.7)]),
+        "motorcycle": ("LEG", ["AP", "LATERAL"], [("S82.90", "Fracture of lower leg", 0.7)]),
+        "walk": ("LEG", ["AP", "LATERAL"], [("M79.67", "Pain in lower leg", 0.5)]),
     }
 
     LATERALITY_MAP = {
@@ -166,8 +171,10 @@ class RuleBasedIntake:
         "trauma", "accident", "rta", "fall from height",
     ]
     URGENT_KEYWORDS = [
-        "severe pain", "unable to walk", "swelling", "fever", "infection",
-        "suspected", "dislocation", "cannot move",
+        "severe pain", "unable to walk", "not able to walk", "can't walk",
+        "cannot walk", "swelling", "fever", "infection",
+        "suspected", "dislocation", "cannot move", "fell from cycle",
+        "fell from bike", "road accident",
     ]
     BILATERAL_PARTS = {"CHEST", "ABDOMEN", "PELVIS", "SPINE", "CSPINE", "TSPINE", "LSPINE", "SKULL", "STERNUM"}
 
@@ -221,6 +228,16 @@ class RuleBasedIntake:
         # Generate view names with laterality prefix
         series = [f"{side_prefix}{matched_part} {v}" for v in matched_views]
 
+        # Build ambiguities list for missing laterality
+        ambiguities = []
+        if needs_followup:
+            bp_label = matched_part.capitalize()
+            ambiguities = [{
+                "field": "laterality",
+                "question": f"Which {bp_label.lower()} is affected?",
+                "options": [f"Left {bp_label}", f"Right {bp_label}", "Both sides"],
+            }]
+
         return {
             "body_part_examined": matched_part,
             "laterality": laterality,
@@ -230,9 +247,10 @@ class RuleBasedIntake:
             "reason_for_exam": complaint.strip(),
             "icd10_codes": matched_icd,
             "urgency": urgency,
+            "ambiguities": ambiguities,
             "follow_up_needed": needs_followup,
-            "follow_up_question": "Which side is affected?" if needs_followup else None,
-            "ai_notes": "Rule-based detection — AI service unavailable or not configured.",
+            "follow_up_question": ambiguities[0]["question"] if ambiguities else None,
+            "ai_notes": None,
             "source": "rule_based",
         }
 
@@ -275,14 +293,14 @@ class IntakeAIService:
             return result
 
         try:
-            # Hard 8-second budget for LLM — anything slower falls back to rule-based.
-            raw = await asyncio.wait_for(self._call_llm(user_message), timeout=8.0)
+            # Hard 3-second budget for LLM — anything slower falls back to rule-based.
+            raw = await asyncio.wait_for(self._call_llm(user_message), timeout=3.0)
             result = self._parse_json(raw)
             result["source"] = "ai"
             self._available = True
             return result
         except asyncio.TimeoutError:
-            logger.warning("Intake AI timeout (>8s). Falling back to rule-based.")
+            logger.warning("Intake AI timeout (>3s). Falling back to rule-based.")
             self._available = False
             result = self.fallback.analyze(complaint, patient_age, patient_sex)
             result["source"] = "rule_based"
