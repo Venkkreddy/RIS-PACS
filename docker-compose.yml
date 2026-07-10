@@ -156,11 +156,11 @@ services:
       VERTEX_AI_ENABLED: "${VERTEX_AI_ENABLED:-false}"
       GOOGLE_APPLICATION_CREDENTIALS: "${GOOGLE_APPLICATION_CREDENTIALS:-}"
       HF_TOKEN: "${HF_TOKEN}"
-      OLLAMA_URL: "http://host.docker.internal:11434"
-      INTAKE_AI_URL: "http://host.docker.internal:11434"
+      OLLAMA_URL: "http://ollama:11434"
+      INTAKE_AI_URL: "http://ollama:11434"
       INTAKE_AI_MODEL: "${INTAKE_AI_MODEL:-biomistral:7b}"
       INTAKE_AI_ENGINE: "${INTAKE_AI_ENGINE:-ollama}"
-      REPORT_AI_URL: "http://host.docker.internal:11434"
+      REPORT_AI_URL: "http://ollama:11434"
       REPORT_AI_MODEL: "${REPORT_AI_MODEL:-medgemma-4b-it}"
       REPORT_AI_ENGINE: "${REPORT_AI_ENGINE:-ollama}"
     healthcheck:
@@ -169,6 +169,45 @@ services:
       timeout: 10s
       start_period: 120s
       retries: 5
+    networks:
+      - imaging-net
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-storage:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - imaging-net
+
+  ollama-pull:
+    image: curlimages/curl:latest
+    container_name: ollama-pull
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint:
+      - "sh"
+      - "-c"
+      - |
+        echo "Waiting for Ollama to be ready..."
+        until curl -s http://ollama:11434/api/tags > /dev/null; do
+          sleep 2
+        done
+        echo "Pulling biomistral:7b model..."
+        curl -X POST http://ollama:11434/api/pull -d '{"name": "biomistral:7b"}'
+        echo "Pulling medgemma-4b-it model..."
+        curl -X POST http://ollama:11434/api/pull -d '{"name": "medgemma-4b-it"}'
+        echo "Models successfully cached in volume."
     networks:
       - imaging-net
 
@@ -205,8 +244,9 @@ services:
       MEDASR_ENABLED: "true"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
       GEMINI_MODEL: "${GEMINI_MODEL:-gemini-2.0-flash}"
-      OLLAMA_URL: "http://host.docker.internal:11434"
+      OLLAMA_URL: "http://ollama:11434"
       OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3}"
+
       INTERNAL_SERVICE_SECRET: "${INTERNAL_SERVICE_SECRET:-}"
       WEBHOOK_SECRET: "${WEBHOOK_SECRET:-}"
       SESSION_SECRET: "${SESSION_SECRET:-tdai-session-secret-change-in-production}"
@@ -316,3 +356,6 @@ volumes:
     driver: local
   monai-models:
     driver: local
+  ollama-storage:
+    driver: local
+
