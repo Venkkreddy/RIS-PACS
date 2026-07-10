@@ -1924,7 +1924,7 @@ REPORT_AI_MODEL=medgemma         # local medical-tuned Gemma
 REPORT_AI_URL=http://ollama:11434  # resolve via container network
 
 INTAKE_AI_ENGINE=ollama          # ollama | rule_based
-INTAKE_AI_MODEL=adrienbrault/biomistral-7b  # local medical-tuned Mistral
+INTAKE_AI_MODEL=jsk/bio-mistral  # local medical-tuned Mistral
 INTAKE_AI_URL=http://ollama:11434  # resolve via container network
 ```
 
@@ -1946,7 +1946,7 @@ INTAKE_AI_URL=http://ollama:11434  # resolve via container network
 ```bash
 # Pull once on Ollama (primary + fallback)
 ollama pull medgemma
-ollama pull adrienbrault/biomistral-7b
+ollama pull jsk/bio-mistral
 ```
 
 

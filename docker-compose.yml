@@ -204,7 +204,7 @@ services:
           sleep 2
         done
         echo "Pulling biomistral model..."
-        curl -X POST http://ollama:11434/api/pull -d '{"name": "adrienbrault/biomistral-7b"}'
+        curl -X POST http://ollama:11434/api/pull -d '{"name": "jsk/bio-mistral"}'
         echo "Pulling medgemma model..."
         curl -X POST http://ollama:11434/api/pull -d '{"name": "medgemma"}'
         echo "Models successfully cached in volume."
