@@ -203,10 +203,10 @@ services:
         until curl -s http://ollama:11434/api/tags > /dev/null; do
           sleep 2
         done
-        echo "Pulling biomistral:7b model..."
-        curl -X POST http://ollama:11434/api/pull -d '{"name": "biomistral:7b"}'
-        echo "Pulling medgemma-4b-it model..."
-        curl -X POST http://ollama:11434/api/pull -d '{"name": "medgemma-4b-it"}'
+        echo "Pulling biomistral model..."
+        curl -X POST http://ollama:11434/api/pull -d '{"name": "adrienbrault/biomistral-7b"}'
+        echo "Pulling medgemma model..."
+        curl -X POST http://ollama:11434/api/pull -d '{"name": "medgemma"}'
         echo "Models successfully cached in volume."
     networks:
       - imaging-net
