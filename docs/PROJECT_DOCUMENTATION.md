@@ -1918,11 +1918,16 @@ Each template contains:
 ### Environment Configuration
 
 ```env
-# medasr-server .env
+# medasr-server .env & docker-compose environment vars
 REPORT_AI_ENGINE=ollama          # ollama | rule_based
 REPORT_AI_MODEL=medgemma-4b-it   # or deepseek-r1:8b
-REPORT_AI_URL=http://localhost:11434
+REPORT_AI_URL=http://host.docker.internal:11434  # use host.docker.internal inside container
+
+INTAKE_AI_ENGINE=ollama          # ollama | rule_based
+INTAKE_AI_MODEL=biomistral:7b
+INTAKE_AI_URL=http://host.docker.internal:11434  # use host.docker.internal inside container
 ```
+
 
 ### Frontend Features Added to ReportEditor
 
