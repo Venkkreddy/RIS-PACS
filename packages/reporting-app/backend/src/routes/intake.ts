@@ -46,11 +46,11 @@ export function intakeRouter(): Router {
       logger.info({ message: "MEDASR_ENABLED=false — intake will use rule-based fallback" });
     }
 
-    const { complaint, patient_age, patient_sex, laterality_answer } = req.body as {
+    const { complaint, patient_age, patient_sex, clarification_answers } = req.body as {
       complaint?: string;
       patient_age?: number;
       patient_sex?: string;
-      laterality_answer?: string;
+      clarification_answers?: Record<string, any>;
     };
 
     if (!complaint || typeof complaint !== "string" || complaint.trim().length < 3) {
@@ -63,13 +63,13 @@ export function intakeRouter(): Router {
         complaintLength: complaint.length,
         hasAge: patient_age != null,
         hasSex: !!patient_sex,
-        hasLateralityAnswer: !!laterality_answer,
+        hasClarification: !!clarification_answers,
       });
 
       const response = await fetch(`${medasrUrl}/v1/intake/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ complaint, patient_age, patient_sex, laterality_answer }),
+        body: JSON.stringify({ complaint, patient_age, patient_sex, clarification_answers }),
         signal: AbortSignal.timeout(30_000), // 30s max for LLM inference
       });
 
@@ -99,6 +99,49 @@ export function intakeRouter(): Router {
         error: "Intake AI service unavailable",
         fallback: true,
       });
+    }
+  });
+
+  // ── POST /refine — Process answers and return refined suggestions ─────────
+  router.post("/refine", ensureAuthenticated, async (req: Request, res: Response) => {
+    const { original_complaint, answers, patient_age, patient_sex } = req.body as {
+      original_complaint?: string;
+      answers?: Record<string, any>;
+      patient_age?: number;
+      patient_sex?: string;
+    };
+
+    if (!original_complaint) {
+      return res.status(400).json({ error: "original_complaint is required" });
+    }
+
+    try {
+      logger.info({
+        message: "Proxying intake refine to medasr-server",
+        complaintLength: original_complaint.length,
+      });
+
+      const response = await fetch(`${medasrUrl}/v1/intake/refine`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ original_complaint, answers, patient_age, patient_sex }),
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        logger.error({ message: "Intake AI refine failed", status: response.status, body: text });
+        return res.status(response.status).json({ error: `Intake AI refine error: ${text}` });
+      }
+
+      const result = await response.json();
+      return res.json(result);
+    } catch (err) {
+      logger.warn({
+        message: "Intake AI service refine unreachable",
+        error: String(err),
+      });
+      return res.status(503).json({ error: "Intake AI service unavailable" });
     }
   });
 

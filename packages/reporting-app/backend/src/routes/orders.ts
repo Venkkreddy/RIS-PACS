@@ -32,6 +32,11 @@ const updateOrderSchema = z.object({
   priority: priorityEnum.optional(),
   referringPhysicianId: z.string().optional(),
   referringPhysicianName: z.string().optional(),
+  bodyPart: z.string().optional(),
+  laterality: z.string().nullable().optional(),
+  clinicalHistory: z.string().optional(),
+  viewPositions: z.array(z.string()).optional(),
+  studyDescription: z.string().optional(),
 });
 
 const listQuerySchema = z.object({

@@ -17,7 +17,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": false,
-      "createDesktopShortcut": true,
+      "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "TDAI RIS/PACS",
       "installerIcon": "assets/icon.ico",

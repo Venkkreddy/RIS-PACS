@@ -43,7 +43,7 @@ docker save -o tdai-images.tar ^
     tdai-monai-server ^
     tdai-medasr-server ^
     postgres:16-alpine ^
-    orthancteam/orthanc:latest
+    tdai-orthanc-custom:latest
 
 if %errorlevel% neq 0 (
     echo.

@@ -312,11 +312,15 @@ function buildViewerUrl(studyInstanceUids: string | string[]): string | null {
 }
 
 function filterViewerUidsByAvailability(candidateUids: string[], availableUids: Set<string>): string[] {
-  if (candidateUids.length === 0 || availableUids.size === 0) {
-    return candidateUids;
-  }
+  // If no candidate UIDs, nothing to filter.
+  if (candidateUids.length === 0) return [];
+  // If PACS has no indexed studies at all (e.g. fresh install, no images received yet),
+  // return empty so viewerUrl stays null and the dashboard shows correct status
+  // (Scheduled/Checked-In/In-Progress) instead of prematurely showing "Ready for Reporting".
+  if (availableUids.size === 0) return [];
   const filtered = candidateUids.filter((uid) => availableUids.has(uid));
-  return filtered.length > 0 ? filtered : candidateUids;
+  // Only return matched UIDs — never fall back to unverified UIDs.
+  return filtered;
 }
 
 function prioritizeViewerUids(candidateUids: string[], preferredUid: string | null | undefined): string[] {

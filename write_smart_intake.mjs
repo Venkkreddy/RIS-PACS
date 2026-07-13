@@ -1,4 +1,6 @@
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import { writeFileSync } from "fs";
+
+const code = `import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
   Zap, Mic, MicOff, Loader2, ChevronLeft, ChevronRight,
   CheckCircle2, AlertTriangle, Edit3, Volume2, Plus, X,
@@ -94,38 +96,15 @@ function instantAnalyze(complaint: string, age?: number): Partial<IntakeResult> 
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-interface SmartIntakeProps {
-  existingOrder?: RadiologyOrder;
-  prefilledPatientId?: string;
-  prefilledPatientName?: string;
-  onConfirmed?: (result: IntakeResult, orderId: string) => void;
-  onClose?: () => void;
-}
+interface SmartIntakeProps { orderId?: string; onComplete?: (data: IntakeResult) => void; onClose?: () => void; }
 
-export const SmartIntake: React.FC<SmartIntakeProps> = ({
-  existingOrder,
-  prefilledPatientId,
-  prefilledPatientName,
-  onConfirmed,
-  onClose,
-}) => {
+export const SmartIntake: React.FC<SmartIntakeProps> = ({ orderId, onComplete, onClose }) => {
   // Patient info
-  const [patientName, setPatientName]   = useState(prefilledPatientName || existingOrder?.patientName || "");
-  const [patientId,   setPatientId]     = useState(prefilledPatientId || existingOrder?.patientId || "");
+  const [patientName, setPatientName]   = useState("");
+  const [patientId,   setPatientId]     = useState(orderId || "");
   const [patientAge,  setPatientAge]    = useState("");
   const [patientSex,  setPatientSex]    = useState<"M"|"F"|"O">("M");
-  const [complaint,   setComplaint]     = useState(existingOrder?.clinicalHistory || "");
-
-  // Prefill metadata from existingOrder if available
-  useEffect(() => {
-    if (existingOrder) {
-      if (existingOrder.patientName) setPatientName(existingOrder.patientName);
-      if (existingOrder.patientId) setPatientId(existingOrder.patientId);
-      if (existingOrder.clinicalHistory) setComplaint(existingOrder.clinicalHistory);
-      // Guess age from birth date if birthDate exists in shared types (often under patient MRN record)
-      // Otherwise keep empty for operator to enter
-    }
-  }, [existingOrder]);
+  const [complaint,   setComplaint]     = useState("");
 
   // Patient lookup
   const [nameMatches,       setNameMatches]       = useState<RadiologyOrder[]>([]);
@@ -202,7 +181,7 @@ export const SmartIntake: React.FC<SmartIntakeProps> = ({
   const analyze = useCallback(async (complaintText: string, clarAnswers?: Record<string,string>) => {
     if (aiAbortRef.current) { aiAbortRef.current.abort(); }
     setAiToast(null);
-    const clean = complaintText.replace(/<\/s>/gi,"").trim();
+    const clean = complaintText.replace(/<\\/s>/gi,"").trim();
     const age   = patientAge ? parseInt(patientAge,10) : undefined;
 
     // Show instant result
@@ -242,7 +221,7 @@ export const SmartIntake: React.FC<SmartIntakeProps> = ({
       const changed = data.body_part_examined !== instant.body_part_examined || data.laterality !== instant.laterality;
       if (data.source === "ai") {
         setAiToast(changed
-          ? `✨ AI refined: ${data.body_part_examined}${data.laterality ? " ("+{R:"RIGHT",L:"LEFT",B:"BILATERAL"}[data.laterality]+")" : ""}`
+          ? \`✨ AI refined: \${data.body_part_examined}\${data.laterality ? " ("+{R:"RIGHT",L:"LEFT",B:"BILATERAL"}[data.laterality]+")" : ""}\`
           : "✨ AI confirmed result"
         );
         setTimeout(() => setAiToast(null), 3500);
@@ -301,7 +280,7 @@ export const SmartIntake: React.FC<SmartIntakeProps> = ({
     setAiRefining(true);
     try {
       const resp = await api.post<IntakeResult>("/intake/refine", {
-        original_complaint: complaint.replace(/<\/s>/gi,"").trim(),
+        original_complaint: complaint.replace(/<\\/s>/gi,"").trim(),
         answers: finalAnswers,
         patient_age: patientAge ? parseInt(patientAge,10) : undefined,
         patient_sex: patientSex,
@@ -333,7 +312,7 @@ export const SmartIntake: React.FC<SmartIntakeProps> = ({
           const resp = await api.post<{ transcript?: string; raw_transcript?: string }>("/voice/transcribe", fd, {
             headers: { "Content-Type": "multipart/form-data" }
           });
-          const text = (resp.data.transcript || resp.data.raw_transcript || "").replace(/<\/s>/gi,"").trim();
+          const text = (resp.data.transcript || resp.data.raw_transcript || "").replace(/<\\/s>/gi,"").trim();
           if (text) setComplaint(text);
         } catch { } finally { setVoiceLoading(false); }
         stream.getTracks().forEach(t => t.stop());
@@ -396,7 +375,7 @@ export const SmartIntake: React.FC<SmartIntakeProps> = ({
     const cls = c >= 0.8 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
               : c >= 0.6 ? "bg-amber-50 text-amber-700 border-amber-200"
               : "bg-red-50 text-red-700 border-red-200";
-    return <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${cls}`}>{pct}% confidence</span>;
+    return <span className={\`rounded-full border px-2 py-0.5 text-[10px] font-bold \${cls}\`}>{pct}% confidence</span>;
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -524,7 +503,7 @@ export const SmartIntake: React.FC<SmartIntakeProps> = ({
               </button>
               <div className="flex-1 bg-slate-100 rounded-full h-1.5">
                 <div className="bg-tdai-teal-500 h-1.5 rounded-full transition-all duration-300"
-                  style={{width: `${((currentQIdx+1)/questions.length)*100}%`}}/>
+                  style={{width: \`\${((currentQIdx+1)/questions.length)*100}%\`}}/>
               </div>
               <span className="text-xs font-bold text-slate-500">
                 {currentQIdx+1} / {questions.length}
@@ -570,9 +549,9 @@ export const SmartIntake: React.FC<SmartIntakeProps> = ({
                           return (
                             <button key={opt.value}
                               onClick={() => handleMultiAnswer(opt.value)}
-                              className={`w-full flex items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition-all ${sel?"border-tdai-teal-500 bg-tdai-teal-50":"border-slate-200 bg-white hover:border-tdai-teal-300"}`}>
+                              className={\`w-full flex items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition-all \${sel?"border-tdai-teal-500 bg-tdai-teal-50":"border-slate-200 bg-white hover:border-tdai-teal-300"}\`}>
                               {opt.icon && <span className="text-xl">{opt.icon}</span>}
-                              <span className={`text-sm font-semibold ${sel?"text-tdai-teal-700":"text-slate-700"}`}>{opt.label}</span>
+                              <span className={\`text-sm font-semibold \${sel?"text-tdai-teal-700":"text-slate-700"}\`}>{opt.label}</span>
                               {sel && <CheckCircle2 className="ml-auto h-4 w-4 text-tdai-teal-600"/>}
                             </button>
                           );
@@ -680,7 +659,7 @@ export const SmartIntake: React.FC<SmartIntakeProps> = ({
                 <div className="mt-2 flex gap-2">
                   {(["routine","urgent","stat"] as const).map(u => (
                     <button key={u} onClick={()=>setEditUrgency(u)}
-                      className={`flex-1 rounded-xl border py-2.5 text-xs font-bold uppercase tracking-wide transition-all ${editUrgency===u?urgencyColor(u)+" border-current":"border-slate-200 bg-white text-slate-400 hover:border-slate-300"}`}>
+                      className={\`flex-1 rounded-xl border py-2.5 text-xs font-bold uppercase tracking-wide transition-all \${editUrgency===u?urgencyColor(u)+" border-current":"border-slate-200 bg-white text-slate-400 hover:border-slate-300"}\`}>
                       {u}
                     </button>
                   ))}
@@ -779,3 +758,10 @@ export const SmartIntake: React.FC<SmartIntakeProps> = ({
 };
 
 export default SmartIntake;
+`;
+
+writeFileSync(
+  "d:/TDAI/ris-pacs/metupalle-jpg/tdai/packages/reporting-app/frontend/src/components/SmartIntake.tsx",
+  code, "utf-8"
+);
+console.log("SmartIntake.tsx written OK");

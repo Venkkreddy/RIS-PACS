@@ -15,8 +15,13 @@ if (!gotLock) { app.quit() }
 
 app.on('second-instance', () => {
   if (mainWindow) { 
+    if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.show()
     mainWindow.focus() 
+  } else if (splashWindow) {
+    if (splashWindow.isMinimized()) splashWindow.restore()
+    splashWindow.show()
+    splashWindow.focus()
   }
 })
 
@@ -177,12 +182,77 @@ async function startServices() {
   const cwd = path.dirname(getResourcePath('docker-compose.yml'))
   const tarPath = getResourcePath('tdai-images.tar')
 
-  // Load images if tar exists
-  if (fs.existsSync(tarPath)) {
-    updateSplash('Loading components (first run: 3-5 mins)...')
-    await new Promise((resolve) => {
-      exec(`docker load -i "${tarPath}"`, { cwd }, () => resolve())
-    })
+  // Step 1: Check if the custom image is already loaded locally
+  let imageLoaded = false;
+  try {
+    imageLoaded = await new Promise((resolve) => {
+      exec('docker images -q tdai-orthanc-custom:latest', (err, stdout) => {
+        if (!err && stdout && stdout.trim().length > 0) {
+          resolve(true);
+        } else {
+          resolve(false);
+        }
+      });
+    });
+  } catch (e) {
+    imageLoaded = false;
+  }
+
+  // Step 2: If the image does not exist locally, load it from the tar file
+  if (!imageLoaded) {
+    // Self-healing fallback: If tarPath doesn't exist, search user Downloads and Desktop folders
+    if (!fs.existsSync(tarPath)) {
+      const homeDir = require('os').homedir();
+      const searchDirs = [
+        path.join(homeDir, 'Downloads', 'TDAI-RIS-PACS'),
+        path.join(homeDir, 'Desktop', 'TDAI-RIS-PACS'),
+        path.join(homeDir, 'Downloads'),
+        path.join(homeDir, 'Desktop')
+      ];
+      let foundPath = null;
+      for (const dir of searchDirs) {
+        const candidate = path.join(dir, 'tdai-images.tar');
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+          foundPath = candidate;
+          break;
+        }
+      }
+      if (foundPath) {
+        updateSplash('Copying components (this will take 1-2 mins)...');
+        try {
+          fs.copyFileSync(foundPath, tarPath);
+          console.log(`Self-healing: copied tdai-images.tar from ${foundPath} to ${tarPath}`);
+        } catch (e) {
+          console.error("Self-healing copy failed:", e);
+        }
+      }
+    }
+
+    // Load images if tar exists
+    if (fs.existsSync(tarPath)) {
+      updateSplash('Loading components (first run: 3-5 mins)...')
+      await new Promise((resolve, reject) => {
+        exec(`docker load -i "${tarPath}"`, { cwd }, (err, stdout, stderr) => {
+          if (err) {
+            console.error("Docker load failed:", err, stderr);
+            reject(new Error(`Failed to load components: ${stderr || err.message}`));
+          } else {
+            try {
+              fs.unlinkSync(tarPath);
+              console.log("Successfully loaded and deleted tdai-images.tar to reclaim disk space.");
+            } catch (e) {
+              console.error("Could not delete loaded tar file:", e);
+            }
+            resolve();
+          }
+        })
+      })
+    } else {
+      // If we still don't have the images and the load failed, throw a descriptive setup error
+      throw new Error("Pre-built Docker images not found.\nPlease make sure 'tdai-images.tar' is located in the unzipped folder next to the installer.");
+    }
+  } else {
+    console.log("Docker images already loaded locally. Skipping docker load step.");
   }
 
   // Stop any previous session and force-remove any conflicting container names
