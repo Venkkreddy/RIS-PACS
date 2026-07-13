@@ -92,11 +92,22 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
 
   useEffect(() => {
     const newSections = report.sections && report.sections.length > 0 ? report.sections : DEFAULT_SECTIONS;
-    setSections(newSections);
+    // Auto-populate clinical_history from the order record (receptionist's intake notes)
+    // Only if the section is currently empty — don't overwrite what radiologist already typed
+    const rawMeta = report.metadata as Record<string, unknown> | undefined;
+    const orderClinicalHistory = (rawMeta?.clinicalHistory as string) ?? "";
+    const populatedSections = newSections.map((s) => {
+      if (s.key === "clinical_history" && !s.content.replace(/<[^>]*>/g, "").trim() && orderClinicalHistory.trim()) {
+        return { ...s, content: `<p>${orderClinicalHistory}</p>` };
+      }
+      return s;
+    });
+    setSections(populatedSections);
     setPriority(report.priority ?? "routine");
     setDirty(false);
     dirtyRef.current = false;
   }, [report.id]);
+
 
   const doSave = useCallback(async () => {
     if (!dirtyRef.current) return;
@@ -213,15 +224,18 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
     const rawMeta = report.metadata as Record<string, unknown> | undefined;
     const patient = rawMeta?.patient as Record<string, unknown> | undefined;
     return {
-      bodyPart: (report as any).bodyPart ?? (report as any).body_part ?? (rawMeta?.bodyPart as string) ?? "AUTO",
-      modality: (report as any).modality ?? (rawMeta?.modality as string) ?? "AUTO",
+      // bodyPart and modality now surfaced at top-level of metadata
+      bodyPart: (rawMeta?.bodyPart as string) ?? (report as any).bodyPart ?? (report as any).body_part ?? "AUTO",
+      modality: (rawMeta?.modality as string) ?? (report as any).modality ?? "AUTO",
       laterality: (report as any).laterality ?? undefined,
       patientName: (patient?.patientName ?? (report as any).patientName ?? "") as string,
       patientAge: (patient?.age ?? undefined) as number | undefined,
       patientSex: (patient?.gender ?? patient?.sex ?? "") as string,
-      clinicalHistory: (rawMeta?.clinicalHistory ?? "") as string,
+      // clinicalHistory comes from the order record (set by receptionist at check-in)
+      clinicalHistory: (rawMeta?.clinicalHistory as string) ?? "",
     };
   }
+
 
   async function startFullDictation() {
     setDictatePhase("recording");

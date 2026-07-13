@@ -130,8 +130,19 @@ export function reportsRouter(params: {
     const studyMetadata = studyRecord?.metadata as Record<string, unknown> | undefined;
     const patientMrn = metadataString(studyMetadata, ["patientId", "PatientID", "patient_id", "00100020"]);
     const patient = patientMrn ? await params.store.getPatientByMrn(patientMrn) : null;
+    // Pull clinicalHistory from the order (stored in study metadata during check-in/intake)
+    const orderClinicalHistory = (
+      metadataString(studyMetadata, ["clinicalHistory", "clinical_history", "chiefComplaint", "complaints"]) ??
+      (studyRecord as any)?.clinicalHistory ??
+      ""
+    );
     const reportMetadata = {
       ...(body.metadata ?? {}),
+      // Surface order-level fields so the ReportEditor can read them
+      bodyPart: (studyRecord as any)?.bodyPart ?? metadataString(studyMetadata, ["bodyPart", "body_part"]) ?? "",
+      modality: studyRecord?.modality ?? metadataString(studyMetadata, ["modality"]) ?? "",
+      // clinicalHistory comes from the ORDER record (receptionist intake), not the radiologist
+      clinicalHistory: orderClinicalHistory,
       patient: {
         ...(body.metadata && typeof body.metadata.patient === "object" && body.metadata.patient !== null
           ? body.metadata.patient as Record<string, unknown>
@@ -144,11 +155,14 @@ export function reportsRouter(params: {
         patientId: patient?.patientId ?? patientMrn,
         patientRegistryId: patient?.id ?? metadataString(studyMetadata, ["patientRegistryId"]),
         dateOfBirth: patient?.dateOfBirth ?? metadataString(studyMetadata, ["patientDateOfBirth"]),
+        age: patient?.dateOfBirth ? Math.floor((Date.now() - new Date(patient.dateOfBirth).getTime()) / 3.156e10) : undefined,
+        gender: patient?.gender ?? metadataString(studyMetadata, ["patientSex", "gender"]),
         phone: patient?.phone ?? metadataString(studyMetadata, ["patientPhone"]),
         email: patient?.email ?? metadataString(studyMetadata, ["patientEmail"]),
         address: patient?.address ?? metadataString(studyMetadata, ["patientAddress"]),
       },
     };
+
     const report = await params.reportService.createReport({
       studyId: body.studyId,
       templateId: body.templateId,
