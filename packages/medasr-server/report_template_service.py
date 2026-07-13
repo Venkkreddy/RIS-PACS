@@ -222,6 +222,11 @@ RULES:
 7. If the radiologist mentions a measurement (2cm, 3mm, CTR 0.48), include it EXACTLY
 8. For the technique section, use the standard technique for this study type
 9. Output ONLY valid JSON. No markdown, no explanations, no extra text.
+10. CRITICAL — clinical_history section:
+    - ONLY populate if a "Clinical history:" line is explicitly provided in the user message
+    - Do NOT copy imaging findings or dictation text into clinical_history
+    - If no clinical history is provided, output an EMPTY STRING "" for clinical_history
+    - Clinical history = patient's symptoms/complaint BEFORE the scan, not imaging findings
 
 OUTPUT FORMAT — respond with exactly this JSON structure:
 {{{json_keys.replace('"clinical_history"', '"clinical_history": "..."').replace('"technique"', '"technique": "..."').replace('"comparison"', '"comparison": "..."').replace('"findings"', '"findings": "..."').replace('"impression"', '"impression": "..."').replace('"recommendation"', '"recommendation": "..."')}}}
@@ -306,10 +311,11 @@ class RuleBasedReportGenerator:
                 continue
 
             if key == "clinical_history":
-                if patient_info and patient_info.get("clinical_history"):
+                if patient_info and patient_info.get("clinical_history") and patient_info["clinical_history"] != patient_info.get("dictation_text"):
                     sections_out[key] = patient_info["clinical_history"]
                 else:
-                    sections_out[key] = dictation
+                    # Do NOT dump dictation here — leave empty so radiologist fills it
+                    sections_out[key] = ""
                 continue
 
             if key == "technique":
@@ -612,7 +618,8 @@ async def structure_report(req: StructureRequest):
         "patient_name": req.patient_name,
         "patient_age": req.patient_age,
         "patient_sex": req.patient_sex,
-        "clinical_history": req.clinical_history or req.dictation,
+        "clinical_history": req.clinical_history,
+        "dictation_text": req.dictation,   # used to avoid echoing dictation as clinical history
     }
     try:
         result = await _report_service.structure_report(

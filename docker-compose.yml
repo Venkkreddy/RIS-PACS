@@ -161,7 +161,7 @@ services:
       INTAKE_AI_MODEL: "${INTAKE_AI_MODEL:-biomistral:7b}"
       INTAKE_AI_ENGINE: "${INTAKE_AI_ENGINE:-ollama}"
       REPORT_AI_URL: "http://ollama:11434"
-      REPORT_AI_MODEL: "${REPORT_AI_MODEL:-medgemma-4b-it}"
+      REPORT_AI_MODEL: "${REPORT_AI_MODEL:-medgemma:latest}"
       REPORT_AI_ENGINE: "${REPORT_AI_ENGINE:-ollama}"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5001/health')\" || exit 1"]

@@ -288,7 +288,7 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
         patient_name: ctx.patientName,
         patient_age: ctx.patientAge,
         patient_sex: ctx.patientSex,
-        clinical_history: ctx.clinicalHistory || transcript,
+        clinical_history: ctx.clinicalHistory || undefined,
       });
       const data = res.data as {
         sections: { key: string; title: string; content: string; is_signature?: boolean }[];
@@ -336,7 +336,7 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
         modality: ctx.modality,
         auto_detect: true,
         patient_name: ctx.patientName,
-        clinical_history: ctx.clinicalHistory || fallbackText,
+        clinical_history: ctx.clinicalHistory || undefined,
       });
       const data = res.data as {
         sections: { key: string; title: string; content: string; is_signature?: boolean }[];
