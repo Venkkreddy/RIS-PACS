@@ -52,6 +52,41 @@ function metadataString(metadata: Record<string, unknown> | undefined, keys: str
   return undefined;
 }
 
+async function buildClinicalHistoryFromPastReports(store: any, patientId: string): Promise<string> {
+  try {
+    const pastReports = await store.listFinalizedReportsForPatient(patientId);
+    if (!pastReports || pastReports.length === 0) return "";
+    
+    // Sort by date descending (latest first)
+    pastReports.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    
+    const historyLines: string[] = [];
+    for (const report of pastReports) {
+      const rawMeta = report.metadata || {};
+      const dateStr = report.createdAt ? new Date(report.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "Prior Study";
+      const modality = rawMeta.modality || "";
+      const bodyPart = rawMeta.bodyPart || "";
+      
+      // Find impression or findings from the sections
+      const impressionSection = report.sections?.find((s: any) => s.key === "impression");
+      const findingsSection = report.sections?.find((s: any) => s.key === "findings");
+      const summaryText = (impressionSection?.content || findingsSection?.content || "")
+        .replace(/<[^>]*>/g, "") // strip HTML tags
+        .replace(/\s+/g, " ")
+        .trim();
+        
+      if (summaryText) {
+        historyLines.push(`Prior ${modality} ${bodyPart} (${dateStr}): ${summaryText}`);
+      }
+    }
+    
+    return historyLines.join("\n");
+  } catch (err) {
+    console.error("Failed to build clinical history from past reports:", err);
+    return "";
+  }
+}
+
 export function reportsRouter(params: {
   store: StoreService;
   reportService: ReportService;
@@ -130,19 +165,27 @@ export function reportsRouter(params: {
     const studyMetadata = studyRecord?.metadata as Record<string, unknown> | undefined;
     const patientMrn = metadataString(studyMetadata, ["patientId", "PatientID", "patient_id", "00100020"]);
     const patient = patientMrn ? await params.store.getPatientByMrn(patientMrn) : null;
-    // Pull clinicalHistory from the order (stored in study metadata during check-in/intake)
+    // Today's complaint from the order (receptionist intake notes)
     const orderClinicalHistory = (
       metadataString(studyMetadata, ["clinicalHistory", "clinical_history", "chiefComplaint", "complaints"]) ??
       (studyRecord as any)?.clinicalHistory ??
       ""
     );
+    // Real Clinical History = past medical reports/scans from the database
+    const patientIdStr = patient?.patientId ?? patientMrn;
+    const pastReportsHistory = patientIdStr
+      ? await buildClinicalHistoryFromPastReports(params.store, patientIdStr)
+      : "";
+
     const reportMetadata = {
       ...(body.metadata ?? {}),
       // Surface order-level fields so the ReportEditor can read them
       bodyPart: (studyRecord as any)?.bodyPart ?? metadataString(studyMetadata, ["bodyPart", "body_part"]) ?? "",
       modality: studyRecord?.modality ?? metadataString(studyMetadata, ["modality"]) ?? "",
-      // clinicalHistory comes from the ORDER record (receptionist intake), not the radiologist
-      clinicalHistory: orderClinicalHistory,
+      // Today's presenting complaint is today's symptom indication
+      presentingComplaint: orderClinicalHistory,
+      // clinicalHistory compiles prior scans / history or is left empty
+      clinicalHistory: pastReportsHistory,
       patient: {
         ...(body.metadata && typeof body.metadata.patient === "object" && body.metadata.patient !== null
           ? body.metadata.patient as Record<string, unknown>
@@ -344,7 +387,6 @@ export function reportsRouter(params: {
     }
   }));
 
-  /** POST /reports/ai/structure — generate full report sections from dictation */
   router.post("/ai/structure", ensureAuthenticated, asyncHandler(async (req, res) => {
     const {
       dictation,
@@ -355,6 +397,7 @@ export function reportsRouter(params: {
       patient_age,
       patient_sex,
       clinical_history,
+      presenting_complaint,
       auto_detect,
     } = req.body as {
       dictation?: string;
@@ -365,6 +408,7 @@ export function reportsRouter(params: {
       patient_age?: number;
       patient_sex?: string;
       clinical_history?: string;
+      presenting_complaint?: string;
       auto_detect?: boolean;
     };
 
@@ -377,7 +421,7 @@ export function reportsRouter(params: {
       const resp = await fetch(`${medasrUrl}/v1/report/structure`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dictation, body_part, modality, laterality, patient_name, patient_age, patient_sex, clinical_history, auto_detect }),
+        body: JSON.stringify({ dictation, body_part, modality, laterality, patient_name, patient_age, patient_sex, clinical_history, presenting_complaint, auto_detect }),
         signal: AbortSignal.timeout(60_000), // 60s for local LLM inference
       });
 

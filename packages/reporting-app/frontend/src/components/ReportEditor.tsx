@@ -92,7 +92,7 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
 
   useEffect(() => {
     const newSections = report.sections && report.sections.length > 0 ? report.sections : DEFAULT_SECTIONS;
-    // Auto-populate clinical_history from the order record (receptionist's intake notes)
+    // Auto-populate clinical_history from the patient's compiled prior reports list
     // Only if the section is currently empty — don't overwrite what radiologist already typed
     const rawMeta = report.metadata as Record<string, unknown> | undefined;
     const orderClinicalHistory = (rawMeta?.clinicalHistory as string) ?? "";
@@ -231,8 +231,10 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
       patientName: (patient?.patientName ?? (report as any).patientName ?? "") as string,
       patientAge: (patient?.age ?? undefined) as number | undefined,
       patientSex: (patient?.gender ?? patient?.sex ?? "") as string,
-      // clinicalHistory comes from the order record (set by receptionist at check-in)
+      // clinicalHistory comes from compiled prior reports
       clinicalHistory: (rawMeta?.clinicalHistory as string) ?? "",
+      // presentingComplaint comes from order notes/complaints entered at check-in
+      presentingComplaint: (rawMeta?.presentingComplaint as string) ?? "",
     };
   }
 
@@ -303,6 +305,7 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
         patient_age: ctx.patientAge,
         patient_sex: ctx.patientSex,
         clinical_history: ctx.clinicalHistory || undefined,
+        presenting_complaint: ctx.presentingComplaint || undefined,
       });
       const data = res.data as {
         sections: { key: string; title: string; content: string; is_signature?: boolean }[];
@@ -351,6 +354,7 @@ export function ReportEditor({ report, onRefresh }: ReportEditorProps) {
         auto_detect: true,
         patient_name: ctx.patientName,
         clinical_history: ctx.clinicalHistory || undefined,
+        presenting_complaint: ctx.presentingComplaint || undefined,
       });
       const data = res.data as {
         sections: { key: string; title: string; content: string; is_signature?: boolean }[];

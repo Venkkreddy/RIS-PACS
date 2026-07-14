@@ -243,6 +243,8 @@ YOUR COLLABORATIVE ROLE — do ALL of the following:
    - If no clinical history provided → output EMPTY STRING ""
 
 6. FORMAT: Write in formal, professional radiology language. No first person. No conversational language.
+7. CRITICAL JSON VALUE RULE: Every single value in the JSON MUST be a string. Do NOT use nested objects, dicts, lists, or null values.
+8. NO NESTED OBJECTS: Values (like "findings" or "impression") must be a single plain-text paragraph. Do NOT use keys or sub-objects inside them.
 
 OUTPUT FORMAT — respond with ONLY valid JSON, no markdown, no explanation:
 {{{json_keys.replace('"clinical_history"', '"clinical_history": "..."').replace('"technique"', '"technique": "..."').replace('"comparison"', '"comparison": "..."').replace('"findings"', '"findings": "..."').replace('"impression"', '"impression": "..."').replace('"recommendation"', '"recommendation": "..."')}}}
@@ -381,6 +383,29 @@ class RuleBasedReportGenerator:
 # Main Report Template Service
 # ─────────────────────────────────────────────────────────────────────────────
 
+def sanitize_sections_dict(data: dict) -> dict[str, str]:
+    sanitized = {}
+    for k, v in data.items():
+        if v is None:
+            sanitized[k] = ""
+        elif isinstance(v, dict):
+            # Flatten dict: e.g. {"cardiomegaly": "mild"} -> "Cardiomegaly: mild"
+            lines = []
+            for sub_k, sub_v in v.items():
+                if sub_v:
+                    lines.append(f"{sub_k.capitalize()}: {sub_v}")
+                else:
+                    lines.append(sub_k.capitalize())
+            sanitized[k] = ". ".join(lines)
+            if sanitized[k] and not sanitized[k].endswith("."):
+                sanitized[k] += "."
+        elif isinstance(v, list):
+            sanitized[k] = ", ".join(str(item) for item in v)
+        else:
+            sanitized[k] = str(v)
+    return sanitized
+
+
 class ReportTemplateService:
 
     def __init__(self):
@@ -479,8 +504,10 @@ class ReportTemplateService:
                 user_msg_parts.append(f"Age: {patient_info['patient_age']}")
             if patient_info.get("patient_sex"):
                 user_msg_parts.append(f"Sex: {patient_info['patient_sex']}")
+            if patient_info.get("presenting_complaint"):
+                user_msg_parts.append(f"Presenting complaint / indication: {patient_info['presenting_complaint']}")
             if patient_info.get("clinical_history"):
-                user_msg_parts.append(f"Clinical history: {patient_info['clinical_history']}")
+                user_msg_parts.append(f"Clinical history (prior reports summary): {patient_info['clinical_history']}")
         if side:
             user_msg_parts.append(f"Side: {'RIGHT' if side == 'R' else 'LEFT' if side == 'L' else 'BILATERAL'}")
 
@@ -494,7 +521,8 @@ class ReportTemplateService:
             try:
                 system_prompt = build_system_prompt(template, side)
                 raw = await self.llm.generate(system_prompt, user_message)
-                sections = self.llm.parse_json(raw)
+                parsed = self.llm.parse_json(raw)
+                sections = sanitize_sections_dict(parsed)
                 self.llm._available = True
             except Exception as exc:
                 logger.warning("Local LLM unavailable (%s) — using rule-based fallback", exc)
@@ -504,6 +532,10 @@ class ReportTemplateService:
         if not sections or source == "rule_based":
             sections = self.fallback.generate(dictation, template, patient_info, side)
             source = "rule_based"
+
+        # Force clinical_history to match the patient's record clinical history (or blank if none)
+        # Real Clinical History = past medical reports/scans from the database, not what LLM guesses
+        sections["clinical_history"] = (patient_info or {}).get("clinical_history") or ""
 
         # Post-process: bold measurements in findings
         if "findings" in sections and sections["findings"]:
@@ -609,6 +641,7 @@ class StructureRequest(BaseModel):
     patient_age: Optional[int] = Field(None)
     patient_sex: Optional[str] = Field(None)
     clinical_history: Optional[str] = Field(None)
+    presenting_complaint: Optional[str] = Field(None)
     auto_detect: Optional[bool] = Field(default=False)
 
 
@@ -633,6 +666,7 @@ async def structure_report(req: StructureRequest):
         "patient_age": req.patient_age,
         "patient_sex": req.patient_sex,
         "clinical_history": req.clinical_history,
+        "presenting_complaint": req.presenting_complaint,
         "dictation_text": req.dictation,   # used to avoid echoing dictation as clinical history
     }
     try:

@@ -151,6 +151,14 @@ export class InMemoryStoreService {
     return [...this.reports.values()].filter((r) => r.ownerId === ownerId);
   }
 
+  async listFinalizedReportsForPatient(patientId: string): Promise<Report[]> {
+    return [...this.reports.values()].filter(r => {
+      const patientMeta = r.metadata?.patient as any;
+      const mrn = patientMeta?.patientId || patientMeta?.PatientID || r.metadata?.patientId;
+      return mrn && mrn.trim().toUpperCase() === patientId.trim().toUpperCase() && (r.status === "final" || r.status === "amended");
+    });
+  }
+
   async listReportsForReferringPhysician(referringPhysicianId: string): Promise<Report[]> {
     const orders = await this.listOrders({ referringPhysicianId });
     const studyIds = new Set(orders.map((o) => o.studyId).filter((id): id is string => Boolean(id)));

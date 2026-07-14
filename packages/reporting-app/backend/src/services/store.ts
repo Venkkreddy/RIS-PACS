@@ -152,6 +152,16 @@ export class StoreService {
     return snapshot.docs.map((doc) => doc.data() as Report);
   }
 
+  async listFinalizedReportsForPatient(patientId: string): Promise<Report[]> {
+    const snapshot = await this.firestore.collection("reports").get();
+    const reports = snapshot.docs.map((doc) => doc.data() as Report);
+    return reports.filter(r => {
+      const patientMeta = r.metadata?.patient as any;
+      const mrn = patientMeta?.patientId || patientMeta?.PatientID || r.metadata?.patientId;
+      return mrn && mrn.trim().toUpperCase() === patientId.trim().toUpperCase() && (r.status === "final" || r.status === "amended");
+    });
+  }
+
   // Completed reports for studies linked to this referring physician's own orders —
   // lets a doctor see finalized reports on their patients without exposing everyone else's.
   async listReportsForReferringPhysician(referringPhysicianId: string): Promise<Report[]> {
