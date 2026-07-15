@@ -2,9 +2,11 @@
 
 ## Medical Imaging Platform: Integrated RIS + PACS + AI
 
-**Version:** 0.2.0  
-**Last updated:** 9 July 2026  
+**Version:** 0.2.1  
+**Last updated:** 15 July 2026  
 **Repository:** `tdai-main/metupalle-jpg/tdai`
+
+> **Session: 15 July 2026** — Modality Console Integration completed. C-FIND (MWL) & MPPS communication verified. Added AE Title bypass configuration in Orthanc for seamless console communication. Custom post-processing sanitizer implemented for Llama 3.2 1B report template formatting.
 
 > **Session: 9 July 2026 (Update 2)** — AI Smart Dictate & Report Template System built.  
 > 22 body-part/modality-specific report templates (RAG knowledge base), local MedGemma/DeepSeek via Ollama.  
@@ -1058,6 +1060,8 @@ The reporting backend proxies DICOMweb requests to Dicoogle, handling:
 A separate Docker Compose stack using Orthanc as the primary PACS:
 
 - Orthanc with DICOMweb plugin (port 4242 DICOM, 8042 HTTP)
+- **Modality Worklist (MWL) & MPPS Services:** Custom Orthanc Python plugin listens on port 4242 for C-FIND (MWL query) and dynamically routes them to the RIS backend (`/api/orders/worklist/mwl`). An MPPS listener on port 11115 handles `N-CREATE`/`N-SET` state updates and routes them to RIS (`/api/orders/worklist/mpps/:id`) to automatically track modality scan progress in real-time.
+- **AE Title Bypass Config:** Integrated `DicomAlwaysAllow*` flags to permit worklist queries and image storage (C-STORE) from any modality console regardless of Calling AE Title configuration.
 - Stock OHIF viewer with Orthanc + Dicoogle dual data sources
 - Nginx proxy for SPA + DICOMweb routing
 - Optional Dicoogle profile for parallel operation
@@ -1088,6 +1092,7 @@ A separate Docker Compose stack using Orthanc as the primary PACS:
 - Google's MedASR model for medical speech recognition
 - LLM correction pipeline (Gemini/Vertex/MedGemma)
 - Structured radiology report output: `{ findings, impression, raw_input, corrections_applied }`
+- **Report Template & Structurer AI (Llama 3.2 1B):** Implemented lightweight offline report template generator using `llama3.2:1b` model. Includes strict response formatting rules (forbid nested JSON lists/objects) and automatic post-process dictionary sanitization (`sanitize_sections_dict`) to flatten nested responses into readable, standard report paragraphs.
 
 ### Wav2Vec2 Server (`:5002`)
 
@@ -1948,5 +1953,36 @@ INTAKE_AI_URL=http://ollama:11434  # resolve via container network
 ollama pull medgemma
 ollama pull jsk/bio-mistral
 ```
+
+---
+
+## 21. Product Roadmap, PRD & Benchmarking Suite
+
+**Last updated:** 14 July 2026
+
+To align the product strategy with business and clinical needs, a comprehensive product roadmap, requirements, and competitor benchmarking suite has been generated. This suite is intended for management and executive review to guide the engineering team's milestones.
+
+### Generated Deliverables
+
+The following files have been created in the workspace root directory:
+
+1. **[TDAI_RIS_PACS_PRD_Roadmap_Suite.xlsx](file:///d:/TDAI/ris-pacs/TDAI_RIS_PACS_PRD_Roadmap_Suite.xlsx)**
+   - **Summary Dashboard**: Overview of feature statuses (68 features evaluated: 37 Must-Have, 19 Good-to-Have, 12 Differentiating; 7 Implemented, 48 Supported via standard tools, 13 Planned).
+   - **Market & Competitors**: Competitive market share distribution (MNCs 45%, MedSynaptics 20%, FilmPlus 12%, Local/Custom 21%, TDAI Target 8%) and competitor profiles.
+   - **Product Roadmap**: 4-phase strategic timeline spanning Q3 2026 to Q2 2027.
+   - **Gapfit Summary**: Detail of critical competitor feature gaps and remediation plans.
+   - **Detailed Feature Modules**: 9 dedicated sheets comparing 68 granular features (Worklist, Viewer, Annotation, Measurements, DICOM Networking, etc.) between TDAI, FilmPlus, and MedSynaptics.
+
+2. **[TDAI_RIS_PACS_Product_Roadmap_PRD.pdf](file:///d:/TDAI/ris-pacs/TDAI_RIS_PACS_Product_Roadmap_PRD.pdf)**
+   - A print-ready, professional document compiling the project's background problem statement, target personas, market share benchmarking table, gapfit remediation strategies, quarterly release phases, and security/HIPAA compliance guidelines.
+
+### Technical Generation Script
+
+- **Script Location**: [generate_prd_roadmap.py](file:///d:/TDAI/ris-pacs/metupalle-jpg/tdai/scripts/generate_prd_roadmap.py)
+- **Execution**: Can be re-run at any time to regenerate the spreadsheets and PDF files after updating feature matrices or roadmap targets:
+  ```bash
+  & "C:\Users\VENKAT REDDY\miniconda3\python.exe" metupalle-jpg\tdai\scripts\generate_prd_roadmap.py
+  ```
+
 
 

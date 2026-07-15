@@ -9,11 +9,11 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir \
+RUN pip install --no-cache-dir --timeout=300 \
         --index-url https://download.pytorch.org/whl/cpu \
         --extra-index-url https://pypi.org/simple \
         torch torchaudio && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir --timeout=120 -r requirements.txt
 
 COPY . .
 

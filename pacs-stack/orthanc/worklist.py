@@ -147,7 +147,8 @@ def RunMppsServer():
                 
             return 0x0000 # Success
 
-        ae = AE(ae_title=b'ORTHANC_MPPS')
+        # Use 'ORTHANC' to match the client's current console MPPS called AE title setting
+        ae = AE(ae_title=b'ORTHANC')
         ae.add_supported_context(ModalityPerformedProcedureStep)
         handlers = [
             (evt.EVT_N_CREATE, handle_create),
