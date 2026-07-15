@@ -266,6 +266,7 @@ class LocalReportLLM:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
+            response_format={"type": "json_object"},
             temperature=0.05,   # very low — we want consistent medical text
             max_tokens=1500,
         )
@@ -278,7 +279,25 @@ class LocalReportLLM:
         match = re.search(r"\{.*\}", cleaned, re.DOTALL)
         if not match:
             raise ValueError("No JSON found in LLM output")
-        return json.loads(match.group())
+        json_str = match.group()
+        try:
+            return json.loads(json_str)
+        except Exception as e:
+            # Fallback 1: replace raw newlines in double-quoted strings
+            try:
+                def escape_newlines(m):
+                    return m.group(0).replace('\n', '\\n').replace('\r', '\\r')
+                fixed_str = re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"', escape_newlines, json_str)
+                return json.loads(fixed_str)
+            except Exception:
+                # Fallback 2: regex key-value extraction for flat JSON dictionary
+                res = {}
+                pattern = r'"([^"]+)"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"'
+                for k, v in re.findall(pattern, json_str):
+                    res[k] = v.replace('\\n', '\n').replace('\\"', '"')
+                if res:
+                    return res
+                raise e
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -360,6 +379,20 @@ class RuleBasedReportGenerator:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+def clean_string_value(val: str) -> str:
+    if not val:
+        return ""
+    val = val.strip()
+    # Remove all curly braces since they are JSON remnants and never belong in a radiology text
+    val = val.replace('{', '').replace('}', '')
+    # Remove leading/trailing quotes
+    while (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+        val = val[1:-1].strip()
+    # Clean up double quotes at beginning or end if left over
+    val = val.lstrip('"').rstrip('"').strip()
+    return val
+
+
 def sanitize_sections_dict(data: dict) -> dict[str, str]:
     sanitized = {}
     for k, v in data.items():
@@ -380,6 +413,9 @@ def sanitize_sections_dict(data: dict) -> dict[str, str]:
             sanitized[k] = ", ".join(str(item) for item in v)
         else:
             sanitized[k] = str(v)
+        
+        # Clean string value from JSON/LLM wrapper remnants
+        sanitized[k] = clean_string_value(sanitized[k])
     return sanitized
 
 
@@ -618,6 +654,7 @@ class StructureRequest(BaseModel):
     patient_age: Optional[int] = Field(None)
     patient_sex: Optional[str] = Field(None)
     clinical_history: Optional[str] = Field(None)
+    presenting_complaint: Optional[str] = Field(None)
     auto_detect: Optional[bool] = Field(default=False)
 
 
@@ -641,7 +678,8 @@ async def structure_report(req: StructureRequest):
         "patient_name": req.patient_name,
         "patient_age": req.patient_age,
         "patient_sex": req.patient_sex,
-        "clinical_history": req.clinical_history or req.dictation,
+        "clinical_history": req.clinical_history or "",
+        "presenting_complaint": req.presenting_complaint or "",
     }
     try:
         result = await _report_service.structure_report(
