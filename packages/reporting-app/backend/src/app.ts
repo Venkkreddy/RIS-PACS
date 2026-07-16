@@ -33,6 +33,7 @@ import { intakeRouter } from "./routes/intake";
 import { radiographerRouter } from "./routes/radiographer";
 import { tenantAuthRouter } from "./routes/tenantAuth";
 import { tenantAdminRouter } from "./routes/tenantAdminPlatform";
+import { searchRouter } from "./routes/search";
 import { JwtService } from "./services/jwtService";
 import { TenantScopedStore } from "./services/tenantScopedStore";
 import { DicoogleService } from "./services/dicoogleService";
@@ -163,6 +164,7 @@ export function createApp(deps?: {
   app.use("/intake", intakeRouter());
   app.use("/radiographer", radiographerRouter(store));
   app.use("/", servicesRouter(serviceRegistry, store));
+  app.use("/", searchRouter(store));
 
   // ── HIPAA compliance routes (audit log, emergency access, compliance dashboard) ──
   app.use("/hipaa", hipaaRouter(hipaaAuditService));

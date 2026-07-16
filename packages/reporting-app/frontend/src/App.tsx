@@ -26,6 +26,7 @@ import { ReferringPage } from "./pages/ReferringPage";
 import { BillingDashboardPage } from "./pages/BillingDashboardPage";
 import { ReceptionistPage } from "./pages/ReceptionistPage";
 import { ProfilePage } from "./pages/ProfilePage";
+import { AISearchPage } from "./pages/AISearchPage";
 import { useEffect, useState } from "react";
 
 function ScrollToTop() {
@@ -168,6 +169,9 @@ export default function App() {
         } />
         <Route path="/profile" element={
           auth.isAuthenticated ? <ProfilePage /> : <Navigate to="/" replace />
+        } />
+        <Route path="/ai-search" element={
+          <PermissionGate require={["scans:view"]}><AISearchPage /></PermissionGate>
         } />
       </Routes>
       </main>

@@ -462,6 +462,162 @@ app.include_router(intake_router)
 app.include_router(report_template_router)
 
 
+# ── Search Query Parser ─────────────────────────────────────────
+class SearchParseRequest(BaseModel):
+    query: str
+
+
+class SearchParseResponse(BaseModel):
+    modality: Optional[str] = None
+    body_part: Optional[str] = None
+    status: Optional[str] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    finding: Optional[str] = None
+    method: str = "keyword"
+
+
+def _keyword_parse_search(query: str) -> dict:
+    """Regex/keyword-based fallback parser for search queries."""
+    import re
+    from datetime import date, timedelta
+
+    upper = query.upper()
+    out: dict = {}
+
+    # Modality
+    modality_map = {
+        r'\bCT\b': 'CT', r'\bMRI?\b': 'MR', r'\bCR\b': 'CR', r'\bDX\b': 'DX',
+        r'\bX[-\s]?RAY\b': 'CR', r'\bULTRASOUND\b': 'US', r'\bUS\b': 'US',
+        r'\bMAMMO\b': 'MG', r'\bFLUORO\b': 'RF', r'\bNUCLEAR\b': 'NM',
+        r'\bPET\b': 'PT', r'\bANGIO\b': 'XA',
+    }
+    for pattern, code in modality_map.items():
+        if re.search(pattern, upper):
+            out['modality'] = code
+            break
+
+    # Body part
+    body_parts = [
+        ('CHEST', 'CHEST'), ('THORAX', 'CHEST'), ('LUNG', 'CHEST'),
+        ('CERVICAL SPINE', 'CERVICAL SPINE'), ('CERVICAL', 'CERVICAL SPINE'),
+        ('LUMBAR', 'LUMBAR SPINE'), ('THORACIC SPINE', 'THORACIC SPINE'),
+        ('SPINE', 'SPINE'), ('ABDOMEN', 'ABDOMEN'), ('ABDOMINAL', 'ABDOMEN'),
+        ('PELVIS', 'PELVIS'), ('PELVIC', 'PELVIS'), ('KNEE', 'KNEE'),
+        ('FEMUR', 'FEMUR'), ('FOOT', 'FOOT'), ('ANKLE', 'ANKLE'),
+        ('SHOULDER', 'SHOULDER'), ('WRIST', 'WRIST'), ('ELBOW', 'ELBOW'),
+        ('HIP', 'HIP'), ('SKULL', 'SKULL'), ('BRAIN', 'BRAIN'), ('HEAD', 'BRAIN'),
+        ('HAND', 'HAND'), ('FINGER', 'FINGER'), ('RIB', 'RIBS'),
+    ]
+    for kw, val in body_parts:
+        if kw in upper:
+            out['body_part'] = val
+            break
+
+    # Status
+    if re.search(r'\bPENDING\b|\bNOT REPORTED\b|\bUNREPORTED\b', upper):
+        out['status'] = 'assigned'
+    elif re.search(r'\bREPORTED\b|\bCOMPLETED\b|\bDONE\b|\bFINALIZED?\b', upper):
+        out['status'] = 'reported'
+    elif re.search(r'\bSCHEDULED\b|\bWAITING\b', upper):
+        out['status'] = 'scheduled'
+    elif re.search(r'\bQC\b|\bQUALITY CHECK\b|\bREADY\b', upper):
+        out['status'] = 'ready-for-reporting'
+
+    # Date range
+    today = date.today()
+    if re.search(r'\bTODAY\b', upper):
+        out['date_from'] = today.strftime('%Y%m%d')
+        out['date_to'] = today.strftime('%Y%m%d')
+    elif re.search(r'\bYESTERDAY\b', upper):
+        y = today - timedelta(days=1)
+        out['date_from'] = y.strftime('%Y%m%d')
+        out['date_to'] = y.strftime('%Y%m%d')
+    elif re.search(r'\bLAST WEEK\b|\bPAST WEEK\b|\bTHIS WEEK\b', upper):
+        out['date_from'] = (today - timedelta(days=7)).strftime('%Y%m%d')
+        out['date_to'] = today.strftime('%Y%m%d')
+    elif re.search(r'\bLAST MONTH\b|\bPAST MONTH\b|\bTHIS MONTH\b', upper):
+        out['date_from'] = (today - timedelta(days=30)).strftime('%Y%m%d')
+        out['date_to'] = today.strftime('%Y%m%d')
+    elif re.search(r'\bLAST 3 MONTHS\b|\bPAST 3 MONTHS\b|\bQUARTER\b', upper):
+        out['date_from'] = (today - timedelta(days=90)).strftime('%Y%m%d')
+        out['date_to'] = today.strftime('%Y%m%d')
+
+    # Finding / remaining terms
+    stop_words = {
+        'XRAY', 'X-RAY', 'SCAN', 'IMAGE', 'STUDY', 'REPORT', 'FIND', 'SHOW',
+        'GET', 'LIST', 'ALL', 'PATIENT', 'DR', 'DOCTOR', 'WITH', 'AND', 'THE',
+        'FOR', 'FROM', 'LAST', 'THIS', 'WEEK', 'MONTH', 'TODAY', 'PENDING',
+        'REPORTED', 'SCHEDULED', 'YESTERDAY', 'THAT', 'HAVE', 'HAS', 'SHOW',
+        'ME', 'GIVE', 'WANT', 'NEED', 'PLEASE', 'ANY', 'SOME', 'CASES',
+    }
+    words = [w for w in re.split(r'\s+', query) if len(w) > 3 and w.upper() not in stop_words]
+    if words and 'modality' not in out and 'body_part' not in out:
+        out['finding'] = ' '.join(words[:6])
+
+    return out
+
+
+async def _llm_parse_search(query: str) -> Optional[dict]:
+    """Use MedGemma/Ollama to parse the query into structured filters."""
+    if not medgemma_corrector or medgemma_corrector._mode == "unavailable":
+        return None
+    try:
+        prompt = (
+            "You are a radiology informatics assistant. Parse the following natural language search query "
+            "into a JSON object with these optional fields:\n"
+            "- modality: DICOM modality code (CR, DX, CT, MR, US, MG, NM, PT, XA, RF)\n"
+            "- body_part: anatomical region in uppercase (e.g. CHEST, LUMBAR SPINE, KNEE)\n"
+            "- status: one of 'assigned', 'reported', 'scheduled', 'ready-for-reporting'\n"
+            "- date_from: YYYYMMDD string\n"
+            "- date_to: YYYYMMDD string\n"
+            "- finding: key clinical finding or diagnosis keywords\n\n"
+            f"Query: {query}\n\n"
+            "Respond ONLY with a valid JSON object, no explanation. Example:\n"
+            '{"modality":"CR","body_part":"CHEST","status":"reported","finding":"cardiomegaly"}'
+        )
+        import json as _json
+        if hasattr(medgemma_corrector, '_ollama_generate'):
+            raw = await medgemma_corrector._ollama_generate(prompt)
+        else:
+            # Fallback: call via correct_and_format which uses Ollama
+            return None
+
+        # Extract first JSON object from response
+        import re as _re
+        m = _re.search(r'\{[^{}]+\}', raw, _re.DOTALL)
+        if m:
+            return _json.loads(m.group())
+    except Exception as e:
+        logger.warning("LLM search parse failed: %s", e)
+    return None
+
+
+@app.post("/v1/search/parse", response_model=SearchParseResponse)
+async def search_parse(body: SearchParseRequest):
+    """
+    Parse a natural language radiology search query into structured filters.
+
+    Attempts LLM-based parsing via MedGemma/Ollama; falls back to deterministic
+    keyword/regex extraction which works fully offline.
+
+    Request body: {"query": "chest X-ray last week cardiomegaly pending"}
+    Response: {"modality":"CR","body_part":"CHEST","date_from":"20260709","finding":"cardiomegaly","status":"assigned"}
+    """
+    if not body.query.strip():
+        raise HTTPException(status_code=400, detail="Query must not be empty")
+
+    # Try LLM first (non-blocking on failure)
+    llm_result = await _llm_parse_search(body.query)
+    if llm_result:
+        return SearchParseResponse(**llm_result, method="llm")
+
+    # Keyword fallback
+    kw_result = _keyword_parse_search(body.query)
+    return SearchParseResponse(**kw_result, method="keyword")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=settings.PORT)
+

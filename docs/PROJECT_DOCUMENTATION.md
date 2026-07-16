@@ -6,6 +6,23 @@
 **Last updated:** 15 July 2026  
 **Repository:** `tdai-main/metupalle-jpg/tdai`
 
+> **Session: 16 July 2026** — X-Ray Stitching (Section B) & AI Search (Section C) implemented.
+>
+> **X-Ray Stitching** (OHIF Toolbar — `getPanelModule.tsx`):
+> - Full canvas-based stitching using off-screen `<canvas>` pixel manipulation (no DICOM file modification)
+> - **Manual Stitch**: user selects overlap % via slider; images joined with exact pixel trim
+> - **Auto Stitch**: MSE-based overlap detection scans pixel rows/columns to find natural overlap automatically (up to 40% scan window)
+> - **Both vertical and horizontal** stitch directions supported via toggle
+> - Result shown as a floating full-screen overlay with drag-to-pan and scroll-to-zoom; "Close Stitched View" resets state
+> - Requires ≥2 viewports to be open; shows error badge if not
+>
+> **AI Search** (Full-stack — Section C):
+> - **Backend**: New `GET /search` Express route in `search.ts` — calls `POST /v1/search/parse` on MedASR server for LLM-powered query parsing; falls back to keyword/regex extraction offline
+> - **AI Server**: New `POST /v1/search/parse` endpoint in `medasr-server/server.py` — extracts modality, body part, status, date range, and finding keywords using MedGemma/Ollama (LLM) or fast deterministic regex fallback
+> - **Frontend**: New `AISearchPage.tsx` — animated search bar with sparkle badge, example query chips, parsed filter display, result cards with match reason badges, skeleton loading, empty state with suggestions
+> - **Nav**: "AI Search" link added to InternalNavbar (visible to radiologists, radiographers, referring physicians via `scans:view` permission)
+> - **Route**: `/ai-search` registered in `App.tsx` with `PermissionGate`
+
 > **Session: 15 July 2026** — Modality Console Integration completed. C-FIND (MWL) & MPPS communication verified. Added AE Title bypass configuration in Orthanc for seamless console communication. Custom post-processing sanitizer implemented for Llama 3.2 1B report template formatting.
 
 > **Session: 9 July 2026 (Update 2)** — AI Smart Dictate & Report Template System built.  

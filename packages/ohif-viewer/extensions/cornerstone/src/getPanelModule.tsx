@@ -87,6 +87,12 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
     const [cropState, setCropState] = useState('idle');
     // Shutter state: 'idle' | 'drawing' | 'applied'
     const [shutterState, setShutterState] = useState('idle');
+    // Stitch state: 'idle' | 'stitching' | 'done'
+    const [stitchState, setStitchState] = useState<'idle' | 'stitching' | 'done'>('idle');
+    const [stitchDirection, setStitchDirection] = useState<'vertical' | 'horizontal'>('vertical');
+    const [stitchOverlapPct, setStitchOverlapPct] = useState(20);
+    const [stitchError, setStitchError] = useState<string | null>(null);
+    const stitchedOverlayRef = useRef<HTMLDivElement | null>(null);
     const [expandedSections, setExpandedSections] = useState({
       imageTools: true,
       measurements: true,
@@ -595,6 +601,267 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
         document.removeEventListener('mouseup', onUp);
         label.remove();
       });
+    };
+
+    /* ═══════════════════════════════════════════════════════════════════
+     *  STITCH — Canvas-based X-Ray stitching (vertical or horizontal)
+     *  Collects all visible Cornerstone viewport canvases, stitches them
+     *  on an off-screen canvas using either:
+     *   - Manual: fixed overlap % trimming
+     *   - Auto: MSE-based overlap detection (finds best join row/column)
+     *  Result shown as a floating full-screen overlay on the viewport container.
+     * ═══════════════════════════════════════════════════════════════════ */
+
+    /** Collect all rendered Cornerstone canvases from active viewports */
+    const collectViewportCanvases = (): HTMLCanvasElement[] => {
+      try {
+        const { cornerstoneViewportService, viewportGridService } = servicesManager.services;
+        const state = viewportGridService.getState();
+        const ids: string[] = state.viewports?.map((vp: any) => vp.viewportId).filter(Boolean) ?? [];
+        const canvases: HTMLCanvasElement[] = [];
+        for (const id of ids) {
+          const csVp = cornerstoneViewportService.getCornerstoneViewport(id);
+          if (csVp?.canvas) canvases.push(csVp.canvas);
+        }
+        return canvases;
+      } catch {
+        return [];
+      }
+    };
+
+    /** Get pixel data row (vertical stitch: row sum, horizontal: col sum) */
+    const getRowData = (ctx: CanvasRenderingContext2D, w: number, h: number, rowIdx: number): number[] => {
+      const data = ctx.getImageData(0, rowIdx, w, 1).data;
+      const out: number[] = [];
+      for (let i = 0; i < data.length; i += 4) {
+        out.push((data[i] + data[i + 1] + data[i + 2]) / 3);
+      }
+      return out;
+    };
+
+    const getColData = (ctx: CanvasRenderingContext2D, w: number, h: number, colIdx: number): number[] => {
+      const data = ctx.getImageData(colIdx, 0, 1, h).data;
+      const out: number[] = [];
+      for (let i = 0; i < data.length; i += 4) {
+        out.push((data[i] + data[i + 1] + data[i + 2]) / 3);
+      }
+      return out;
+    };
+
+    /** Find best overlap offset by minimising mean-squared error between slices */
+    const findBestOverlap = (
+      srcCanvas: HTMLCanvasElement, dstCanvas: HTMLCanvasElement,
+      direction: 'vertical' | 'horizontal', maxOverlapFraction: number
+    ): number => {
+      const srcCtx = srcCanvas.getContext('2d')!;
+      const dstCtx = dstCanvas.getContext('2d')!;
+      const w = Math.min(srcCanvas.width, dstCanvas.width);
+      const h = Math.min(srcCanvas.height, dstCanvas.height);
+      const size = direction === 'vertical' ? h : w;
+      const maxOverlap = Math.floor(size * maxOverlapFraction);
+      const step = Math.max(1, Math.floor(size / 60)); // sample ~60 lines for speed
+
+      let bestOffset = Math.floor(size * 0.10);
+      let bestMse = Infinity;
+
+      for (let offset = step; offset <= maxOverlap; offset += step) {
+        let mse = 0, count = 0;
+        for (let s = 0; s < Math.min(offset, 30); s += Math.max(1, Math.floor(offset / 10))) {
+          const srcLine = direction === 'vertical'
+            ? getRowData(srcCtx, w, h, h - offset + s)
+            : getColData(srcCtx, w, h, w - offset + s);
+          const dstLine = direction === 'vertical'
+            ? getRowData(dstCtx, w, h, s)
+            : getColData(dstCtx, w, h, s);
+          const len = Math.min(srcLine.length, dstLine.length);
+          for (let i = 0; i < len; i++) {
+            const diff = srcLine[i] - dstLine[i];
+            mse += diff * diff;
+            count++;
+          }
+        }
+        if (count > 0 && mse / count < bestMse) {
+          bestMse = mse / count;
+          bestOffset = offset;
+        }
+      }
+      return bestOffset;
+    };
+
+    /** Draw stitched result into a new off-screen canvas and show as overlay */
+    const renderStitchedOverlay = (
+      canvases: HTMLCanvasElement[], overlapPx: number[], direction: 'vertical' | 'horizontal'
+    ) => {
+      const viewport = getActiveViewport();
+      if (!viewport?.canvas) return;
+      const viewportEl = viewport.canvas.parentElement as HTMLElement;
+      if (!viewportEl) return;
+
+      // Remove existing overlay
+      stitchedOverlayRef.current?.remove();
+
+      // Calculate output dimensions
+      let totalMain = 0;
+      let crossSize = 0;
+      for (let i = 0; i < canvases.length; i++) {
+        const c = canvases[i];
+        const ov = i < overlapPx.length ? overlapPx[i] : 0;
+        if (direction === 'vertical') {
+          totalMain += c.height - ov;
+          crossSize = Math.max(crossSize, c.width);
+        } else {
+          totalMain += c.width - ov;
+          crossSize = Math.max(crossSize, c.height);
+        }
+      }
+
+      const offscreen = document.createElement('canvas');
+      if (direction === 'vertical') {
+        offscreen.width = crossSize;
+        offscreen.height = totalMain;
+      } else {
+        offscreen.width = totalMain;
+        offscreen.height = crossSize;
+      }
+
+      const ctx = offscreen.getContext('2d')!;
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, offscreen.width, offscreen.height);
+
+      let cursor = 0;
+      for (let i = 0; i < canvases.length; i++) {
+        const c = canvases[i];
+        const ov = i < overlapPx.length ? overlapPx[i] : 0;
+        // For each canvas, skip the first `ov` pixels on the joining edge
+        const skipPx = i === 0 ? 0 : ov;
+        const drawH = direction === 'vertical' ? c.height - skipPx : c.height;
+        const drawW = direction === 'horizontal' ? c.width - skipPx : c.width;
+
+        if (direction === 'vertical') {
+          ctx.drawImage(c, 0, skipPx, c.width, drawH, 0, cursor, c.width, drawH);
+          // Feather blend (gradient) at join seam
+          if (i > 0 && ov > 4) {
+            const blendH = Math.min(ov, 20);
+            const grad = ctx.createLinearGradient(0, cursor, 0, cursor + blendH);
+            grad.addColorStop(0, 'rgba(0,0,0,0.5)');
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, cursor, offscreen.width, blendH);
+          }
+          cursor += drawH;
+        } else {
+          ctx.drawImage(c, skipPx, 0, drawW, c.height, cursor, 0, drawW, c.height);
+          if (i > 0 && ov > 4) {
+            const blendW = Math.min(ov, 20);
+            const grad = ctx.createLinearGradient(cursor, 0, cursor + blendW, 0);
+            grad.addColorStop(0, 'rgba(0,0,0,0.5)');
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(cursor, 0, blendW, offscreen.height);
+          }
+          cursor += drawW;
+        }
+      }
+
+      // Build floating overlay div
+      const overlay = document.createElement('div');
+      overlay.style.cssText = [
+        'position:absolute', 'top:0', 'left:0', 'width:100%', 'height:100%',
+        'background:#000', 'z-index:60', 'display:flex', 'flex-direction:column',
+        'align-items:center', 'justify-content:center', 'overflow:auto',
+      ].join(';');
+      viewportEl.style.position = 'relative';
+
+      // Header bar
+      const header = document.createElement('div');
+      header.style.cssText = 'position:absolute;top:0;left:0;right:0;padding:6px 10px;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:space-between;z-index:61;font-family:sans-serif;';
+      header.innerHTML = `
+        <span style="color:#60a5fa;font-size:11px;font-weight:700;">✦ Stitched View (${direction}) — ${canvases.length} images</span>
+        <span style="color:#9ca3af;font-size:10px;">Scroll / pinch to zoom &nbsp;·&nbsp; Drag to pan</span>
+      `;
+      overlay.appendChild(header);
+
+      // Make img from offscreen canvas
+      const img = document.createElement('img');
+      img.src = offscreen.toDataURL('image/png');
+      img.style.cssText = 'max-width:100%;max-height:calc(100% - 32px);object-fit:contain;cursor:grab;margin-top:32px;';
+      overlay.appendChild(img);
+
+      // Pan/zoom via mouse wheel and drag
+      let scale = 1, tx = 0, ty = 0, dragging = false, startX = 0, startY = 0;
+      const applyTransform = () => {
+        img.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
+        img.style.transformOrigin = 'center center';
+      };
+      overlay.addEventListener('wheel', (e: WheelEvent) => {
+        e.preventDefault();
+        scale = Math.max(0.3, Math.min(8, scale - e.deltaY * 0.001));
+        applyTransform();
+      }, { passive: false });
+      img.addEventListener('mousedown', (e: MouseEvent) => { dragging = true; startX = e.clientX - tx; startY = e.clientY - ty; img.style.cursor = 'grabbing'; });
+      document.addEventListener('mousemove', (e: MouseEvent) => { if (!dragging) return; tx = e.clientX - startX; ty = e.clientY - startY; applyTransform(); });
+      document.addEventListener('mouseup', () => { dragging = false; img.style.cursor = 'grab'; });
+
+      viewportEl.appendChild(overlay);
+      stitchedOverlayRef.current = overlay;
+    };
+
+    const handleManualStitch = () => {
+      setStitchError(null);
+      const canvases = collectViewportCanvases();
+      if (canvases.length < 2) {
+        setStitchError('Need ≥2 viewports open to stitch.');
+        return;
+      }
+      setActiveTool('Stitch');
+      setStitchState('stitching');
+      setTimeout(() => {
+        try {
+          const dim = stitchDirection === 'vertical' ? canvases[0].height : canvases[0].width;
+          const overlapPx = canvases.map((_, i) => i === 0 ? 0 : Math.floor(dim * stitchOverlapPct / 100));
+          renderStitchedOverlay(canvases, overlapPx, stitchDirection);
+          setStitchState('done');
+        } catch (err) {
+          setStitchError('Stitch failed: ' + String(err));
+          setStitchState('idle');
+        }
+      }, 100);
+    };
+
+    const handleAutoStitch = () => {
+      setStitchError(null);
+      const canvases = collectViewportCanvases();
+      if (canvases.length < 2) {
+        setStitchError('Need ≥2 viewports open to stitch.');
+        return;
+      }
+      setActiveTool('AutoStitch');
+      setStitchState('stitching');
+      // Run in rAF to allow React to re-render the spinner first
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          try {
+            const overlapPx: number[] = [0];
+            for (let i = 1; i < canvases.length; i++) {
+              const best = findBestOverlap(canvases[i - 1], canvases[i], stitchDirection, 0.40);
+              overlapPx.push(best);
+            }
+            renderStitchedOverlay(canvases, overlapPx, stitchDirection);
+            setStitchState('done');
+          } catch (err) {
+            setStitchError('Auto-stitch failed: ' + String(err));
+            setStitchState('idle');
+          }
+        }, 50);
+      });
+    };
+
+    const handleStitchReset = () => {
+      stitchedOverlayRef.current?.remove();
+      stitchedOverlayRef.current = null;
+      setStitchState('idle');
+      setStitchError(null);
+      setActiveTool(null);
     };
 
     const handleQcToggle = (key) => {
@@ -1263,54 +1530,119 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
         <div>
           {sectionHeader('Stitch', 'stitch')}
           {expandedSections.stitch && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '5px' }}>
-              {/* Manual Stitch */}
-              <button
-                onClick={() => {
-                  setActiveTool('Stitch');
-                  try { commandsManager.runCommand('activateStitch'); } catch (e) {
-                    console.warn('[TDAI] activateStitch error:', e);
-                  }
-                }}
-                style={{
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                  gap: '3px', borderRadius: '6px', padding: '7px 4px', minHeight: '44px',
-                  border: '1px solid', cursor: 'pointer', transition: 'all 150ms',
-                  backgroundColor: activeTool === 'Stitch' ? '#d6cdb8' : '#f0ebe0',
-                  borderColor: activeTool === 'Stitch' ? '#b8ac94' : '#e0d8c8',
-                  color: activeTool === 'Stitch' ? '#0c1525' : '#1a2744',
-                  boxShadow: activeTool === 'Stitch' ? 'inset 0 1px 3px rgba(0,0,0,0.15)' : 'none',
-                }}
-              >
-                <svg style={{ width: 16, height: 16 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M4 6h16M4 12h8m-8 6h16" />
-                </svg>
-                <span style={{ fontSize: '8.5px', fontWeight: 600 }}>Stitch</span>
-              </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
 
-              {/* Auto Stitch */}
-              <button
-                onClick={() => {
-                  setActiveTool('AutoStitch');
-                  try { commandsManager.runCommand('activateAutoStitch'); } catch (e) {
-                    console.warn('[TDAI] activateAutoStitch error:', e);
-                  }
-                }}
-                style={{
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                  gap: '3px', borderRadius: '6px', padding: '7px 4px', minHeight: '44px',
-                  border: '1px solid', cursor: 'pointer', transition: 'all 150ms',
-                  backgroundColor: activeTool === 'AutoStitch' ? '#d6cdb8' : '#f0ebe0',
-                  borderColor: activeTool === 'AutoStitch' ? '#b8ac94' : '#e0d8c8',
-                  color: activeTool === 'AutoStitch' ? '#0c1525' : '#1a2744',
-                  boxShadow: activeTool === 'AutoStitch' ? 'inset 0 1px 3px rgba(0,0,0,0.15)' : 'none',
-                }}
-              >
-                <svg style={{ width: 16, height: 16 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18" />
-                </svg>
-                <span style={{ fontSize: '8.5px', fontWeight: 600 }}>Auto Stitch</span>
+              {/* ── Direction toggle ── */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
+                {(['vertical', 'horizontal'] as const).map(dir => (
+                  <button
+                    key={dir}
+                    onClick={() => setStitchDirection(dir)}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+                      padding: '5px 4px', borderRadius: '6px', fontSize: '8.5px', fontWeight: 700,
+                      border: '1px solid', cursor: 'pointer', transition: 'all 150ms',
+                      backgroundColor: stitchDirection === dir ? '#1e3a5f' : '#f0ebe0',
+                      borderColor: stitchDirection === dir ? '#3b82f6' : '#e0d8c8',
+                      color: stitchDirection === dir ? '#93c5fd' : '#1a2744',
+                    }}
+                  >
+                    {dir === 'vertical'
+                      ? <svg style={{ width: 12, height: 12 }} viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16M4 8h16M4 16h16" /></svg>
+                      : <svg style={{ width: 12, height: 12 }} viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 12h16M8 4v16M16 4v16" /></svg>
+                    }
+                    {dir.charAt(0).toUpperCase() + dir.slice(1)}
+                  </button>
+                ))}
+              </div>
+
+              {/* ── Overlap % slider (manual stitch) ── */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '8px', color: '#8899b0', whiteSpace: 'nowrap' }}>Overlap</span>
+                <input
+                  type="range" min={5} max={50} step={1}
+                  value={stitchOverlapPct}
+                  onChange={e => setStitchOverlapPct(Number(e.target.value))}
+                  style={{ flex: 1, accentColor: '#3b82f6', height: 4 }}
+                />
+                <span style={{ fontSize: '8px', fontWeight: 700, color: '#93c5fd', minWidth: 22, textAlign: 'right' }}>{stitchOverlapPct}%</span>
+              </div>
+
+              {/* ── Stitch buttons ── */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
+                {/* Manual Stitch */}
+                <button
+                  disabled={stitchState === 'stitching'}
+                  onClick={() => {
+                    handleManualStitch();
+                  }}
+                  style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    gap: '3px', borderRadius: '6px', padding: '7px 4px', minHeight: '44px',
+                    border: '1px solid', cursor: 'pointer', transition: 'all 150ms',
+                    backgroundColor: activeTool === 'Stitch' ? '#d6cdb8' : '#f0ebe0',
+                    borderColor: activeTool === 'Stitch' ? '#b8ac94' : '#e0d8c8',
+                    color: activeTool === 'Stitch' ? '#0c1525' : '#1a2744',
+                    boxShadow: activeTool === 'Stitch' ? 'inset 0 1px 3px rgba(0,0,0,0.15)' : 'none',
+                    opacity: stitchState === 'stitching' ? 0.5 : 1,
+                  }}
+                >
+                  <svg style={{ width: 16, height: 16 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M4 6h16M4 12h8m-8 6h16" />
+                  </svg>
+                  <span style={{ fontSize: '8.5px', fontWeight: 600 }}>Stitch</span>
+                </button>
+
+                {/* Auto Stitch */}
+                <button
+                  disabled={stitchState === 'stitching'}
+                  onClick={() => {
+                    handleAutoStitch();
+                  }}
+                  style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    gap: '3px', borderRadius: '6px', padding: '7px 4px', minHeight: '44px',
+                    border: '1px solid', cursor: 'pointer', transition: 'all 150ms',
+                    backgroundColor: activeTool === 'AutoStitch' ? '#d6cdb8' : '#f0ebe0',
+                    borderColor: activeTool === 'AutoStitch' ? '#b8ac94' : '#e0d8c8',
+                    color: activeTool === 'AutoStitch' ? '#0c1525' : '#1a2744',
+                    boxShadow: activeTool === 'AutoStitch' ? 'inset 0 1px 3px rgba(0,0,0,0.15)' : 'none',
+                    opacity: stitchState === 'stitching' ? 0.5 : 1,
+                  }}
+                >
+                {stitchState === 'stitching'
+                  ? <svg style={{ width: 16, height: 16, animation: 'spin 1s linear infinite' }} viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9" /></svg>
+                  : <svg style={{ width: 16, height: 16 }} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18" /></svg>
+                }
+                <span style={{ fontSize: '8.5px', fontWeight: 600 }}>Auto</span>
               </button>
+              </div>
+
+              {/* ── State feedback ── */}
+              {stitchState === 'stitching' && (
+                <div style={{ fontSize: '8px', color: '#60a5fa', textAlign: 'center', padding: '4px 0', animation: 'pulse 1.5s ease-in-out infinite' }}>
+                  ⚙ Stitching images...
+                </div>
+              )}
+              {stitchError && (
+                <div style={{ fontSize: '8px', color: '#f87171', padding: '4px 6px', backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: '4px', border: '1px solid rgba(239,68,68,0.2)' }}>
+                  {stitchError}
+                </div>
+              )}
+              {stitchState === 'done' && (
+                <button
+                  onClick={handleStitchReset}
+                  style={{
+                    width: '100%', padding: '5px', fontSize: '8.5px', fontWeight: 700,
+                    borderRadius: '6px', border: '1px solid #f87171', cursor: 'pointer',
+                    backgroundColor: '#3b1f1f', color: '#fca5a5',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+                  }}
+                >
+                  <svg style={{ width: 12, height: 12 }} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                  Close Stitched View
+                </button>
+              )}
             </div>
           )}
         </div>
