@@ -206,6 +206,7 @@ export interface RadiologyOrder {
   priority: OrderPriority;
   status: OrderStatus;
   scheduledDate: string; // ISO datetime
+  checkedInAt?: string; // ISO datetime
   completedDate?: string;
   studyId?: string; // linked DICOM study after acquisition
   reportId?: string; // linked report after reporting

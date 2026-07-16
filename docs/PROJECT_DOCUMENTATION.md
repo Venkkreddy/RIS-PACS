@@ -6,7 +6,18 @@
 **Last updated:** 15 July 2026  
 **Repository:** `tdai-main/metupalle-jpg/tdai`
 
-> **Session: 16 July 2026** — X-Ray Stitching (Section B) & AI Search (Section C) implemented.
+> **Session: 16 July 2026** — X-Ray Stitching, AI Search, Check-In Timestamps & Interactive Weekly Scheduler implemented.
+>
+> **Patient Check-In Timestamps** (Section B):
+> - Added persistent `checkedInAt` ISO timestamp to `RadiologyOrder` shared type.
+> - Backend schema and routes auto-fill `checkedInAt` on creation or update when `notes` indicate "Checked In".
+> - Receptionist queue shows a dedicated "Check-In Time" column mapping from the persistent timestamp.
+>
+> **Interactive Weekly Scheduler** (Section B — `SchedulePage.tsx`):
+> - Calendar grid cells are now interactive slot triggers (`cursor-cell`).
+> - Clicking an empty slot opens a "Book Radiology Appointment" modal with real-time patient autocomplete search, modality, priority, notes, and clinical history.
+> - Clicked date and hour automatically prepopulate as the scheduled date-time.
+> - Clicking an existing appointment card displays a details editing modal with reschedule date-hour pickers, status/priority fields, and a cancellation button.
 >
 > **X-Ray Stitching** (OHIF Toolbar — `getPanelModule.tsx`):
 > - Full canvas-based stitching using off-screen `<canvas>` pixel manipulation (no DICOM file modification)

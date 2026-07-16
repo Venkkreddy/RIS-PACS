@@ -20,6 +20,7 @@ const createOrderSchema = z.object({
   status: statusEnum.default("scheduled"),
   scheduledDate: z.string().min(1),
   notes: z.string().optional(),
+  checkedInAt: z.string().optional(),
 });
 
 const updateOrderSchema = z.object({
@@ -37,6 +38,7 @@ const updateOrderSchema = z.object({
   clinicalHistory: z.string().optional(),
   viewPositions: z.array(z.string()).optional(),
   studyDescription: z.string().optional(),
+  checkedInAt: z.string().optional(),
 });
 
 const listQuerySchema = z.object({
@@ -88,6 +90,9 @@ export function ordersRouter(store: StoreService): Router {
   router.post("/", ensureAuthenticated, ensurePermission(store, "orders:create"), asyncHandler(async (req, res) => {
     const body = createOrderSchema.parse(req.body);
     const user = req.session.user;
+    if (body.notes === "Checked In" && !body.checkedInAt) {
+      body.checkedInAt = new Date().toISOString();
+    }
     const order = await store.createOrder({
       ...body,
       // Referring physicians can only create orders under their own name — prevents spoofing another doctor.
@@ -101,6 +106,9 @@ export function ordersRouter(store: StoreService): Router {
 
   router.patch("/:id", ensureAuthenticated, ensurePermission(store, "orders:edit"), asyncHandler(async (req, res) => {
     const body = updateOrderSchema.parse(req.body);
+    if (body.notes === "Checked In" && !body.checkedInAt) {
+      body.checkedInAt = new Date().toISOString();
+    }
     const order = await store.updateOrder(resolveParam(req.params.id), body);
     res.json(order);
   }));

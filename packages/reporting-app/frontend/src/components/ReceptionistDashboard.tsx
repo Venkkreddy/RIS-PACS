@@ -158,7 +158,7 @@ export function ReceptionistDashboard() {
         list.push({
           patient,
           status: workflowStatusFor({ order, study: linkedStudy }),
-          checkInTime: order.scheduledDate,
+          checkInTime: order.checkedInAt ?? order.scheduledDate,
           appointmentOrder: order,
         });
       }
@@ -205,10 +205,12 @@ export function ReceptionistDashboard() {
     try {
       let patchStatus: "scheduled" | "in-progress" | "completed" = "scheduled";
       let patchNotes: string | undefined;
+      let checkedInAt: string | undefined;
 
       if (status === "checked-in") {
         patchStatus = "scheduled";
         patchNotes = "Checked In";
+        checkedInAt = new Date().toISOString();
       } else if (status === "in-progress") {
         patchStatus = "in-progress";
       } else if (status === "ready-for-reporting") {
@@ -218,6 +220,7 @@ export function ReceptionistDashboard() {
       await api.patch(`/orders/${orderId}`, {
         status: patchStatus,
         ...(patchNotes ? { notes: patchNotes } : {}),
+        ...(checkedInAt ? { checkedInAt } : {}),
       });
 
       await Promise.all([
@@ -409,6 +412,7 @@ export function ReceptionistDashboard() {
                         <th className="px-4 py-3.5">Gender</th>
                         <th className="px-4 py-3.5">Phone</th>
                         <th className="px-4 py-3.5">Appointment</th>
+                        <th className="px-4 py-3.5">Check-In Time</th>
                         <th className="px-4 py-3.5">Status</th>
                         <th className="px-4 py-3.5">Actions</th>
                       </tr>
@@ -427,6 +431,11 @@ export function ReceptionistDashboard() {
                             {entry.appointmentOrder
                               ? `${entry.appointmentOrder.modality} - ${entry.appointmentOrder.bodyPart}`
                               : "Walk-in"}
+                          </td>
+                          <td className="table-cell text-xs text-tdai-secondary font-medium">
+                            {entry.appointmentOrder?.checkedInAt
+                              ? new Date(entry.appointmentOrder.checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                              : "—"}
                           </td>
                           <td className="table-cell">
                             <span className={`badge ring-1 ${WORKFLOW_BADGE[entry.status]}`}>{WORKFLOW_LABEL[entry.status]}</span>
