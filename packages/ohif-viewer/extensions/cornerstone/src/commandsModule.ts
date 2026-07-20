@@ -350,60 +350,14 @@ function commandsModule({
       }
     },
     activateStitch: () => {
-      const viewportId = viewportGridService.getActiveViewportId();
-      const enabledElement = _getViewportEnabledElement(viewportId);
-      const viewport = enabledElement?.viewport;
-      const imageIds = viewport?.getImageIds?.() || [];
-
-      if (imageIds.length < 2) {
-        uiNotificationService.show({
-          title: 'Manual Stitch',
-          message: 'Stitching requires 2 or more images. Please select at least 2 images.',
-          type: 'warning',
-        });
-        return;
-      }
-
-      uiNotificationService.show({
-        title: 'Manual Stitch',
-        message: 'Manual stitching tool activated. Draw line on overlapping landmarks to align.',
-        type: 'info',
-      });
-      actions.setToolActiveToolbar({ toolName: 'Length' });
+      // Fire a custom DOM event — the WorkstationToolbar panel listens and runs
+      // the real canvas-based stitch pipeline. The toolbar button is just a trigger.
+      window.dispatchEvent(new CustomEvent('tdai:stitch', { detail: { mode: 'manual' } }));
     },
     activateAutostitch: () => {
-      const viewportId = viewportGridService.getActiveViewportId();
-      const enabledElement = _getViewportEnabledElement(viewportId);
-      const viewport = enabledElement?.viewport;
-      const imageIds = viewport?.getImageIds?.() || [];
-
-      if (imageIds.length < 2) {
-        uiNotificationService.show({
-          title: 'Auto Stitch',
-          message: 'Stitching requires 2 or more images. Please select at least 2 images.',
-          type: 'warning',
-        });
-        return;
-      }
-
-      uiNotificationService.show({
-        title: 'Auto Stitch',
-        message: 'Analyzing overlays and automatically aligning overlapping regions...',
-        type: 'info',
-      });
-
-      setTimeout(() => {
-        uiNotificationService.show({
-          title: 'Auto Stitch',
-          message: 'Auto stitching completed successfully. Panoramic view created.',
-          type: 'success',
-        });
-        if (viewport) {
-          viewport.resetCamera?.();
-          viewport.setZoom?.(0.5);
-          viewport.render?.();
-        }
-      }, 2000);
+      // Fire a custom DOM event — the WorkstationToolbar panel listens and runs
+      // the real MSE auto-alignment stitch pipeline.
+      window.dispatchEvent(new CustomEvent('tdai:stitch', { detail: { mode: 'auto' } }));
     },
     jumpToMeasurementViewport: ({ annotationUID, measurement }) => {
       cornerstoneTools.annotation.selection.setAnnotationSelected(annotationUID, true);

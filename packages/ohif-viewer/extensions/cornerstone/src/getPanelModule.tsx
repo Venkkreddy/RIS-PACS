@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Toolbox } from '@ohif/extension-default';
 import PanelSegmentation from './panels/PanelSegmentation';
@@ -155,6 +155,21 @@ const getPanelModule = ({ commandsManager, servicesManager, extensionManager }: 
 
       return () => window.removeEventListener('message', handleMessage);
     }, [servicesManager]);
+
+    // Listen for toolbar stitch button events (fired by commandsModule activateStitch/activateAutostitch)
+    useEffect(() => {
+      const handleStitchEvent = (e: Event) => {
+        const mode = (e as CustomEvent).detail?.mode;
+        if (mode === 'auto') {
+          handleAutoStitch();
+        } else {
+          handleManualStitch();
+        }
+      };
+      window.addEventListener('tdai:stitch', handleStitchEvent);
+      return () => window.removeEventListener('tdai:stitch', handleStitchEvent);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [stitchDirection, stitchOverlapPct]);
 
     const patchStudy = (patch) => {
       setStudyRecord(prev => {

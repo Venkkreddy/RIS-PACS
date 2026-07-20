@@ -5,6 +5,9 @@ import urllib.parse
 import hashlib
 import datetime
 import threading
+import os
+
+RIS_BACKEND_URL = os.environ.get("RIS_BACKEND_URL", "http://reporting-app-backend:8080").rstrip('/')
 
 def OnWorklist(answers, query, connection):
     orthanc.LogInfo("Incoming Modality Worklist C-FIND query from: %s" % str(connection))
@@ -12,7 +15,7 @@ def OnWorklist(answers, query, connection):
     # 1. Retrieve the list of scheduled/in-progress orders from the RIS backend
     try:
         # The RIS backend container is named 'reporting-app-backend' on port 8080 inside Docker
-        url = "http://reporting-app-backend:8080/api/orders/worklist/mwl"
+        url = "%s/api/orders/worklist/mwl" % RIS_BACKEND_URL
         req = urllib.request.Request(url, headers={'Accept': 'application/json'})
         with urllib.request.urlopen(req, timeout=5) as response:
             orders = json.loads(response.read().decode())
@@ -99,7 +102,7 @@ def RunMppsServer():
             
             # Send HTTP update to RIS backend: status = "in-progress"
             try:
-                url = "http://reporting-app-backend:8080/api/orders/worklist/mpps/%s" % urllib.parse.quote(acc_val)
+                url = "%s/api/orders/worklist/mpps/%s" % (RIS_BACKEND_URL, urllib.parse.quote(acc_val))
                 data = json.dumps({"status": "in-progress"}).encode()
                 req = urllib.request.Request(url, data=data, method="PATCH", headers={'Content-Type': 'application/json'})
                 with urllib.request.urlopen(req, timeout=3) as resp:
@@ -119,7 +122,7 @@ def RunMppsServer():
             sop_uid = event.sop_instance_uid
             try:
                 # Query all active orders from RIS to find which order hashes to this StudyInstanceUID
-                url_get = "http://reporting-app-backend:8080/api/orders/worklist/mwl"
+                url_get = "%s/api/orders/worklist/mwl" % RIS_BACKEND_URL
                 req_get = urllib.request.Request(url_get, headers={'Accept': 'application/json'})
                 with urllib.request.urlopen(req_get, timeout=3) as resp_get:
                     orders = json.loads(resp_get.read().decode())
@@ -135,7 +138,7 @@ def RunMppsServer():
                 
                 if matched_acc:
                     ris_status = "completed" if status_val.upper() == "COMPLETED" else "cancelled"
-                    url_patch = "http://reporting-app-backend:8080/api/orders/worklist/mpps/%s" % urllib.parse.quote(matched_acc)
+                    url_patch = "%s/api/orders/worklist/mpps/%s" % (RIS_BACKEND_URL, urllib.parse.quote(matched_acc))
                     data = json.dumps({"status": ris_status}).encode()
                     req_patch = urllib.request.Request(url_patch, data=data, method="PATCH", headers={'Content-Type': 'application/json'})
                     with urllib.request.urlopen(req_patch, timeout=3) as resp_patch:

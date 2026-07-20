@@ -171,7 +171,7 @@ export default function App() {
           auth.isAuthenticated ? <ProfilePage /> : <Navigate to="/" replace />
         } />
         <Route path="/ai-search" element={
-          <PermissionGate require={["scans:view"]}><AISearchPage /></PermissionGate>
+          <RoleGate allow={["radiologist", "radiographer", "referring", "doctor", "developer", "admin", "super_admin"]}><AISearchPage /></RoleGate>
         } />
       </Routes>
       </main>

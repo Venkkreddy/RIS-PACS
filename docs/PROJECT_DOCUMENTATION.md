@@ -6,8 +6,19 @@
 **Last updated:** 15 July 2026  
 **Repository:** `tdai-main/metupalle-jpg/tdai`
 
-> **Session: 16 July 2026** — X-Ray Stitching, AI Search, Check-In Timestamps & Interactive Weekly Scheduler implemented.
+> **Session: 20 July 2026** — Hybrid Local/Docker Setup Support:
+> - **Nginx Fallback Proxy**: Configured Nginx in `ohif-viewer` with 502/504 fallback locations routing to the host machine (`host.docker.internal:8081`) for DICOMWeb/WADO/Validate endpoints when `reporting-app-backend` container is offline. This permits running infrastructure in Docker while executing backend and frontend locally.
+> - **Orthanc Worklist Backend**: Modified `worklist.py` in Orthanc to resolve the backend API via the environment variable `RIS_BACKEND_URL` instead of hardcoding `reporting-app-backend:8080`.
+> - **Dicoogle Webhook Fallback**: Configured Dicoogle's environment variable `REPORTING_WEBHOOK_URL` in `docker-compose.yml` to accept a dynamic value and added `extra_hosts` to dicoogle so it can reach the local host backend.
+> - **Local Environment Overrides**: Added `RIS_BACKEND_URL` and `REPORTING_WEBHOOK_URL` parameters to the local `.env` pointing to the host machine so hybrid compose setups run out-of-the-box.
 >
+> **Session: 17 July 2026** — Bug fixes & Excel PRD updates:
+> - **Excel PRD Roadmap Suite**: Overwrote and reformatted `TDAI_RIS_PACS_PRD_Roadmap_Suite.xlsx` to include a full 7-competitor competitive matrix with feature summary info, and rewrote the Product Roadmap with realistic completed/ongoing/planned milestones.
+> - **AI Search Page Access**: Adjusted the `/ai-search` frontend route wrapper from `PermissionGate` to `RoleGate` so Radiographers and Referring Doctors can access the AI search page directly. Removed the duplicate `InternalNavbar` render inside the search page.
+> - **OHIF Stitching Integration**: Redirected toolbar Stitch/Auto-Stitch button actions to fire window custom events (`tdai:stitch`), which are now picked up by the side panel to trigger the real canvas-based rendering pipeline.
+> - **OHIF Nginx Configuration**: Configured lazy upstream resolver (`127.0.0.11`) and a variable-based proxy pass in `default.conf` to prevent the Nginx server from crash-looping when backend services are offline.
+>
+> **Session: 16 July 2026** — X-Ray Stitching, AI Search, Check-In Timestamps & Interactive Weekly Scheduler implemented.
 > **Patient Check-In Timestamps** (Section B):
 > - Added persistent `checkedInAt` ISO timestamp to `RadiologyOrder` shared type.
 > - Backend schema and routes auto-fill `checkedInAt` on creation or update when `notes` indicate "Checked In".

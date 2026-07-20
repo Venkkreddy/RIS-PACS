@@ -1,7 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import { InternalNavbar } from "../components/InternalNavbar";
 
 /* ─── Types ─────────────────────────────────────────────────────── */
 interface SearchResult {
@@ -107,7 +106,6 @@ export function AISearchPage() {
 
   return (
     <div style={{ minHeight: "100vh", backgroundColor: "#0d1117", color: "#c8d6e5", fontFamily: "'Inter', 'system-ui', sans-serif" }}>
-      <InternalNavbar />
 
       {/* ── Page hero ── */}
       <div style={{
